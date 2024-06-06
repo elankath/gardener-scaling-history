@@ -7,7 +7,7 @@ echoerr() { echo "$@" 1>&2; }
 NA=3
 NB=2
 NC=2
-NC=2
+ND=1
 #PARALLEL=true
 
 if [[ -z "$PARALLEL" ]]; then
