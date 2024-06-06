@@ -39,8 +39,8 @@ type ReporterParams struct {
 
 type Analysis struct {
 	Name               string
-	CoalesceInterval   time.Duration
-	TolerationInterval time.Duration
+	CoalesceInterval   string
+	TolerationInterval string
 	Scenarios          []Scenario
 	//TODO: think of other useful fields.
 }

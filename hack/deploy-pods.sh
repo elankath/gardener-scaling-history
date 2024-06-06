@@ -4,31 +4,22 @@ set -eo pipefail
 
 echoerr() { echo "$@" 1>&2; }
 
-if [[ -z "$NA" ]]; then
-  echo "please define env N_A number of pods to deploy"
-  exit 1
-fi
-if [[ -z "$NB" ]]; then
-  echo "please define env N_B number of pods to deploy"
-  exit 1
-fi
-if [[ -z "$NC" ]]; then
-  echo "please define env N_C number of pods to deploy"
-  exit 1
-fi
-if [[ -z "$ND" ]]; then
-  echo "please define env N_D number of pods to deploy"
-  exit 1
-fi
+NA=3
+NB=2
+NC=2
+NC=2
+#PARALLEL=true
 
 if [[ -z "$PARALLEL" ]]; then
-  echo "Deploying $NLARGE pods, $NMEDIUM pods, $NSMALL serially..."
-  for i in {1.."$NLARGE"}; do kubectl create -f specs/largePod.yaml; done
-  for i in {1.."$NMEDIUM"}; do kubectl create -f specs/mediumPod.yaml; done
-  for i in {1.."$NSMALL"}; do kubectl create -f specs/smallPod.yaml; done
+  echo "Deploying $NA A pods, $NB B pods, $NC C pods, $ND D pods serially..."
+  for i in {1.."$NA"}; do kubectl create -f specs/a.yaml; done
+  for i in {1.."$NB"}; do kubectl create -f specs/b.yaml; done
+  for i in {1.."$NC"}; do kubectl create -f specs/c.yaml; done
+  for i in {1.."$ND"}; do kubectl create -f specs/d.yaml; done
 else
-  echo "Deploying $NLARGE pods, $NMEDIUM pods, $NSMALL pods parallelly..."
-  for i in {1.."$NLARGE"}; do kubectl create -f specs/largePod.yaml; done \
-   &  for i in {1.."$NMEDIUM"}; do kubectl create -f specs/mediumPod.yaml; done \
-   &  for i in {1.."$NSMALL"}; do kubectl create -f specs/smallPod.yaml; done
+  echo "Deploying $NA A pods, $NB B pods, $NC C pods, $ND D pods parallelly.."
+  for i in {1.."$NA"}; do kubectl create -f specs/a.yaml; done \
+   &  for i in {1.."$NB"}; do kubectl create -f specs/b.yaml; done \
+   &  for i in {1.."$NC"}; do kubectl create -f specs/c.yaml; done \
+   &  for i in {1.."$ND"}; do kubectl create -f specs/d.yaml; done
 fi

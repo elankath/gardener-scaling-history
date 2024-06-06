@@ -497,8 +497,10 @@ func (d *defaultAnalyzer) Analyze(ctx context.Context) (analysis scalehist.Analy
 	// compute (p-R) - this is the unscheduledPods
 	//	d.dataAccess.GetLatestUnscheduledPodsBeforeTimestamp() //TODO: implement me
 	analysis = scalehist.Analysis{
-		Name:      d.name,
-		Scenarios: scenarios,
+		Name:               d.name,
+		CoalesceInterval:   d.scenarioCoalesceInterval.String(),
+		TolerationInterval: d.scenarioTolerationInterval.String(),
+		Scenarios:          scenarios,
 	}
 	return
 }
