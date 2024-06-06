@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"github.com/elankath/scalehist/analyzer"
-	"github.com/elankath/scalehist/reporter"
+	"github.com/elankath/gardener-scalehist/analyzer"
+	"github.com/elankath/gardener-scalehist/reporter"
 	"log"
 	"log/slog"
 	"os"

@@ -2,7 +2,7 @@ package db
 
 import (
 	"fmt"
-	"github.com/elankath/scalehist"
+	"github.com/elankath/gardener-scalehist"
 	assert "github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"

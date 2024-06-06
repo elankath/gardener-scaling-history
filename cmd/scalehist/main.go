@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/csv"
-	"github.com/elankath/scalehist"
-	"github.com/elankath/scalehist/recorder"
+	"github.com/elankath/gardener-scalehist"
+	"github.com/elankath/gardener-scalehist/recorder"
 	"log/slog"
 	"os"
 	"os/signal"

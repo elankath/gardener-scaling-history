@@ -1,7 +1,7 @@
 package reporter
 
 import (
-	"github.com/elankath/scalehist"
+	"github.com/elankath/gardener-scalehist"
 	"io"
 	"k8s.io/apimachinery/pkg/util/json"
 	"log/slog"

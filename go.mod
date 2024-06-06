@@ -3,15 +3,17 @@ module github.com/elankath/gardener-scalehist
 go 1.22.0
 
 require (
+	github.com/blockloop/scan/v2 v2.5.0
 	github.com/glebarez/go-sqlite v1.22.0
+	github.com/samber/lo v1.39.0
 	github.com/stretchr/testify v1.9.0
+	golang.org/x/exp v0.0.0-20220303212507-bbda1eaf7a17
 	k8s.io/api v0.29.3
 	k8s.io/apimachinery v0.30.0
 	k8s.io/client-go v0.29.3
 )
 
 require (
-	github.com/blockloop/scan/v2 v2.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/emicklei/go-restful/v3 v3.11.0 // indirect
@@ -35,9 +37,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
-	github.com/samber/lo v1.39.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	golang.org/x/exp v0.0.0-20220303212507-bbda1eaf7a17 // indirect
 	golang.org/x/net v0.23.0 // indirect
 	golang.org/x/oauth2 v0.10.0 // indirect
 	golang.org/x/sys v0.18.0 // indirect

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/blockloop/scan/v2"
-	"github.com/elankath/scalehist"
+	"github.com/elankath/gardener-scalehist"
 	_ "github.com/glebarez/go-sqlite"
 	"github.com/samber/lo"
 	"io"

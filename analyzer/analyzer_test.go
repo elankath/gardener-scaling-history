@@ -2,7 +2,7 @@ package analyzer
 
 import (
 	"fmt"
-	"github.com/elankath/scalehist"
+	"github.com/elankath/gardener-scalehist"
 	"github.com/samber/lo"
 	assert "github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
