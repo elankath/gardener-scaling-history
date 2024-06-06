@@ -23,17 +23,17 @@ func main() {
 	}
 	scenarioCoalesceIntervalStr := os.Getenv("COALESCE_INTERVAL")
 	if len(scenarioCoalesceIntervalStr) == 0 {
-		slog.Error("SCENARIO_DIVIDE_INTERVAL env must be set")
+		slog.Error("COALESCE_INTERVAL env must be set")
 		os.Exit(2)
 	}
 	scenarioCoalesceInterval, err := time.ParseDuration(scenarioCoalesceIntervalStr)
 	if err != nil {
-		slog.Error("SCENARIO_DIVIDE_INTERVAL  must be a parsable time.Duration")
+		slog.Error("COALESCE_INTERVAL  must be a parsable time.Duration")
 		os.Exit(2)
 	}
 
 	scenarioTolerationIntervalStr := os.Getenv("TOLERATION_INTERVAL")
-	if len(scenarioCoalesceIntervalStr) == 0 {
+	if len(scenarioTolerationIntervalStr) == 0 {
 		slog.Error("COALESCE_INTERVAL env must be set")
 		os.Exit(2)
 	}

@@ -4,16 +4,20 @@ set -eo pipefail
 
 echoerr() { echo "$@" 1>&2; }
 
-if [[ -z "$NSMALL" ]]; then
-  echo "please define env N_SMALL number of pods to deploy"
+if [[ -z "$NA" ]]; then
+  echo "please define env N_A number of pods to deploy"
   exit 1
 fi
-if [[ -z "$NMEDIUM" ]]; then
-  echo "please define env N_MEDIUM number of pods to deploy"
+if [[ -z "$NB" ]]; then
+  echo "please define env N_B number of pods to deploy"
   exit 1
 fi
-if [[ -z "$NLARGE" ]]; then
-  echo "please define env N_LARGE number of pods to deploy"
+if [[ -z "$NC" ]]; then
+  echo "please define env N_C number of pods to deploy"
+  exit 1
+fi
+if [[ -z "$ND" ]]; then
+  echo "please define env N_D number of pods to deploy"
   exit 1
 fi
 
