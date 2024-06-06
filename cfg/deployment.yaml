@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scalehist-deployment
+  labels:
+    app: scalehist
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scalehist-pod
+  template:
+    metadata:
+      labels:
+        app: scalehist-pod
+    spec:
+      volumes:
+        - name: recorder-storage
+          persistentVolumeClaim:
+            claimName: recorder-pvc
+        - name: recorder-kubeconfig
+          secret:
+            secretName: kubeconfig
+      containers:
+        - name: scalehist
+          image: suyash1418/scalehist:7.0
+          env:
+            - name: CONFIG_DIR
+              value : "/tmp/kubeconfigs"
+            - name: DB_DIR
+              value : "/tmp"
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - mountPath: "/tmp/db"
+              name: recorder-storage
+            - mountPath: "/tmp/kubeconfigs"
+              name: recorder-kubeconfig

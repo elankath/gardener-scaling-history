@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  generateName: large-
+  labels:
+    app.kubernetes.io/name: "large"
+    app.kubernetes.io/component: "demo"
+spec:
+  terminationGracePeriodSeconds: 0
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.5
+      resources:
+        requests:
+          cpu: 200m
+          memory: 26Gi
