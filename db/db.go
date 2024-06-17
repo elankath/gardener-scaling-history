@@ -20,43 +20,39 @@ import (
 
 type DataAccess struct {
 	io.Closer
-	dataDBPath                            string
-	dataDB                                *sql.DB
-	insertNodeGroup                       *sql.Stmt
-	updateNodeGroupDeletionTimeStamp      *sql.Stmt
-	insertEvent                           *sql.Stmt
-	insertEventNGAssoc                    *sql.Stmt
-	insertNodeInfo                        *sql.Stmt
-	updateNodeInfoDeletionTimeStamp       *sql.Stmt
-	insertPodInfo                         *sql.Stmt
-	insertPDB                             *sql.Stmt
-	updatePodDeletionTimeStamp            *sql.Stmt
-	updatePdbDeletionTimeStamp            *sql.Stmt
-	selectEventNGAssocForEventUID         *sql.Stmt
-	selectMaxPDBGeneration                *sql.Stmt
-	selectNodeGroupHash                   *sql.Stmt
-	selectLatestNodeGroup                 *sql.Stmt
-	selectLatestPodInfoWithName           *sql.Stmt
-	selectPodCountWithUIDAndHash          *sql.Stmt
-	selectMaxNodeGroupGeneration          *sql.Stmt
-	selectMaxShootGen                     *sql.Stmt
-	selectEventWithUID                    *sql.Stmt
-	selectAllEvents                       *sql.Stmt
-	selectUnscheduledPodsBeforeTimestamp  *sql.Stmt
-	selectScheduledPodsBeforeTimestamp    *sql.Stmt
-	selectLatestPodsBeforeTimestamp       *sql.Stmt
-	selectNodeGroupsBefore                *sql.Stmt
-	selectNodeGroupWithEventIDAndSameHash *sql.Stmt
-	selectAllActiveNodeGroupsDesc         *sql.Stmt
-	selectNodeInfosBefore                 *sql.Stmt
-	selectNodeCountWithNameAndHash        *sql.Stmt
-	selectLatestCADeployment              *sql.Stmt
-	insertCADeployment                    *sql.Stmt
-	selectCADeploymentByHash              *sql.Stmt
-	insertEventCASettingsAssoc            *sql.Stmt
-	selectEventCAAssocWithEventUID        *sql.Stmt
-	selectLatestNodesBeforeAndNotDeleted  *sql.Stmt
-	updateLatestNodeGroupSize             *sql.Stmt
+	dataDBPath                           string
+	dataDB                               *sql.DB
+	insertMCDInfo                        *sql.Stmt
+	updateMCDInfoDeletionTimeStamp       *sql.Stmt
+	selectMCDInfoHash                    *sql.Stmt
+	selectMCDInfoBefore                  *sql.Stmt
+	selectLatestMCDInfo                  *sql.Stmt
+	insertEvent                          *sql.Stmt
+	insertNodeInfo                       *sql.Stmt
+	updateNodeInfoDeletionTimeStamp      *sql.Stmt
+	insertPodInfo                        *sql.Stmt
+	insertPDB                            *sql.Stmt
+	updatePodDeletionTimeStamp           *sql.Stmt
+	updatePdbDeletionTimeStamp           *sql.Stmt
+	selectEventNGAssocForEventUID        *sql.Stmt
+	selectLatestPodInfoWithName          *sql.Stmt
+	selectPodCountWithUIDAndHash         *sql.Stmt
+	selectMaxShootGen                    *sql.Stmt
+	selectEventWithUID                   *sql.Stmt
+	selectAllEvents                      *sql.Stmt
+	selectUnscheduledPodsBeforeTimestamp *sql.Stmt
+	selectScheduledPodsBeforeTimestamp   *sql.Stmt
+	selectLatestPodsBeforeTimestamp      *sql.Stmt
+	selectAllActiveNodeGroupsDesc        *sql.Stmt
+	selectNodeInfosBefore                *sql.Stmt
+	selectNodeCountWithNameAndHash       *sql.Stmt
+	selectLatestCADeployment             *sql.Stmt
+	insertCADeployment                   *sql.Stmt
+	selectCADeploymentByHash             *sql.Stmt
+	insertEventCASettingsAssoc           *sql.Stmt
+	selectEventCAAssocWithEventUID       *sql.Stmt
+	selectLatestNodesBeforeAndNotDeleted *sql.Stmt
+	updateLatestNodeGroupSize            *sql.Stmt
 }
 
 type NodeGroupWithEventUID struct {
@@ -70,6 +66,7 @@ type nodeRow struct {
 	ProviderID         string `db:"ProviderID"`
 	AllocatableVolumes int    `db:"AllocatableVolumes"`
 	CreationTimestamp  int64  `db:"CreationTimestamp"`
+	SnapshotTimestamp  int64  `db:"SnapshotTimestamp"`
 	Labels             string
 	Taints             string
 	Allocatable        string
@@ -83,6 +80,7 @@ type podRow struct {
 	Name              string
 	Namespace         string
 	CreationTimestamp int64  `db:"CreationTimestamp"`
+	SnapshotTimestamp int64  `db:"SnapshotTimestamp"`
 	NodeName          string `db:"NodeName"`
 	NominatedNodeName string `db:"NominatedNodeName"`
 	Labels            string
@@ -92,24 +90,39 @@ type podRow struct {
 	Hash              string
 }
 
-type nodeGroupRow struct {
-	RowID             int64 `db:"RowID"` // give db tags only for mixed case fields
+type mcdRow struct {
+	RowID             int64
 	Name              string
-	CreationTimestamp int64 `db:"CreationTimestamp"`
-	CurrentSize       int   `db:"CurrentSize"`
-	TargetSize        int   `db:"TargetSize"`
-	MinSize           int   `db:"MinSize"`
-	MaxSize           int   `db:"MaxSize"`
+	Namespace         string
+	Generation        int64
+	CreationTimestamp int64
+	SnapshotTimestamp int64
+	Replicas          int
+	MaxSurge          int
+	MaxUnavailable    int
+	PoolName          string
 	Zone              string
-	MachineType       string `db:"MachineType"`
-	Architecture      string
-	ShootGeneration   int64  `db:"ShootGeneration"`
-	MCDGeneration     int64  `db:"MCDGeneration"`
-	PoolName          string `db:"PoolName"`
-	PoolMin           int    `db:"PoolMin"`
-	PoolMax           int    `db:"PoolMax"`
-	Hash              string
+	MachineClassName  string
 }
+
+//type nodeGroupRow struct {
+//	RowID             int64 `db:"RowID"` // give db tags only for mixed case fields
+//	Name              string
+//	CreationTimestamp int64 `db:"CreationTimestamp"`
+//	CurrentSize       int   `db:"CurrentSize"`
+//	TargetSize        int   `db:"TargetSize"`
+//	MinSize           int   `db:"MinSize"`
+//	MaxSize           int   `db:"MaxSize"`
+//	Zone              string
+//	MachineType       string `db:"MachineType"`
+//	Architecture      string
+//	ShootGeneration   int64  `db:"ShootGeneration"`
+//	MCDGeneration     int64  `db:"MCDGeneration"`
+//	PoolName          string `db:"PoolName"`
+//	PoolMin           int    `db:"PoolMin"`
+//	PoolMax           int    `db:"PoolMax"`
+//	Hash              string
+//}
 
 func NewDataAccess(dataDBPath string) *DataAccess {
 	access := &DataAccess{
@@ -151,10 +164,6 @@ func (d *DataAccess) Close() error {
 
 func (d *DataAccess) prepareStatements() (err error) {
 	db := d.dataDB
-	d.insertEventNGAssoc, err = db.Prepare(InsertEventNodeGroupAssoc)
-	if err != nil {
-		return fmt.Errorf("cannot create insertEventNGAssoc statement: %w", err)
-	}
 	d.selectEventNGAssocForEventUID, err = db.Prepare("SELECT * FROM event_nodegroup_assoc WHERE EventUID =? LIMIT 1")
 	if err != nil {
 		return fmt.Errorf("cannot prepare selectEventNGAssocForEventUID: %w", err)
@@ -180,30 +189,20 @@ func (d *DataAccess) prepareStatements() (err error) {
 	}
 	d.insertPDB = pdbInsertStmt
 
-	d.selectMaxPDBGeneration, err = db.Prepare("SELECT MAX(generation) from pdb_info where uid=?")
-	if err != nil {
-		return fmt.Errorf("cannot prepare pdb get max generation statement: %w", err)
-	}
-
 	d.updatePdbDeletionTimeStamp, err = db.Prepare("UPDATE pdb_info SET DeletionTimeStamp=? WHERE uid=?")
 	if err != nil {
 		return fmt.Errorf("cannot prepare updatePdbDeletionTimeStamp: %w", err)
 	}
 
-	d.updateNodeGroupDeletionTimeStamp, err = db.Prepare("UPDATE nodegroup_info SET DeletionTimeStamp=? WHERE Hash=?")
+	d.updateMCDInfoDeletionTimeStamp, err = db.Prepare(UpdateMCDInfoDeletionTimestamp)
 	if err != nil {
-		return fmt.Errorf("cannot prepare update deletion timestamp for nodegroup: %w", err)
+		return fmt.Errorf("cannot prepare updateMCDInfoDeletionTimeStamp: %w", err)
 	}
 
 	d.updateLatestNodeGroupSize, err = db.Prepare(UpdateLatestNodeGroupInfo)
-	d.selectNodeGroupsBefore, err = db.Prepare(SelectNodeGroupBefore)
+	d.selectMCDInfoBefore, err = db.Prepare(SelectMCDBefore)
 	if err != nil {
 		return fmt.Errorf("cannot prepare selectNodeGroupsBefore statement: %w", err)
-	}
-
-	d.selectNodeGroupWithEventIDAndSameHash, err = db.Prepare(SelectNodeGroupBeforeEventUIDAndSameHash)
-	if err != nil {
-		return fmt.Errorf("cannot prepare selectNodeGroupWithEventIDAndSameHash: %w", err)
 	}
 
 	d.selectAllActiveNodeGroupsDesc, err = db.Prepare("SELECT * from nodegroup_info where  DeletionTimestamp is null  order by RowID desc")
@@ -215,9 +214,9 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare get node group hash statement: %w", err)
 	}
 
-	d.selectLatestNodeGroup, err = db.Prepare("SELECT * FROM nodegroup_info WHERE name=? ORDER BY RowID DESC LIMIT 1")
+	d.selectLatestMCDInfo, err = db.Prepare(SelectLatestMCDInfo)
 	if err != nil {
-		return fmt.Errorf("cannot prepare selectLatestNodeGroup: %w", err)
+		return fmt.Errorf("cannot prepare selectLatestMCDInfo: %w", err)
 	}
 
 	d.selectLatestPodInfoWithName, err = db.Prepare("SELECT * FROM pod_info WHERE Name=? ORDER BY CreationTimestamp DESC LIMIT 1")
@@ -320,18 +319,24 @@ func (d *DataAccess) prepareStatements() (err error) {
 func (d *DataAccess) createSchema() error {
 	db := d.dataDB
 
-	result, err := db.Exec(CreateEventInfoTable)
+	result, err := db.Exec(CreateMCDInfoTable)
+	if err != nil {
+		return fmt.Errorf("cannot create mcd_info table: %w", err)
+	}
+	slog.Info("successfully created mcd_info table", "result", result)
+
+	result, err = db.Exec(CreateEventInfoTable)
 	if err != nil {
 		return fmt.Errorf("cannot create event_info table: %w", err)
 	}
 
 	slog.Info("successfully created event_info table", "result", result)
 
-	result, err = db.Exec(CreateNodeGroupInfoTable)
-	if err != nil {
-		return fmt.Errorf("cannot create nodegroup_info table: %w", err)
-	}
-	slog.Info("successfully created nodegroup_info table", "result", result)
+	//result, err = db.Exec(CreateNodeGroupInfoTable)
+	//if err != nil {
+	//	return fmt.Errorf("cannot create nodegroup_info table: %w", err)
+	//}
+	//slog.Info("successfully created nodegroup_info table", "result", result)
 
 	result, err = db.Exec(CreateNodeInfoTable)
 	if err != nil {
@@ -360,11 +365,11 @@ func (d *DataAccess) createSchema() error {
 	}
 	slog.Info("successfully created pdb_info table", "result", result)
 
-	result, err = db.Exec(CreateEventNodeGroupAssocTable)
-	if err != nil {
-		return fmt.Errorf("cannot create event_assoc table: %w", err)
-	}
-	slog.Info("successfully created event_nodegroup_assoc table", "result", result)
+	//result, err = db.Exec(CreateEventNodeGroupAssocTable)
+	//if err != nil {
+	//	return fmt.Errorf("cannot create event_assoc table: %w", err)
+	//}
+	//slog.Info("successfully created event_nodegroup_assoc table", "result", result)
 
 	result, err = db.Exec(CreateCASettingsInfoTable)
 	if err != nil {

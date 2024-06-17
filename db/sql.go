@@ -2,63 +2,98 @@ package db
 
 // TODO: move this to separate sql package. Move all the query literals into this sql package
 
-const CreateNodeGroupInfoTable = `CREATE TABLE IF NOT EXISTS nodegroup_info(
+const CreateMCDInfoTable = `CREATE TABLE IF NOT EXISTS mcd_info(
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
-	Name VARCHAR(256),
+	Name TEXT,
+	Namespace TEXT,
+	Generation INTEGER,
 	CreationTimestamp INT NOT NULL,
-	CurrentSize int,
-	TargetSize int,
-	MinSize int, 
-	MaxSize int,
-	Zone VARCHAR(128),
-	MachineType TEXT, 
-	Architecture VARCHAR(128),
-	ShootGeneration INTEGER, 
-	MCDGeneration INTEGER,
-	PoolName VARCHAR(256), 
-	PoolMin int,
-	PoolMax int,
+	SnapshotTimestamp INT NOT NULL,
+	Replicas INTEGER,
+	MaxSurge INTEGER,
+	MaxUnavailable INTEGER, 
+	PoolName TEXT,
+	Zone TEXT,
+	MachineClassName TEXT,
 	Hash TEXT,
 	DeletionTimestamp DATETIME)`
-
-const InsertNodeGroupInfo = `INSERT INTO nodegroup_info(
+const InsertMCDInfo = `INSERT INTO mcd_info(
 	Name,
+	Namespace,
+    Generation,
 	CreationTimestamp,
-	CurrentSize,
-	TargetSize,
-	MinSize, 
-	MaxSize,
+	SnapshotTimestamp,
+	Replicas,
+	MaxSurge,
+	MaxUnavailable,
+	PoolName,
 	Zone,
-	MachineType, 
-	Architecture,
-	ShootGeneration, 
-	MCDGeneration,
-	PoolName, 
-	PoolMin,
-	PoolMax,
-	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	MachineClassName,
+	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const SelectMCDBefore = `SELECT * from mcd_info where SnapshotTimestamp < ? AND DeletionTimestamp is null ORDER BY SnapshotTimestamp DESC`
+const UpdateMcdInfoDeletionTimestamp = `UPDATE mcd_info SET DeletionTimestamp = ? where Name = ?`
+const SelectMCDInfoHash = "SELECT Hash FROM mcd_info WHERE name=? ORDER BY RowID desc LIMIT 1"
+const SelectLatestMCDInfo = "SELECT * FROM mcd_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
+const UpdateMCDInfoDeletionTimestamp = "UPDATE mcd_info SET DeletionTimeStamp=? WHERE Hash=?"
+
+//const CreateNodeGroupInfoTable = `CREATE TABLE IF NOT EXISTS nodegroup_info(
+//	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
+//	Name VARCHAR(256),
+//	CreationTimestamp INT NOT NULL,
+//	CurrentSize int,
+//	TargetSize int,
+//	MinSize int,
+//	MaxSize int,
+//	Zone VARCHAR(128),
+//	MachineType TEXT,
+//	Architecture VARCHAR(128),
+//	ShootGeneration INTEGER,
+//	MCDGeneration INTEGER,
+//	PoolName VARCHAR(256),
+//	PoolMin int,
+//	PoolMax int,
+//	Hash TEXT,
+//	DeletionTimestamp DATETIME)`
+
+//const InsertNodeGroupInfo = `INSERT INTO nodegroup_info(
+//	Name,
+//	CreationTimestamp,
+//	CurrentSize,
+//	TargetSize,
+//	MinSize,
+//	MaxSize,
+//	Zone,
+//	MachineType,
+//	Architecture,
+//	ShootGeneration,
+//	MCDGeneration,
+//	PoolName,
+//	PoolMin,
+//	PoolMax,
+//	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const UpdateLatestNodeGroupInfo = `UPDATE nodegroup_info SET TargetSize=? WHERE RowID=(SELECT max(RowID) FROM nodegroup_info where Name = ?)`
-const SelectNodeGroupBefore = `SELECT * from nodegroup_info where CreationTimestamp < ? AND DeletionTimestamp is null ORDER BY CreationTimestamp DESC`
-const SelectNodeGroupBeforeEventUIDAndSameHash = `SELECT 
-	n.RowID,
-	n.Name,
-	n.CreationTimestamp, 
-	n.CurrentSize,
-	n.TargetSize, 
-	n.MinSize, 
-	n.MaxSize,
-	n.Zone,
-	n.MachineType,
-	n.Architecture, 
-	n.ShootGeneration,
-	n.MCDGeneration,
-	n.PoolName,
-	n.PoolMin,
-	n.PoolMax,
-	n.Hash,
-	e.EventUID 
-	from nodegroup_info as n inner join event_nodegroup_assoc as e WHERE n.RowID = e.NodeGroupRowID`
+
+//const SelectNodeGroupBefore = `SELECT * from nodegroup_info where CreationTimestamp < ? AND DeletionTimestamp is null ORDER BY CreationTimestamp DESC`
+//const SelectNodeGroupBeforeEventUIDAndSameHash = `SELECT
+//	n.RowID,
+//	n.Name,
+//	n.CreationTimestamp,
+//	n.CurrentSize,
+//	n.TargetSize,
+//	n.MinSize,
+//	n.MaxSize,
+//	n.Zone,
+//	n.MachineType,
+//	n.Architecture,
+//	n.ShootGeneration,
+//	n.MCDGeneration,
+//	n.PoolName,
+//	n.PoolMin,
+//	n.PoolMax,
+//	n.Hash,
+//	e.EventUID
+//	from nodegroup_info as n inner join event_nodegroup_assoc as e WHERE n.RowID = e.NodeGroupRowID`
 
 const CreateNodeInfoTable = `CREATE TABLE IF NOT EXISTS node_info (
 	Name TEXT, 
@@ -154,15 +189,6 @@ const InsertEvent = `INSERT INTO event_info(
 	InvolvedObjectNamespace,
 	InvolvedObjectUID) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(UID) DO NOTHING`
 
-const CreateEventNodeGroupAssocTable = `CREATE TABLE IF NOT EXISTS event_nodegroup_assoc(
-	 EventUID TEXT,
-	 NodeGroupRowID TEXT,
-	 NodeGroupHash TEXT,
-	 PRIMARY KEY (EventUID, NodeGroupRowID))`
-
-const InsertEventNodeGroupAssoc = `INSERT INTO event_nodegroup_assoc(EventUID, NodeGroupRowID, NodeGroupHash) 
-	VALUES(?,?,?) ON CONFLICT(EventUID, NodeGroupRowID) DO NOTHING`
-
 const CreateCASettingsInfoTable = `CREATE TABLE IF NOT EXISTS ca_settings_info(
     Id INTEGER PRIMARY KEY AUTOINCREMENT,
     Expander TEXT,
@@ -180,17 +206,5 @@ const InsertCADeployment = `INSERT INTO ca_settings_info (
 	Priorities,
     Hash
 ) VALUES (? ,? , ? ,?)`
-
-const CreateEventCAAssocTable = `CREATE TABLE IF NOT EXISTS event_ca_assoc(
-    EventUID TEXT PRIMARY KEY ,
-    CASettingsHash TEXT
-)`
-
-const InsertEventCAAssoc = `INSERT INTO event_ca_assoc(
-    EventUID,
-    CASettingsHash
-) VALUES(?,?)`
-
-const SelectEventCAAssocWithEventUID = `SELECT * FROM event_ca_assoc WHERE EventUID = ?`
 
 const SelectLatestNodesBeforeAndNotDeleted = `SELECT * from (select * from node_info where node_info.CreationTimestamp <= ? and node_info.DeletionTimestamp is null order by RowID DESC) GROUP by Name`

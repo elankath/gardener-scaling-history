@@ -38,9 +38,10 @@ type ReporterParams struct {
 }
 
 type Analysis struct {
+	time.Duration
 	Name               string
-	CoalesceInterval   time.Duration
-	TolerationInterval time.Duration
+	CoalesceInterval   string
+	TolerationInterval string
 	Scenarios          []Scenario
 	//TODO: think of other useful fields.
 }
@@ -112,6 +113,7 @@ type PodInfo struct {
 	Namespace         string
 	UID               string
 	CreationTimestamp time.Time
+	SnapshotTimestamp time.Time
 	NodeName          string
 	NominatedNodeName string
 	Labels            map[string]string
@@ -128,6 +130,7 @@ type NodeInfo struct {
 	Name               string
 	Namespace          string
 	CreationTimestamp  time.Time
+	SnapshotTimestamp  time.Time
 	ProviderID         string
 	AllocatableVolumes int
 	Labels             map[string]string
@@ -153,6 +156,22 @@ type EventInfo struct {
 	InvolvedObjectName      string    `db:"InvolvedObjectName"`
 	InvolvedObjectNamespace string    `db:"InvolvedObjectNamespace"`
 	InvolvedObjectUID       string    `db:"InvolvedObjectUID"`
+}
+
+type MachineDeploymentInfo struct {
+	RowID             int64
+	Name              string
+	Namespace         string
+	Generation        int64
+	CreationTimestamp time.Time
+	SnapshotTimestamp time.Time
+	Replicas          int
+	MaxSurge          int
+	MaxUnavailable    int
+	PoolName          string
+	Zone              string
+	MachineClassName  string
+	Hash              string
 }
 
 type EventNodeGroupAssoc struct {
