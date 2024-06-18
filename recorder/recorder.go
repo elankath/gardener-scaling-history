@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/elankath/gardener-scalehist"
-	"github.com/elankath/gardener-scalehist/db"
+	"github.com/elankath/gardener-cluster-recorder"
+	"github.com/elankath/gardener-cluster-recorder/db"
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
@@ -33,6 +33,10 @@ import (
 	"time"
 )
 
+const PoolLabel = "worker.gardener.cloud/pool"
+
+var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone"}
+
 var machineDeploymentGVR = schema.GroupVersionResource{Group: "machine.sapcloud.io", Version: "v1alpha1", Resource: "machinedeployments"}
 var workerGVR = schema.GroupVersionResource{Group: "extensions.gardener.cloud", Version: "v1alpha1", Resource: "workers"}
 var deploymentGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
@@ -47,7 +51,7 @@ const machineSetScaleUpPattern = `Scaled up.*? to (\d+)`
 var podTriggeredScaleUpRegex = regexp.MustCompile(podTriggerScaleUpPattern)
 var machineSetScaleUpRegex = regexp.MustCompile(machineSetScaleUpPattern)
 
-func NewDefaultRecorder(params scalehist.RecorderParams, startTime time.Time) (scalehist.Recorder, error) {
+func NewDefaultRecorder(params gcr.RecorderParams, startTime time.Time) (gcr.Recorder, error) {
 	// Load kubeconfig file
 	config, err := clientcmd.BuildConfigFromFlags("", params.ShootKubeConfigPath)
 	if err != nil {
@@ -105,10 +109,10 @@ func NewDefaultRecorder(params scalehist.RecorderParams, startTime time.Time) (s
 	}, nil
 }
 
-var _ scalehist.Recorder = (*defaultRecorder)(nil)
+var _ gcr.Recorder = (*defaultRecorder)(nil)
 
 type defaultRecorder struct {
-	params                 *scalehist.RecorderParams
+	params                 *gcr.RecorderParams
 	startTime              time.Time
 	connChecker            *ConnChecker
 	informerFactory        informers.SharedInformerFactory
@@ -124,9 +128,6 @@ type defaultRecorder struct {
 	deploymentInformer     informers.GenericInformer
 	configmapInformer      informers.GenericInformer
 	dataAccess             *db.DataAccess
-	workerPoolsMap         sync.Map
-	mcdMinMaxMap           sync.Map
-	mcdHashesMap           sync.Map
 	nodeAllocatableVolumes sync.Map
 	stopCh                 <-chan struct{}
 }
@@ -183,14 +184,20 @@ func GetInnerMap(parentMap map[string]any, keys ...string) (map[string]any, erro
 	return childMap, nil
 }
 
-func parseWorkerPools(worker *unstructured.Unstructured) (map[string]scalehist.WorkerPool, error) {
+func getWorkerPoolInfos(worker *unstructured.Unstructured) (map[string]gcr.WorkerPoolInfo, error) {
 	specMapObj, err := GetInnerMap(worker.UnstructuredContent(), "spec")
 	if err != nil {
 		slog.Error("error getting the inner map for worker", "error", err)
 		return nil, err
 	}
-	workerPools := make(map[string]scalehist.WorkerPool)
 	poolsList := specMapObj["pools"].([]any)
+
+	gardenerTimestamp, err := getGardenerTimestamp(worker)
+	if err != nil {
+		slog.Error("error getting the gardenerTimestamp from worker obj", "error", err)
+		return nil, err
+	}
+	var poolInfosByName = make(map[string]gcr.WorkerPoolInfo)
 	for _, pool := range poolsList {
 		poolMap := pool.(map[string]any)
 		var zones []string
@@ -208,20 +215,25 @@ func parseWorkerPools(worker *unstructured.Unstructured) (map[string]scalehist.W
 			//TODO make better error message
 			return nil, err
 		}
-		wp := scalehist.WorkerPool{
-			Name:            poolMap["name"].(string),
-			Minimum:         int(poolMap["minimum"].(int64)),
-			Maximum:         int(poolMap["maximum"].(int64)),
-			MaxSurge:        maxSurge,
-			MaxUnavailable:  maxUnavailable,
-			ShootGeneration: worker.GetGeneration(),
-			MachineType:     poolMap["machineType"].(string),
-			Architecture:    poolMap["architecture"].(string),
-			Zones:           zones,
+		wp := gcr.WorkerPoolInfo{
+			SnapshotMeta: gcr.SnapshotMeta{
+				CreationTimestamp: worker.GetCreationTimestamp().UTC(),
+				SnapshotTimestamp: gardenerTimestamp,
+				Name:              poolMap["name"].(string),
+				Namespace:         worker.GetNamespace(),
+			},
+			Minimum:        int(poolMap["minimum"].(int64)),
+			Maximum:        int(poolMap["maximum"].(int64)),
+			MaxSurge:       maxSurge,
+			MaxUnavailable: maxUnavailable,
+			MachineType:    poolMap["machineType"].(string),
+			Architecture:   poolMap["architecture"].(string),
+			Zones:          zones,
 		}
-		workerPools[wp.Name] = wp
+		wp.Hash = wp.GetHash()
+		poolInfosByName[wp.Name] = wp
 	}
-	return workerPools, nil
+	return poolInfosByName, nil
 }
 
 func (r *defaultRecorder) onAddPod(obj any) {
@@ -240,9 +252,9 @@ func IsOwnedBy(pod *corev1.Pod, gvks []schema.GroupVersionKind) bool {
 }
 
 // ComputePodScheduleStatus -1 => NotDetermined, 0 => Scheduled, 1 => Unscheduled
-func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus scalehist.PodScheduleStatus) {
+func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gcr.PodScheduleStatus) {
 
-	scheduleStatus = scalehist.PodSchedulePending
+	scheduleStatus = gcr.PodSchedulePending
 
 	if len(pod.Status.Conditions) == 0 && pod.Status.Phase == corev1.PodPending {
 		return scheduleStatus
@@ -251,18 +263,18 @@ func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus scalehist.PodSche
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodScheduled && condition.Reason == corev1.PodReasonUnschedulable {
 			//Creation Time does not change for a unschedulable pod with single unschedulable condition.
-			scheduleStatus = scalehist.PodUnscheduled
+			scheduleStatus = gcr.PodUnscheduled
 			break
 		}
 	}
 
 	if pod.Spec.NodeName != "" {
-		scheduleStatus = scalehist.PodScheduleCommited
+		scheduleStatus = gcr.PodScheduleCommited
 		return
 	}
 
 	if pod.Status.NominatedNodeName != "" {
-		scheduleStatus = scalehist.PodScheduleNominated
+		scheduleStatus = gcr.PodScheduleNominated
 		return
 	}
 
@@ -270,7 +282,7 @@ func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus scalehist.PodSche
 		{Group: "apps", Version: "v1", Kind: "DaemonSet"},
 		{Version: "v1", Kind: "Node"},
 	}) {
-		scheduleStatus = scalehist.PodScheduleCommited
+		scheduleStatus = gcr.PodScheduleCommited
 	}
 
 	return scheduleStatus
@@ -295,7 +307,7 @@ func (r *defaultRecorder) onUpdatePod(old, new any) {
 	}
 
 	podInfo := podInfoFromPod(podNew)
-	if podInfo.PodScheduleStatus == scalehist.PodSchedulePending {
+	if podInfo.PodScheduleStatus == gcr.PodSchedulePending {
 		slog.Info("pod is in PodSchedulePending state, skipping persisting it", "pod.UID", podInfo.UID, "pod.Name", podInfo.Name)
 		return
 	}
@@ -345,13 +357,15 @@ func (r *defaultRecorder) onUpdateNode(old interface{}, new interface{}) {
 	if nodeOld != nil {
 		nodeOld = old.(*corev1.Node)
 	}
-	nodeNewInfo := r.nodeInfoFromNode(nodeNew)
-	InvokeOrScheduleFunc("onUpdateNode", 10*time.Second, nodeNewInfo, func(_ scalehist.NodeInfo) error {
-		nodeNewInfo := r.nodeInfoFromNode(nodeNew)
-		if nodeNewInfo.AllocatableVolumes == 0 {
-			slog.Warn("Allocatable Volumes key not found. Skipping insert", "node.name", nodeNewInfo.Name)
+	allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
+	nodeNewInfo := nodeInfoFromNode(nodeNew, allocatableVolumes)
+	InvokeOrScheduleFunc("onUpdateNode", 10*time.Second, nodeNewInfo, func(_ gcr.NodeInfo) error {
+		allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
+		if allocatableVolumes == 0 {
+			slog.Warn("Allocatable Volumes key not found. Skipping insert", "node.Name", nodeNewInfo.Name)
 			return ErrKeyNotFound
 		}
+		nodeNewInfo := nodeInfoFromNode(nodeNew, allocatableVolumes)
 		countWithSameHash, err := r.dataAccess.CountNodeInfoWithHash(nodeNew.Name, nodeNewInfo.Hash)
 		if err != nil {
 			slog.Error("cannot CountPodInfoWithSpecHash", "node.Name", nodeNew.Name, "node.Hash", nodeNewInfo.Hash, "error", err)
@@ -368,6 +382,14 @@ func (r *defaultRecorder) onUpdateNode(old interface{}, new interface{}) {
 		}
 		return nil
 	})
+}
+
+func (r *defaultRecorder) getAllocatableVolumes(nodeName string) (allocatableVolumes int) {
+	val, _ := r.nodeAllocatableVolumes.Load(nodeName)
+	if val != nil {
+		allocatableVolumes = val.(int)
+	}
+	return
 }
 
 func InvokeOrScheduleFunc[T any](label string, duration time.Duration, entity T, fn func(T) error) {
@@ -393,7 +415,6 @@ func (r *defaultRecorder) onDeleteNode(obj interface{}) {
 	}
 }
 
-// OnAdd(obj interface{}, isInInitialList bool)
 func (r *defaultRecorder) onAddEvent(obj any) {
 	event := obj.(*corev1.Event)
 	isCAEvent := event.Source.Component == "cluster-autoscaler" || event.ReportingController == "cluster-autoscaler"
@@ -426,7 +447,7 @@ func (r *defaultRecorder) onAddEvent(obj any) {
 		reportingController = event.Source.Component
 	}
 
-	eventInfo := scalehist.EventInfo{
+	eventInfo := gcr.EventInfo{
 		UID:                     string(event.UID),
 		EventTime:               eventTime,
 		ReportingController:     reportingController,
@@ -444,10 +465,6 @@ func (r *defaultRecorder) onAddEvent(obj any) {
 			errCount++
 		}
 	}
-	if isTriggerScaleUp {
-		InvokeOrScheduleFunc("storeAssociateNodeGroupWithScaleUp", 10*time.Second, eventInfo, r.storeAssociateNodeGroupWithScaleUp)
-		InvokeOrScheduleFunc("storeAssociateNodeGroupWithScaleUp", 10*time.Second, eventInfo, r.storeAssociatedCASettingsInfo)
-	}
 }
 
 func parseMachineSetScaleUpMessage(msg string) (targetSize int, err error) {
@@ -457,134 +474,33 @@ func parseMachineSetScaleUpMessage(msg string) (targetSize int, err error) {
 		return
 	}
 	return
-
 }
 
-// pod triggered scale-up: [{shoot--i034796--aw2-p2-z1 1->3 (max: 3)}]
-// fixme: only return CS,TS, MX as tuple.
-func parseTriggeredScaleUpMessage(msg string) (ng scalehist.NodeGroupInfo, err error) {
-	groups := podTriggeredScaleUpRegex.FindStringSubmatch(msg)
-	ng.Name = groups[1]
-	ng.CurrentSize, err = strconv.Atoi(groups[2])
-	if err != nil { //TODO wrap in better error message
-		return
-	}
-	ng.TargetSize, err = strconv.Atoi(groups[3])
+// processWorker has a TODO: should ideally leverage a generic helper method.
+func (r *defaultRecorder) processWorker(workerOld, workerNew *unstructured.Unstructured) error {
+	newPoolInfos, err := getWorkerPoolInfos(workerNew)
 	if err != nil {
-		return
+		return fmt.Errorf("cannot parse worker pools for worker %q of generation %d: %w", workerNew.GetName(), workerNew.GetGeneration(), err)
 	}
-	ng.MaxSize, err = strconv.Atoi(groups[4])
-	if err != nil {
-		return
-	}
-	return
-}
-
-func (r *defaultRecorder) storeAssociatedCASettingsInfo(eventInfo scalehist.EventInfo) error {
-	caSettings, err := r.dataAccess.GetLatestCADeployment()
-	if err != nil {
-		return err
-	}
-	assoc := scalehist.EventCASettingsAssoc{
-		EventUID:       eventInfo.UID,
-		CASettingsHash: caSettings.Hash,
-	}
-	slog.Info("storeAssociatedCASettingsInfo. Storing into event_ca_assoc.", "assoc", assoc)
-	err = r.dataAccess.StoreEventCASettingsAssoc(assoc)
-	if err != nil {
-		slog.Error("cannot storeAssociatedCASettingsInfo", "error", err, "event.UID", eventInfo.UID, "event.Message", eventInfo.Message, "event.EventTime", eventInfo.EventTime)
-	}
-	return err
-}
-func (r *defaultRecorder) storeAssociateNodeGroupWithScaleUp(eventInfo scalehist.EventInfo) error {
-	newNG, err := parseTriggeredScaleUpMessage(eventInfo.Message)
-	if err != nil {
-		return err //TODO: wrap with label
-	}
-	currNG, err := r.dataAccess.LoadLatestNodeGroup(newNG.Name)
-	if err != nil {
-		return fmt.Errorf("cannot find latest persisted node group with name %q and hence cannot persist new scale-up change in nodegroup_info: %w", newNG.Name, ErrKeyNotFound)
-	}
-	newNG.CreationTimestamp = eventInfo.EventTime
-	newNG.MinSize = currNG.MinSize
-	newNG.MachineType = currNG.MachineType
-	newNG.Zone = currNG.Zone
-	newNG.Architecture = currNG.Architecture
-	newNG.PoolName = currNG.PoolName
-	newNG.PoolMin = currNG.PoolMin
-	newNG.PoolMax = currNG.PoolMax
-	newNG.ShootGeneration = currNG.ShootGeneration
-	newNG.MCDGeneration = currNG.MCDGeneration
-
-	newNG.Hash = newNG.GetHash()
-	if currNG.Hash == newNG.Hash {
-		slog.Info("storeAssociateNodeGroupWithScaleUp: no change in nodegroup hash. skipping store for node group.", "newNG.name", newNG.Name, "event.Message", eventInfo.Message)
-		newNG.RowID = currNG.RowID
-	} else {
-		slog.Info("storeAssociateNodeGroupWithScaleUp: currNG hash differs from newNG hash. Storing.", "currNG.hash", currNG.Hash, "newNG.hash", newNG.Hash)
-		newNG.RowID, err = r.dataAccess.StoreNodeGroup(newNG)
-	}
-
-	assoc := scalehist.EventNodeGroupAssoc{
-		EventUID:       eventInfo.UID,
-		NodeGroupRowID: newNG.RowID,
-		NodeGroupHash:  newNG.Hash,
-	}
-	slog.Info("storeAssociateNodeGroupWithScaleUp. Storing into event_nodegroup_assoc.", "assoc", assoc)
-	err = r.dataAccess.StoreEventNGAssoc(assoc)
-	if err != nil {
-		slog.Warn("cannot storeAssociateNodeGroupWithScaleUp", "event.uid", eventInfo.UID, "event.message", eventInfo.Message, "error", err)
-	}
-	return err
-}
-
-func parseMCDMinMaxFromShootWorker(worker *unstructured.Unstructured) (mcdMinMaxMap map[string]sizeLimits, err error) {
-	mcdMinMaxMap = make(map[string]sizeLimits)
-	statusMap, err := GetInnerMap(worker.UnstructuredContent(), "status")
-	if err != nil {
-		err = fmt.Errorf("cannot get worker.status for %q: %w", worker.GetName(), err)
-		return
-	}
-	mcdListObj := statusMap["machineDeployments"]
-	if mcdListObj == nil {
-		err = fmt.Errorf("cannot find machineDeployments key in status map: %w", ErrKeyNotFound)
-		return
-	}
-	mcdList := mcdListObj.([]any)
-	for _, mcd := range mcdList {
-		mcdMap := mcd.(map[string]any)
-		mcdName := mcdMap["name"].(string)
-		mms := sizeLimits{
-			Name: mcdName,
-			Min:  int(mcdMap["minimum"].(int64)),
-			Max:  int(mcdMap["maximum"].(int64)),
+	var oldPoolInfos map[string]gcr.WorkerPoolInfo
+	if workerOld != nil {
+		oldPoolInfos, err = getWorkerPoolInfos(workerOld)
+		if err != nil {
+			return fmt.Errorf("cannot parse worker pools for worker %q of generation %d: %w", workerOld.GetName(), workerOld.GetGeneration(), err)
 		}
-		mcdMinMaxMap[mcdName] = mms
 	}
-	return
-}
-
-func (r *defaultRecorder) processWorker(worker *unstructured.Unstructured) error {
-	workerPoolsMap, err := parseWorkerPools(worker)
-	if err != nil {
-		return fmt.Errorf("cannot parse worker pools for worker %q of generation %d: %w", worker.GetName(), worker.GetGeneration(), err)
-	}
-	for k, v := range workerPoolsMap {
-		r.workerPoolsMap.Store(k, v)
-	}
-	mcdMinMaxMap, err := parseMCDMinMaxFromShootWorker(worker)
-	if err != nil {
-		return err
-	}
-	slog.Debug("processWorker: finished parseMCDMinMaxFromShootWorker", "mcdMinMaxMap", mcdMinMaxMap)
-
-	for name, minMax := range mcdMinMaxMap {
-		currMinMax, ok := r.mcdMinMaxMap.Load(name)
-		if ok && currMinMax == minMax {
-			continue
+	for name, poolNew := range newPoolInfos {
+		if oldPoolInfos != nil {
+			poolOld, ok := oldPoolInfos[name]
+			if ok && poolOld.Hash == poolNew.Hash {
+				slog.Info("Skipping store of poolNew since it has same hash as poolOld.", "Name", name, "Hash", poolNew.Hash)
+				continue
+			}
 		}
-		slog.Debug("processWorker: storing MinMax for MCD.", "mcd.Name", name, "mcd.Min", minMax.Min, "mcd.Max", minMax.Max)
-		r.mcdMinMaxMap.Store(name, minMax)
+		_, err = r.dataAccess.StoreWorkerPoolInfo(poolNew)
+		if err != nil {
+			return fmt.Errorf("cannot store WorkerPoolInfo %q: %w", poolNew, err)
+		}
 	}
 	return nil
 }
@@ -592,20 +508,21 @@ func (r *defaultRecorder) processWorker(worker *unstructured.Unstructured) error
 func (r *defaultRecorder) onAddWorker(obj interface{}) {
 	worker := obj.(*unstructured.Unstructured)
 	slog.Info("Worker obj added.", "worker", worker.GetName(), "worker.Generation", worker.GetGeneration())
-	err := r.processWorker(worker)
+	err := r.processWorker(nil, worker)
 	if err != nil {
 		slog.Error("onAddWorker failed", "error", err)
 	}
 }
 
-func (r *defaultRecorder) onUpdateWorker(_, new any) {
-	worker := new.(*unstructured.Unstructured)
-	slog.Info("Worker obj changed.", "worker", worker.GetName(), "worker.Generation", worker.GetGeneration())
+func (r *defaultRecorder) onUpdateWorker(old, new any) {
+	workerNew := new.(*unstructured.Unstructured)
+	slog.Info("Worker obj changed.", "workerNew", workerNew.GetName(), "workerNew.Generation", workerNew.GetGeneration())
 	if new == nil {
-		slog.Error("onUpdateWorker: new worker is nil")
+		slog.Error("onUpdateWorker: new workerNew is nil")
 		return
 	}
-	err := r.processWorker(worker)
+	workerOld := old.(*unstructured.Unstructured)
+	err := r.processWorker(workerOld, workerNew)
 	if err != nil {
 		slog.Error("onUpdateWorker failed", "error", err)
 	}
@@ -627,18 +544,20 @@ func (r *defaultRecorder) onUpdateWorker(_, new any) {
 //	return &timestamp, err
 //}
 
-//func getGardenerTimestamp(worker *unstructured.Unstructured) (*time.Time, error) {
-//	annotationsMap, err := GetInnerMap(worker.UnstructuredContent(), "metadata", "annotations")
-//	if err != nil {
-//		return nil, fmt.Errorf("cannot get metadata.annotations from worker %q: %w", worker.GetName(), err)
-//	}
-//	timeStampStr := annotationsMap["gardener.cloud/timestamp"].(string)
-//	gardenerTimeStamp, err := time.Parse(time.RFC3339Nano, timeStampStr)
-//	if err != nil {
-//		return nil, fmt.Errorf("cannot parse timeStamp %q: %w", timeStampStr, err)
-//	}
-//	return &gardenerTimeStamp, nil
-//}
+func getGardenerTimestamp(worker *unstructured.Unstructured) (gardenerTimeStamp time.Time, err error) {
+	annotationsMap, err := GetInnerMap(worker.UnstructuredContent(), "metadata", "annotations")
+	if err != nil {
+		err = fmt.Errorf("cannot get metadata.annotations from worker %q: %w", worker.GetName(), err)
+		return
+	}
+	timeStampStr := annotationsMap["gardener.cloud/timestamp"].(string)
+	gardenerTimeStamp, err = time.Parse(time.RFC3339Nano, timeStampStr)
+	if err != nil {
+		err = fmt.Errorf("cannot parse timeStamp %q: %w", timeStampStr, err)
+		return
+	}
+	return gardenerTimeStamp.UTC(), nil
+}
 
 func (r *defaultRecorder) onAddPDB(pdbObj any) {
 	//TODO: PDB
@@ -797,152 +716,47 @@ func (r *defaultRecorder) runInformers(stopCh <-chan struct{}) {
 	r.controlInformerFactory.Start(stopCh)
 }
 
-func (r *defaultRecorder) getWorkerPool(machineDeploymentName string) (wp scalehist.WorkerPool, err error) {
-	found := false
-	r.workerPoolsMap.Range(func(_, p any) bool {
-		pool := p.(scalehist.WorkerPool)
-		nameWithoutZone := r.params.ShootNameSpace + "-" + pool.Name
-		if strings.HasPrefix(machineDeploymentName, nameWithoutZone) {
-			wp = pool
-			found = true
-			return false
-		}
-		return true
-	})
-	if !found {
-		err = fmt.Errorf("could not find worker pool for MachineDeployment %q", machineDeploymentName)
-	}
-	return
-}
-
 func (r *defaultRecorder) processMCD(mcdOld, mcdNew *unstructured.Unstructured) error {
-	now := time.Now()
-
-	mcdName := mcdNew.GetName()
-	mcdGeneration := mcdNew.GetGeneration()
-
-	// if MCD generation is same between old and new, then skip
-	//if mcdOld != nil && mcdNew != nil && mcdOld.GetGeneration() == mcdNew.GetGeneration() {
-	//	slog.Info("processMCD: Skipping update since old & new MCD have same generation.", "mcd.Name", mcdName, "mcd.Generation", mcdNew.GetGeneration())
-	//	return nil
-	//}
-
-	// check whether min max size for MCDs (got from worker) has been populated.
-	val, ok := r.mcdMinMaxMap.Load(mcdName)
-	if !ok {
-		return fmt.Errorf("min/max size not yet available for mcd %q: %w", mcdName, ErrKeyNotFound)
-	}
-	mcdSizeLimits := val.(sizeLimits)
-
-	var targetSize int
-	replicas, err := GetInnerMapValue(mcdNew.UnstructuredContent(), "spec", "replicas")
-	if err != nil {
-		replicas = 0
-		targetSize = 0
-		//return fmt.Errorf("cannot get the .Spec.replicas from mcdNew %q: %w", mcdName, err)
-	} else {
-		targetSize = int(replicas.(int64))
-	}
-
-	var currentSize int
+	var err error
+	var mcdOldInfo, mcdNewInfo gcr.MachineDeploymentInfo
+	now := time.Now().UTC()
 	if mcdOld != nil {
-		replicas, err := GetInnerMapValue(mcdOld.UnstructuredContent(), "spec", "replicas")
+		mcdOldInfo, err = asMachineDeploymentInfo(mcdOld, now)
 		if err != nil {
-			replicas = 0
-			currentSize = 0
-		} else {
-			currentSize = int(replicas.(int64))
-		}
-	} else {
-		statusMap, err := GetInnerMap(mcdNew.UnstructuredContent(), "status")
-		if err != nil {
-			return fmt.Errorf("cannot get the status map from the mcdNew %q: %w", mcdName, err)
-		}
-		availableReplicas, ok := statusMap["availableReplicas"]
-		if ok {
-			slog.Info("setting node group CurrentSize to mcd.availableReplicas for nodegroup", "ng.Name", mcdName, "mcd.availableReplicas", availableReplicas)
-			currentSize = int(availableReplicas.(int64))
+			return err
 		}
 	}
-
-	var lastUpdateTime time.Time
-	if mcdOld == nil { // fresh guy
-		lastUpdateTime = mcdNew.GetCreationTimestamp().UTC()
-	} else {
-		lastUpdateTime = now.UTC()
-	}
-	//conditions := getNodeConditionsFromUnstructuredMCD(mcdNew)
-	//if conditions == nil {
-	//	lastUpdateTime = time.Now().UTC()
-	//} else {
-	//	lastUpdateTime = getLastUpdateTime(conditions)
-	//}
-	creationTimestamp := lastUpdateTime
-
-	pool, err := r.getWorkerPool(mcdName)
+	mcdNewInfo, err = asMachineDeploymentInfo(mcdNew, now)
 	if err != nil {
 		return err
 	}
-	zoneIndexStr := strings.TrimPrefix(mcdName, r.params.ShootNameSpace+"-"+pool.Name+"-z")
-	zoneIndex, err := strconv.Atoi(zoneIndexStr) // TODO: rename to zoneNum
-	if err != nil {
-		return fmt.Errorf("cannot parse %q as zone index from mcd Name %q", zoneIndexStr, mcdName)
+	if mcdOld == nil || mcdOldInfo.Hash != mcdNewInfo.Hash {
+		_, err = r.dataAccess.StoreMachineDeploymentInfo(mcdNewInfo)
+	} else {
+		slog.Info("skipping store of MachineDeploymentInfo", "Name", mcdNewInfo.Name, "Hash", mcdNewInfo.Hash)
 	}
-	zone := pool.Zones[zoneIndex-1]
-	//			MaxSize: int(mcdMap["maximum"].(int64)),
-	ng := scalehist.NodeGroupInfo{
-		Name:              mcdName,
-		CreationTimestamp: creationTimestamp,
-		CurrentSize:       currentSize,
-		TargetSize:        targetSize,
-		MinSize:           mcdSizeLimits.Min,
-		MaxSize:           mcdSizeLimits.Max,
-		Zone:              zone,
-		MachineType:       pool.MachineType,
-		Architecture:      pool.Architecture,
-		ShootGeneration:   pool.ShootGeneration,
-		MCDGeneration:     mcdGeneration,
-		PoolName:          pool.Name,
-		PoolMin:           pool.Minimum,
-		PoolMax:           pool.Maximum,
-	}
-	ng.Hash = ng.GetHash()
-
-	oldNgHash, err := r.dataAccess.GetNodeGroupHash(ng.Name)
-	if err != nil {
-		return fmt.Errorf("cannot get the hash value for nodegroup %q from db: %w", mcdName, err)
-	}
-	if oldNgHash != "" && oldNgHash == ng.Hash {
-		slog.Info("no change in nodegroup hash. skipping insert", "ng.Name", ng.Name)
-		return nil
-	}
-	_, err = r.dataAccess.StoreNodeGroup(ng)
-	r.mcdHashesMap.Store(ng.Name, ng.Hash)
 	return err
-
 }
 
 func (r *defaultRecorder) onAddMCD(obj interface{}) {
 	mcd := obj.(*unstructured.Unstructured)
-	InvokeOrScheduleFunc("onAddMCD", 5*time.Second, mcd, func(mcd *unstructured.Unstructured) error {
-		err := r.processMCD(nil, mcd)
-		if err != nil {
-			slog.Error("onAddMCD failed.", "error", err)
-		}
-		return err
-	})
+	err := r.processMCD(nil, mcd)
+	if err != nil {
+		slog.Error("onAddMCD failed.", "error", err)
+	}
 }
 
-func (r *defaultRecorder) onUpdateMCD(old interface{}, new interface{}) {
+func (r *defaultRecorder) onUpdateMCD(old any, new any) {
 	oldObj := old.(*unstructured.Unstructured)
 	newObj := new.(*unstructured.Unstructured)
-	InvokeOrScheduleFunc("onUpdateMCD", 5*time.Second, newObj, func(mcd *unstructured.Unstructured) error {
-		err := r.processMCD(oldObj, newObj)
-		if err != nil {
-			slog.Error("onUpdateMCD Failed.", "error", err)
-		}
-		return err
-	})
+	if newObj == nil {
+		return
+	}
+	err := r.processMCD(oldObj, newObj)
+
+	if err != nil {
+		slog.Error("onUpdateMCD Failed.", "error", err)
+	}
 }
 
 func getLastUpdateTime(conditions []corev1.NodeCondition) (lastUpdate time.Time) {
@@ -985,21 +799,15 @@ func getNodeConditionsFromUnstructuredMCD(obj *unstructured.Unstructured) (condi
 
 func (r *defaultRecorder) onDeleteMCD(obj interface{}) {
 	mcdObj := obj.(*unstructured.Unstructured)
-	name := mcdObj.GetName()
-	hashVal, ok := r.mcdHashesMap.Load(name)
-	if !ok {
-		slog.Error("onDeleteMCD: cannot get the in-mem cached hash for MCD name.", "ng.Name", name)
+	if mcdObj == nil {
 		return
 	}
-	ngHash := hashVal.(string)
-	slog.Info("onDeleteMCD: Updating the DeletionTimestamp for NodeGroup associated with MCD.", "ng.Name", name, "ng.Hash", ngHash)
-	_, err := r.dataAccess.UpdateNodeGroupDeletionTimestamp(ngHash, mcdObj.GetDeletionTimestamp().UTC())
+	mcdName := mcdObj.GetName()
+	slog.Info("onDeleteMCD: Updating the DeletionTimestamp for MachineDeploymentInfo with given name.", "Name", mcdName)
+	_, err := r.dataAccess.UpdateMCDInfoDeletionTimestamp(mcdName, mcdObj.GetDeletionTimestamp().UTC())
 	if err != nil {
 		slog.Error("cannot update the deletion timestamp for the nodegroup", "nodegroup.name", mcdObj.GetName())
 	}
-
-	r.mcdMinMaxMap.Delete(name)
-	r.mcdHashesMap.Delete(name)
 }
 
 func getCACommand(deployment *unstructured.Unstructured) ([]string, error) {
@@ -1047,7 +855,7 @@ func (r *defaultRecorder) onAddDeployment(obj interface{}) {
 		slog.Error("cannot convert maxNodesTotal string to int", "error", err)
 	}
 
-	caSettings := scalehist.CASettingsInfo{
+	caSettings := gcr.CASettingsInfo{
 		Expander:      processedCACommand["expander"],
 		MaxNodesTotal: maxNodesTotal,
 	}
@@ -1097,7 +905,7 @@ func (r *defaultRecorder) onAddConfigMap(obj interface{}) {
 		slog.Error("cannot get the priorities from priority-expander config map", "error", err)
 	}
 	fmt.Printf("ConfigMap Priorities : %s\n", priorities)
-	caSettings := scalehist.CASettingsInfo{
+	caSettings := gcr.CASettingsInfo{
 		Priorities: priorities,
 	}
 	caSettings.Hash = caSettings.GetHash()
@@ -1139,29 +947,6 @@ func getEventTimeFromUnstructured(event *unstructured.Unstructured) (eventTime t
 	} else {
 		slog.Warn("event has zero timestamp.", "event.UID", event.GetUID(), "event.Name", event.GetName())
 		err = fmt.Errorf("cannot get event time for event %s", event.GetName())
-	}
-	return
-}
-
-func (r *defaultRecorder) StoreLatestNodeGroupCurrentSizeAndTargetSize(ngName string, timestamp time.Time, currentSize, targetSize int) (err error) {
-	currentNg, err := r.dataAccess.LoadLatestNodeGroup(ngName)
-	if err != nil {
-		slog.Error("cannot load  the nodegroup", "nodegroup", ngName, "error", err)
-		return
-	}
-	currentNg.TargetSize = targetSize
-	currentNg.CurrentSize = currentSize
-	currentNg.CreationTimestamp = timestamp
-
-	if currentNg.Hash == currentNg.GetHash() {
-		return
-	}
-	currentNg.Hash = currentNg.GetHash()
-	//TODO update from currentMCD map
-	_, err = r.dataAccess.StoreNodeGroup(currentNg)
-	if err != nil {
-		slog.Error("cannot insert the nodegroup", "nodegroup", ngName, "error", err)
-		return
 	}
 	return
 }
@@ -1208,7 +993,7 @@ func (r *defaultRecorder) onAddControlEvent(obj interface{}) {
 		return
 	}
 	message := parentMap["message"].(string)
-	event := scalehist.EventInfo{
+	event := gcr.EventInfo{
 		UID:                     string(eventObj.GetUID()),
 		EventTime:               eventTime,
 		ReportingController:     sourceComponent.(string),
@@ -1292,25 +1077,6 @@ func getLastUpdateTimeForNode(n *corev1.Node) (lastUpdateTime time.Time) {
 	//}
 	return
 }
-func (r *defaultRecorder) nodeInfoFromNode(n *corev1.Node) scalehist.NodeInfo {
-	var ni scalehist.NodeInfo
-	ni.Name = n.Name
-	ni.Namespace = n.Namespace
-	ni.CreationTimestamp = getLastUpdateTimeForNode(n)
-	ni.ProviderID = n.Spec.ProviderID
-	ni.Labels = n.Labels
-	// Removing this label as it just takes useless space: "node.machine.sapcloud.io/last-applied-anno-labels-taints"
-	delete(ni.Labels, "node.machine.sapcloud.io/last-applied-anno-labels-taints")
-	ni.Taints = n.Spec.Taints
-	ni.Allocatable = n.Status.Allocatable
-	ni.Capacity = n.Status.Capacity
-	allocVolumes, _ := r.nodeAllocatableVolumes.Load(ni.Name)
-	if allocVolumes != nil {
-		ni.AllocatableVolumes = allocVolumes.(int)
-	}
-	ni.Hash = ni.GetHash()
-	return ni
-}
 
 func getLastUpdateTimeForPod(p *corev1.Pod) (lastUpdateTime time.Time) {
 	lastUpdateTime = p.ObjectMeta.CreationTimestamp.UTC()
@@ -1325,15 +1091,15 @@ func getLastUpdateTimeForPod(p *corev1.Pod) (lastUpdateTime time.Time) {
 	return
 }
 
-func podInfoFromPod(p *corev1.Pod) scalehist.PodInfo {
-	var pi scalehist.PodInfo
+func podInfoFromPod(p *corev1.Pod) gcr.PodInfo {
+	var pi gcr.PodInfo
 	pi.UID = string(p.UID)
 	pi.Name = p.Name
 	pi.Namespace = p.Namespace
 	pi.CreationTimestamp = getLastUpdateTimeForPod(p)
 	pi.NodeName = p.Spec.NodeName
 	pi.Labels = p.Labels
-	pi.Requests = scalehist.CumulatePodRequests(p)
+	pi.Requests = gcr.CumulatePodRequests(p)
 	pi.Spec = p.Spec
 	pi.PodScheduleStatus = ComputePodScheduleStatus(p)
 	pi.Hash = pi.GetHash()

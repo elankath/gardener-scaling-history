@@ -1,4 +1,4 @@
-package scalehist
+package gcr
 
 import (
 	"crypto/md5"
@@ -12,40 +12,92 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 )
 
+func (w WorkerPoolInfo) String() string {
+	metaStr := header("WorkerPoolInfo", w.SnapshotMeta)
+	return fmt.Sprintf("%s, MachineType=%d, Architecture=%s, Minimum=%d, Maximum=%d, MaxSurge=%s, MaxUnavailable=%s, Zones=%s, Hash=%s)",
+		metaStr, w.MachineType, w.Architecture, w.Minimum, w.Maximum, w.MaxSurge.String(), w.MaxUnavailable.String(), w.Zones, w.Hash)
+}
+
+func (w WorkerPoolInfo) GetHash() string {
+	hasher := md5.New()
+	hasher.Write([]byte(w.Name))
+	int64buf := make([]byte, 8) // 8 bytes for int64
+
+	binary.BigEndian.PutUint64(int64buf, uint64(w.CreationTimestamp.UnixMilli()))
+	hasher.Write(int64buf)
+
+	hasher.Write([]byte(w.MachineType))
+	hasher.Write([]byte(w.Architecture))
+
+	binary.BigEndian.PutUint64(int64buf, uint64(w.Minimum))
+	hasher.Write(int64buf)
+
+	binary.BigEndian.PutUint64(int64buf, uint64(w.Maximum))
+	hasher.Write(int64buf)
+
+	hasher.Write([]byte(w.MaxSurge.String()))
+	hasher.Write([]byte(w.MaxUnavailable.String()))
+
+	hashSlice(hasher, w.Zones)
+
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
 func (ng NodeGroupInfo) String() string {
-	return fmt.Sprintf("NodeGroupInfo(Name: %s, RowID: %d, ShootGeneration: %d,McdGeneration: %d,CreationTimestamp: %s, MinSize: %d, MaxSize: %d,CurrentSize: %d, TargetSize: %d, MachineType: %s, Zone: %s,Architecture: %s, PoolName: %s, PoolMin:%d, PoolMax:%d)",
-		ng.Name, ng.RowID, ng.ShootGeneration, ng.MCDGeneration, ng.CreationTimestamp.Format(time.RFC3339), ng.MinSize, ng.MaxSize, ng.CurrentSize, ng.TargetSize, ng.MachineType, ng.Zone, ng.Architecture, ng.PoolName, ng.PoolMin, ng.PoolMax)
+	return fmt.Sprintf("NodeGroupInfo(Name: %s, PoolName: %s, Zone: %s, TargetSize: %d, MinSize: %d, MaxSize: %d)",
+		ng.Name, ng.PoolName, ng.Zone, ng.TargetSize, ng.MinSize, ng.MaxSize)
 }
 
 func (ng NodeGroupInfo) GetHash() string {
-	buf := md5.New()
-	buf.Write([]byte(ng.Name))
+	hasher := md5.New()
+	hasher.Write([]byte(ng.Name))
 	int64buf := make([]byte, 8) // 8 bytes for int64
 
 	binary.BigEndian.PutUint64(int64buf, uint64(ng.TargetSize))
-	buf.Write(int64buf)
+	hasher.Write(int64buf)
 
 	binary.BigEndian.PutUint64(int64buf, uint64(ng.MinSize))
-	buf.Write(int64buf)
+	hasher.Write(int64buf)
 
 	binary.BigEndian.PutUint64(int64buf, uint64(ng.MaxSize))
-	buf.Write(int64buf)
+	hasher.Write(int64buf)
 
-	buf.Write([]byte(ng.Zone))
-	buf.Write([]byte(ng.Architecture))
-	buf.Write([]byte(ng.MachineType))
-	buf.Write([]byte(ng.PoolName))
+	hasher.Write([]byte(ng.Zone))
+	hasher.Write([]byte(ng.PoolName))
 
-	binary.BigEndian.PutUint64(int64buf, uint64(ng.PoolMin))
-	buf.Write(int64buf)
+	return hex.EncodeToString(hasher.Sum(nil))
+}
 
-	binary.BigEndian.PutUint64(int64buf, uint64(ng.PoolMax))
-	buf.Write(int64buf)
+func header(prefix string, meta SnapshotMeta) string {
+	return fmt.Sprintf("%s(RowID=%d, CreationTimestamp=%s, SnapshotTimestamp=%s, Name=%s, Namespace=%s",
+		prefix, meta.RowID, meta.CreationTimestamp, meta.SnapshotTimestamp, meta.Name, meta.Namespace)
+}
+func (m MachineDeploymentInfo) String() string {
+	metaStr := header("MachineDeployment", m.SnapshotMeta)
+	return fmt.Sprintf("%s, Replicas=%d, PoolName=%s, Zone=%s, MaxSurge=%s, MaxUnavailable=%s, MachineClassName=%s, Hash=%s)",
+		metaStr, m.Replicas, m.PoolName, m.Zone, m.MaxSurge.String(), m.MaxUnavailable.String(), m.MachineClassName, m.Hash)
+}
 
-	return hex.EncodeToString(buf.Sum(nil))
+func (m MachineDeploymentInfo) GetHash() string {
+	int64buf := make([]byte, 8) // 8 bytes for int64
+
+	hasher := md5.New()
+	hasher.Write([]byte(m.Name))
+	hasher.Write([]byte(m.Namespace))
+
+	hasher.Write([]byte(m.PoolName))
+	hasher.Write([]byte(m.Zone))
+
+	binary.BigEndian.PutUint64(int64buf, uint64(m.Replicas))
+	hasher.Write(int64buf)
+
+	hasher.Write([]byte(m.MaxSurge.String()))
+	hasher.Write([]byte(m.MaxUnavailable.String()))
+	hasher.Write([]byte(m.MachineClassName))
+
+	return hex.EncodeToString(hasher.Sum(nil))
 }
 
 func (n NodeInfo) String() string {
@@ -93,13 +145,10 @@ func IsEqualTaint(a, b corev1.Taint) bool {
 	return a.Key == b.Key && a.Value == b.Value && a.Effect == b.Effect
 }
 
-func (w WorkerPool) String() string {
-	return fmt.Sprintf("WorkerPool(Name: %s, MachineType: %s, Arch: %s, Minimum: %d, Maximum: %d, MaxSurge: %s, MaxUnaavailable: %s, Zones: %s", w.Name, w.MachineType, w.Architecture, w.Minimum, w.Maximum, w.MaxSurge.String(), w.MaxUnavailable.String(), w.Zones)
-}
-
 func (p PodInfo) String() string {
-	return fmt.Sprintf("PodInfo(UID=%s, Name=%s, Namespace=%s, CreationTimestamp=%s, NodeName=%s, NominatedNodeName=%s, Labels=%s, Requests=%s)",
-		p.UID, p.Name, p.Namespace, p.CreationTimestamp, p.NodeName, p.NominatedNodeName, p.Labels, ResourcesAsString(p.Requests))
+	metaStr := header("PodInfo", p.SnapshotMeta)
+	return fmt.Sprintf("%s, UID=%s, NodeName=%s, NominatedNodeName=%s, Labels=%s, Requests=%s, Hash=%s)",
+		metaStr, p.UID, p.NodeName, p.NominatedNodeName, p.Labels, ResourcesAsString(p.Requests), p.Hash)
 }
 
 func (p PodInfo) GetHash() string {
@@ -113,6 +162,10 @@ func (p PodInfo) GetHash() string {
 	int64buf := make([]byte, 8) // 8 bytes for int64
 	binary.BigEndian.PutUint64(int64buf, uint64(p.PodScheduleStatus))
 	hasher.Write(int64buf)
+
+	binary.BigEndian.PutUint64(int64buf, uint64(p.CreationTimestamp.UnixMilli()))
+	hasher.Write(int64buf)
+
 	slices.SortFunc(p.Spec.Containers, func(a, b corev1.Container) int {
 		return strings.Compare(a.Name, b.Name)
 	})
@@ -242,10 +295,6 @@ func ResourcesAsString(resources corev1.ResourceList) string {
 func (eI EventInfo) String() string {
 	return fmt.Sprintf("EventInfo : (UID = %s,EventTime = %s, ReportingController = %s, Reason = %s, Message = %s, InvolvedObjectName = %s,InvolvedObjectNamespace = %s, InvolvedObjectUID = %s)",
 		eI.UID, eI.EventTime, eI.ReportingController, eI.Reason, eI.Message, eI.InvolvedObjectName, eI.InvolvedObjectNamespace, eI.InvolvedObjectUID)
-}
-
-func (a EventNodeGroupAssoc) String() string {
-	return fmt.Sprintf("EventNodeGroupAssoc(EventUID:%s, NodeGroupRowID:%d, NodeGroupHash: %s)", a.EventUID, a.NodeGroupRowID, a.NodeGroupHash)
 }
 
 func IsResourceListEqual(r1 corev1.ResourceList, r2 corev1.ResourceList) bool {

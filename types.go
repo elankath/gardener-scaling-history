@@ -1,4 +1,4 @@
-package scalehist
+package gcr
 
 import (
 	"context"
@@ -22,76 +22,61 @@ type RecorderParams struct {
 	SchedulerName       string
 }
 
-type Analyzer interface {
-	io.Closer
-	Analyze(ctx context.Context) (Analysis, error)
-}
-
-type Reporter interface {
-	GenerateTextReport(analysis Analysis) (reportPath string, err error)
-	GenerateJsonReport(analysis Analysis) (reportPath string, err error)
-}
-
 type ReporterParams struct {
 	DBDir     string
 	ReportDir string
 }
 
-type Analysis struct {
-	time.Duration
-	Name               string
-	CoalesceInterval   string
-	TolerationInterval string
-	Scenarios          []Scenario
-	//TODO: think of other useful fields.
-}
-
-type Scenario struct {
-	StartTime                 time.Time
-	EndTime                   time.Time
-	SystemComponentRequests   corev1.ResourceList
-	CriticalComponentRequests corev1.ResourceList
-	CASettings                CASettingsInfo
-	UnscheduledPods           []PodInfo
-	NominatedPods             []PodInfo
-	ScheduledPods             []PodInfo
-	NodeGroups                []NodeGroupInfo
-	ScaleUpEvents             []EventInfo
-	Nodes                     []NodeInfo
-}
-
+// NodeGroupInfo represents information corresponding to the k8s cluster-autoscaler NodeGroup.
 type NodeGroupInfo struct {
-	RowID             int64 `db:"RowID"` // give db tags only for mixed case fields
+	Name       string
+	PoolName   string
+	Zone       string
+	TargetSize int
+	MinSize    int
+	MaxSize    int
+	Hash       string
+}
+
+type SnapshotMeta struct {
+	RowID             int64
+	CreationTimestamp time.Time
+	SnapshotTimestamp time.Time
 	Name              string
-	CreationTimestamp time.Time `db:"CreationTimestamp"`
-	CurrentSize       int       `db:"CurrentSize"`
-	TargetSize        int       `db:"TargetSize"`
-	MinSize           int       `db:"MinSize"`
-	MaxSize           int       `db:"MaxSize"`
-	Zone              string
-	MachineType       string `db:"MachineType"`
+	Namespace         string
+}
+
+// WorkerPoolInfo represents snapshot information corresponding to the gardener shoot worker pool.
+type WorkerPoolInfo struct {
+	SnapshotMeta
+	MachineType       string
 	Architecture      string
-	ShootGeneration   int64  `db:"ShootGeneration"`
-	MCDGeneration     int64  `db:"MCDGeneration"`
-	PoolName          string `db:"PoolName"`
-	PoolMin           int    `db:"PoolMin"`
-	PoolMax           int    `db:"PoolMax"`
+	Minimum           int
+	Maximum           int
+	MaxSurge          intstr.IntOrString
+	MaxUnavailable    intstr.IntOrString
+	Zones             []string
+	DeletionTimestamp time.Time
 	Hash              string
 }
 
-type WorkerPool struct {
-	Name            string
-	MachineType     string
-	Architecture    string
-	Minimum         int
-	Maximum         int
-	MaxSurge        intstr.IntOrString // TODO: persist as string if needed.
-	MaxUnavailable  intstr.IntOrString // TODO: persist as string if needed.
-	ShootGeneration int64
-	Zones           []string
-	//Volume TODO
+// MachineDeploymentInfo represents snapshot information captured about the MCM MachineDeployment object
+// present in the control plane of a gardener shoot cluster.
+type MachineDeploymentInfo struct {
+	SnapshotMeta
+	Replicas          int
+	PoolName          string
+	Zone              string
+	MaxSurge          intstr.IntOrString
+	MaxUnavailable    intstr.IntOrString
+	MachineClassName  string
+	DeletionTimestamp time.Time
+	Hash              string
 }
 
+// CASettingsInfo represents configuration settings of the k8s cluster-autoscaler.
+// This is currently a very minimal struct only capturing information about the configured expander and the
+// priority expander config map (if any).
 type CASettingsInfo struct {
 	Expander      string
 	MaxNodesTotal int `db:"MaxNodesTotal"`
@@ -108,35 +93,33 @@ const PodScheduleNominated = -1
 const PodUnscheduled = 0
 const PodScheduleCommited = 1
 
+// PodInfo represents snapshot information captured about a k8s Pod deployed into
+// the cluster at a particular moment in time. When the `Pod` is deleted its `DeletionTimestamp` is updated.
 type PodInfo struct {
-	Name              string
-	Namespace         string
+	SnapshotMeta
 	UID               string
-	CreationTimestamp time.Time
-	SnapshotTimestamp time.Time
 	NodeName          string
 	NominatedNodeName string
 	Labels            map[string]string
 	Requests          corev1.ResourceList
 	Spec              corev1.PodSpec
 	PodScheduleStatus PodScheduleStatus
+	DeletionTimestamp time.Time
 	Hash              string
 }
 
 // NodeInfo represents snapshot information captured about an active k8s Node in the cluster at a particular moment in time.
-// The snapshot time is captured in CreationTimestamp. A NodeInfo snapshot is only captured if there is a change in the properties
-// excepting for DeletionTimestamp, in which case the DeletionTimestamp is only updated.
+// . A NodeInfo snapshot is only captured if there is a change in the properties excepting for DeletionTimestamp, in
+// which case the DeletionTimestamp is only updated.
 type NodeInfo struct {
-	Name               string
-	Namespace          string
-	CreationTimestamp  time.Time
-	SnapshotTimestamp  time.Time
+	SnapshotMeta
 	ProviderID         string
 	AllocatableVolumes int
 	Labels             map[string]string
 	Taints             []corev1.Taint
 	Allocatable        corev1.ResourceList
 	Capacity           corev1.ResourceList
+	DeletionTimestamp  time.Time
 	Hash               string
 }
 
@@ -146,6 +129,7 @@ type PodInfoKey struct {
 	Hash string
 }
 
+// EventInfo represents information about an event emitted in the k8s cluster.
 type EventInfo struct {
 	UID                     string    `db:"UID"`
 	EventTime               time.Time `db:"EventTime"`
@@ -156,31 +140,4 @@ type EventInfo struct {
 	InvolvedObjectName      string    `db:"InvolvedObjectName"`
 	InvolvedObjectNamespace string    `db:"InvolvedObjectNamespace"`
 	InvolvedObjectUID       string    `db:"InvolvedObjectUID"`
-}
-
-type MachineDeploymentInfo struct {
-	RowID             int64
-	Name              string
-	Namespace         string
-	Generation        int64
-	CreationTimestamp time.Time
-	SnapshotTimestamp time.Time
-	Replicas          int
-	MaxSurge          int
-	MaxUnavailable    int
-	PoolName          string
-	Zone              string
-	MachineClassName  string
-	Hash              string
-}
-
-type EventNodeGroupAssoc struct {
-	EventUID       string `db:"EventUID"`
-	NodeGroupRowID int64  `db:"NodeGroupRowID"`
-	NodeGroupHash  string `db:"NodeGroupHash"`
-}
-
-type EventCASettingsAssoc struct {
-	EventUID       string `db:"EventUID"`
-	CASettingsHash string `db:"CASettingsHash"`
 }
