@@ -22,7 +22,7 @@ spec:
           secret:
             secretName: kubeconfig
       containers:
-        - name: scalehist
+        - name: recorder
           image: suyash1418/scalehist:7.0
           env:
             - name: CONFIG_DIR

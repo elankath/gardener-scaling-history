@@ -2,7 +2,7 @@ package recorder
 
 import (
 	"fmt"
-	"github.com/elankath/gardener-scalehist"
+	gcr "github.com/elankath/gardener-cluster-recorder"
 	assert "github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -26,7 +26,7 @@ func TestParseWorkerPools(t *testing.T) {
 		return
 	}
 	fmt.Println(u)
-	_, err = parseWorkerPools(u)
+	_, err = getWorkerPoolInfos(u)
 	if err != nil {
 		t.Fatalf("error parsing worker pools %v", err)
 		return
@@ -62,7 +62,7 @@ func PrintPodMemory(t *testing.T, fileName string) {
 	memquant := pod.Spec.Containers[0].Resources.Requests.Memory()
 	t.Logf("fileName: %s memory: %s", fileName, memquant)
 	t.Logf("fileName: %s memoryscale: %s", fileName, memquant.Format)
-	sumQuantity := scalehist.CumulatePodRequests(&pod)
+	sumQuantity := gcr.CumulatePodRequests(&pod)
 	t.Logf("fileName: %s memory: %s", fileName, sumQuantity.Memory())
 	t.Logf("fileName: %s memoryscale: %s", fileName, sumQuantity.Memory().Format)
 

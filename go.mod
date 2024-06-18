@@ -1,4 +1,4 @@
-module github.com/elankath/gardener-scalehist
+module github.com/elankath/gardener-cluster-recorder
 
 go 1.22.0
 

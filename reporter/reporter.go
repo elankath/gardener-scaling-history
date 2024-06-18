@@ -1,7 +1,6 @@
 package reporter
 
 import (
-	"github.com/elankath/gardener-scalehist"
 	"io"
 	"k8s.io/apimachinery/pkg/util/json"
 	"log/slog"
@@ -15,7 +14,7 @@ type defaultReporter struct {
 	ReportDir string
 }
 
-func (d defaultReporter) GenerateTextReport(analysis scalehist.Analysis) (reportPath string, err error) {
+func (d defaultReporter) GenerateTextReport(analysis gcr.Analysis) (reportPath string, err error) {
 	reportPath = path.Join(d.ReportDir, analysis.Name+".txt")
 	file, err := os.Create(reportPath)
 	if err != nil {
@@ -54,8 +53,8 @@ func (d defaultReporter) GenerateTextReport(analysis scalehist.Analysis) (report
 }
 
 //
-//func mergeScaleUpNodeGroupsWithAll(allNGs []scalehist.NodeGroupInfo, scaledUpNGs []scalehist.NodeGroupInfo) []scalehist.NodeGroupInfo {
-//	nodeGroupName := make(map[string]scalehist.NodeGroupInfo)
+//func mergeScaleUpNodeGroupsWithAll(allNGs []recorder.NodeGroupInfo, scaledUpNGs []recorder.NodeGroupInfo) []recorder.NodeGroupInfo {
+//	nodeGroupName := make(map[string]recorder.NodeGroupInfo)
 //	for _, ng := range scaledUpNGs {
 //		nodeGroupName[ng.Name] = ng
 //	}
@@ -70,8 +69,8 @@ func (d defaultReporter) GenerateTextReport(analysis scalehist.Analysis) (report
 //	return maps.Values(nodeGroupName)
 //}
 //
-//func getNodePoolFromNodeGroups(nodeGroups []scalehist.NodeGroupInfo) []api.NodePool {
-//	nodePooltoNodeGroupsMap := make(map[string][]scalehist.NodeGroupInfo)
+//func getNodePoolFromNodeGroups(nodeGroups []recorder.NodeGroupInfo) []api.NodePool {
+//	nodePooltoNodeGroupsMap := make(map[string][]recorder.NodeGroupInfo)
 //	for _, ng := range nodeGroups {
 //		nodePooltoNodeGroupsMap[ng.PoolName] = append(nodePooltoNodeGroupsMap[ng.PoolName], ng)
 //	}
@@ -91,8 +90,8 @@ func (d defaultReporter) GenerateTextReport(analysis scalehist.Analysis) (report
 //	return nodePools
 //}
 //
-//func parseNodeInfo(nodes []scalehist.NodeInfo) []api.NodeInfo {
-//	return lo.Map(nodes, func(node scalehist.NodeInfo, _ int) api.NodeInfo {
+//func parseNodeInfo(nodes []recorder.NodeInfo) []api.NodeInfo {
+//	return lo.Map(nodes, func(node recorder.NodeInfo, _ int) api.NodeInfo {
 //		return api.NodeInfo{
 //			Name:        node.Name,
 //			Labels:      node.Labels,
@@ -104,8 +103,8 @@ func (d defaultReporter) GenerateTextReport(analysis scalehist.Analysis) (report
 //	})
 //}
 //
-//func parsePodInfo(pods []scalehist.PodInfo) []api.PodInfo {
-//	return lo.Map(pods, func(pod scalehist.PodInfo, _ int) api.PodInfo {
+//func parsePodInfo(pods []recorder.PodInfo) []api.PodInfo {
+//	return lo.Map(pods, func(pod recorder.PodInfo, _ int) api.PodInfo {
 //		return api.PodInfo{
 //			NamePrefix: pod.Name,
 //			Labels:     pod.Labels,
@@ -117,14 +116,14 @@ func (d defaultReporter) GenerateTextReport(analysis scalehist.Analysis) (report
 //	})
 //}
 //
-//func parseCaSettings(caSettings scalehist.CASettingsInfo) api.CASettingsInfo {
+//func parseCaSettings(caSettings recorder.CASettingsInfo) api.CASettingsInfo {
 //	return api.CASettingsInfo{
 //		Expander:      caSettings.Expander,
 //		MaxNodesTotal: caSettings.MaxNodesTotal,
 //		Priorities:    caSettings.Priorities,
 //	}
 //}
-//func (d defaultReporter) GenerateSimulationRequests(analysis scalehist.Analysis) (requests []api.SimulationRequest) {
+//func (d defaultReporter) GenerateSimulationRequests(analysis recorder.Analysis) (requests []api.SimulationRequest) {
 //	for _, s := range analysis.Scenarios {
 //		simreq := api.SimulationRequest{
 //			ID: string(uuid.NewUUID()),
@@ -141,7 +140,7 @@ func (d defaultReporter) GenerateTextReport(analysis scalehist.Analysis) (report
 //	return
 //}
 
-func (d defaultReporter) GenerateJsonReport(analysis scalehist.Analysis) (reportPath string, err error) {
+func (d defaultReporter) GenerateJsonReport(analysis gcr.Analysis) (reportPath string, err error) {
 	reportPath = path.Join(d.ReportDir, analysis.Name+".json")
 	file, err := os.Create(reportPath)
 	if err != nil {
@@ -160,7 +159,7 @@ func (d defaultReporter) GenerateJsonReport(analysis scalehist.Analysis) (report
 	return
 }
 
-func NewReporter(reportDir string) (scalehist.Reporter, error) {
+func NewReporter(reportDir string) (gcr.Reporter, error) {
 	return &defaultReporter{ReportDir: reportDir}, nil
 }
 

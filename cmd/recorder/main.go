@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/csv"
-	"github.com/elankath/gardener-scalehist"
-	"github.com/elankath/gardener-scalehist/recorder"
+	"github.com/elankath/gardener-cluster-recorder"
+	"github.com/elankath/gardener-cluster-recorder/recorder"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -41,9 +41,9 @@ func main() {
 		slog.Error("cannot read clusters config", "config-file", CLUSTERS_CFG_FILE, "error", err)
 		os.Exit(5)
 	}
-	var recorderParams = make([]scalehist.RecorderParams, len(records))
+	var recorderParams = make([]gcr.RecorderParams, len(records))
 	for rowNum, row := range records {
-		recorderParams[rowNum] = scalehist.RecorderParams{
+		recorderParams[rowNum] = gcr.RecorderParams{
 			ShootKubeConfigPath: filepath.Join(configDir, strings.TrimSpace(row[0])),
 			ShootNameSpace:      row[1],
 			SeedKubeConfigPath:  filepath.Join(configDir, strings.TrimSpace(row[2])),
@@ -75,13 +75,13 @@ func main() {
 	startTime := time.Now()
 	defaultRecorder, err := recorder.NewDefaultRecorder(recorderParams[0], startTime)
 	if err != nil {
-		slog.Error("cannot create scalehist recorder", "error", err)
+		slog.Error("cannot create recorder recorder", "error", err)
 		os.Exit(3)
 	}
 	ctx, cancelFunc := context.WithCancel(context.Background())
 	err = defaultRecorder.Start(ctx)
 	if err != nil {
-		slog.Error("cannot start scalehist recorder", "error", err)
+		slog.Error("cannot start recorder recorder", "error", err)
 		os.Exit(4)
 	}
 	waitForSignalAndShutdown(cancelFunc)
