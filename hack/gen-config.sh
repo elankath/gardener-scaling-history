@@ -18,52 +18,69 @@ function parse_flags() {
   done
 }
 
-function main(){
+echoErr() { echo "$@" 1>&2; }
+
+function main() {
   parse_flags "$@"
   if [[ -z "${SHOOT}" ]]; then
-    echo -e "Shoot has not been passed. Please provide Shoot either by specifying --shoot or -t argument"
+    echoErr "Shoot has not been passed. Please provide Shoot either by specifying --shoot or -t argument"
     exit 1
   fi
   if [[ -z "${PROJECT}" ]]; then
-    echo -e "Project has not been passed. Please provide Project either by specifying --project or -l argument"
+    echoErr "Project has not been passed. Please provide Project either by specifying --project or -p argument"
     exit 1
   fi
   if [[ -z "${LANDSCAPE}" ]]; then
-    echo -e "LANDSCAPE has not been passed. Please provide Project either by specifying --landscape or -p argument"
+    echoErr "LANDSCAPE has not been passed. Please provide Project either by specifying --landscape or -l argument"
     exit 1
   fi
 
-  kubeconfig_path="$(pwd)/gen"
+  local genPath
+  genPath="$(pwd)/gen"
 
-  (
-    gardenctl target --garden sap-landscape-${LANDSCAPE}
-    eval $(gardenctl kubectl-env bash)
-    SHOOT_NAME=${SHOOT}
-    PROJECT_NAMESPACE="garden-${PROJECT}"
+  gardenctl target --garden "sap-landscape-${LANDSCAPE}"
+  eval "$(gardenctl kubectl-env bash)"
+  SHOOT_NAME=${SHOOT}
+  PROJECT_NAMESPACE="garden-${PROJECT}"
 
-    echo ${SHOOT_NAME}
+  local shootSpecFile
+  shootSpecFile=$(mktemp)
+  printf '{"spec":{"expirationSeconds":600000000}}' > "$shootSpecFile"
 
-    tmpfile=$(mktemp)
-    printf '{"spec":{"expirationSeconds":600000000}}' > "$tmpfile"
+  local shootKubeConfigPath
+  shootKubeConfigPath="${genPath}/kubeconfig-${PROJECT_NAMESPACE}-${SHOOT_NAME}.yaml"
+  echo "Generating viewerkubeconfig for shoot into $shootKubeConfigPath ..."
+  kubectl create -f "$shootSpecFile" --raw "/apis/core.gardener.cloud/v1beta1/namespaces/${PROJECT_NAMESPACE}/shoots/${SHOOT_NAME}/viewerkubeconfig" | jq -r ".status.kubeconfig" | base64 -d > "$shootKubeConfigPath"
 
-    kubectl create -f "$tmpfile" --raw "/apis/core.gardener.cloud/v1beta1/namespaces/${PROJECT_NAMESPACE}/shoots/${SHOOT_NAME}/viewerkubeconfig" | jq -r ".status.kubeconfig" | base64 -d | tee "${kubeconfig_path}/kubeconfig-${SHOOT_NAME}.yaml"
+  local shootJsonPath
+  shootJsonPath=$(mktemp)
+  echo "executing command: kubectl get shoot -n ${PROJECT_NAMESPACE} ${SHOOT_NAME} -o json"
+  kubectl get shoot -n "${PROJECT_NAMESPACE}" "${SHOOT_NAME}" -o json > "$shootJsonPath"
+  SEED_NAME=$(jq -r '.status.seedName' "$shootJsonPath")
+  PROJECT_NAMESPACE=garden
 
-    SEED_NAME=$(kubectl get shoot -n ${PROJECT_NAMESPACE} ${SHOOT_NAME} -ojson | jq -r '.status.seedName')
-    PROJECT_NAMESPACE=garden
+  local seedKubeConfigPath
+  seedKubeConfigPath="${genPath}/kubeconfig-$PROJECT_NAMESPACE--$SEED_NAME.yaml"
 
-    kubectl create -f "$tmpfile" --raw "/apis/core.gardener.cloud/v1beta1/namespaces/${PROJECT_NAMESPACE}/shoots/${SEED_NAME}/viewerkubeconfig" | jq -r ".status.kubeconfig" | base64 -d | tee "${kubeconfig_path}/kubeconfig-${SEED_NAME}.yaml"
-
-    rm "$tmpfile"
-    gardenctl target unset garden
-  ) > /dev/null
-  printf "Kubeconfigs for shoot and seed have been downloaded to ${kubeconfig_path}\n"
+  echo "Generating viewerkubeconfig for shoot's control plane (seed) into $seedKubeConfigPath ..."
+  kubectl create -f "$shootSpecFile" --raw "/apis/core.gardener.cloud/v1beta1/namespaces/${PROJECT_NAMESPACE}/shoots/${SEED_NAME}/viewerkubeconfig" | jq -r ".status.kubeconfig" | base64 -d > "$seedKubeConfigPath"
 
 
-  #check if a row with shootname exists in the csv file
-  if ! grep -q $SHOOT ./gen/clusters.csv
-  then
-    echo "$LANDSCAPE,shoot--${PROJECT}--${SHOOT},kubeconfig-garden-${PROJECT}-${SHOOT}.yaml,kubeconfig-garden-${SEED}.yaml\n" >> ./shoots.csv
+  rm "$shootSpecFile"
+  rm "$shootJsonPath"
+  #gardenctl target unset garden
+  #
+  printf "Kube configs for shoot and seed have been downloaded to %s\n"  "${genPath}"
+
+
+  local clusterCsvPath
+  clusterCsvPath="${genPath}/clusters.csv"
+  SHOOT_NAMESPACE="shoot--$PROJECT--$SHOOT_NAME"
+  #check if a row with the SHOOT_NAME exists in the csv file
+  if ! grep -q "$SHOOT_NAME" ./gen/clusters.csv; then
+    printf "%s,%s,%s,%s\n" "$LANDSCAPE" "$SHOOT_NAMESPACE" "$shootKubeConfigPath" "$seedKubeConfigPath" >> "$clusterCsvPath"
   fi
+
 }
 
 main "$@"
