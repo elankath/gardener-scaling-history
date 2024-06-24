@@ -4,7 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	gcr "github.com/elankath/gardener-cluster-recorder"
+	gsh "github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-types"
 	assert "github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -21,12 +22,9 @@ import (
 )
 
 func TestStoreLoadPodInfo(t *testing.T) {
-	dbPath := path.Join(os.TempDir(), "test.db")
-	slog.Info("TestStoreLoadPodInfo creating db", "db.path", dbPath)
-	_ = os.Remove(dbPath)
-	dataAccess := NewDataAccess(dbPath)
-	err := dataAccess.Init()
-	defer dataAccess.Close()
+	dataAccess, err := initDataAccess()
+	assert.Nil(t, err)
+
 	assert.Nil(t, err)
 
 	container := corev1.Container{
@@ -41,8 +39,8 @@ func TestStoreLoadPodInfo(t *testing.T) {
 		}},
 	}
 	now := time.Now().UTC()
-	savePodInfo := gcr.PodInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	savePodInfo := gst.PodInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			RowID:             0,
 			CreationTimestamp: now,
 			SnapshotTimestamp: now,
@@ -62,7 +60,7 @@ func TestStoreLoadPodInfo(t *testing.T) {
 			NodeName:      "node1",
 			SchedulerName: "bin-packing",
 		},
-		PodScheduleStatus: gcr.PodScheduleCommited,
+		PodScheduleStatus: gst.PodScheduleCommited,
 	}
 	savePodInfo.Hash = savePodInfo.GetHash()
 	rowId, err := dataAccess.StorePodInfo(savePodInfo)
@@ -147,7 +145,7 @@ func TestStoreLoadLatestEventInfo(t *testing.T) {
 	defer dataAccess.Close()
 	assert.Nil(t, err)
 
-	storeEventInfo := gcr.EventInfo{
+	storeEventInfo := gst.EventInfo{
 		UID:                     "uid1",
 		EventTime:               time.Now().UTC(),
 		ReportingController:     "controller",
@@ -179,12 +177,12 @@ func TestResourceListFromToText(t *testing.T) {
 	fmt.Printf("milliCores = %v (%v)\n", cpu.MilliValue(), cpu.Format)
 	saved[corev1.ResourceMemory] = memory
 	saved[corev1.ResourceStorage] = diskSize
-	t.Logf("saving resources = %s", gcr.ResourcesAsString(saved))
+	t.Logf("saving resources = %s", gst.ResourcesAsString(saved))
 	resourcesTextVal, err := resourcesToText(saved)
 	t.Logf("saved resourcesToText = %s", resourcesTextVal)
 	assert.Nil(t, err)
 	loaded, err := resourcesFromText(resourcesTextVal)
-	t.Logf("loaded resources = %s", gcr.ResourcesAsString(loaded))
+	t.Logf("loaded resources = %s", gst.ResourcesAsString(loaded))
 	assert.Nil(t, err)
 	//assert.Equal(t, saved, loaded) // THIS FAILS
 	//equal := recorder.IsResourceListEqual(saved, loaded)
@@ -202,6 +200,7 @@ func createResourceList(cpu, memory, disk string) (resources corev1.ResourceList
 func TestStoreLoadNodeInfo(t *testing.T) {
 	dataAccess, err := initDataAccess()
 	assert.Nil(t, err)
+	defer dataAccess.Close()
 
 	today, yesterday, dayBeforeYesterday := getTodayYesterdayDayBeforeYesterday()
 	k1Taint := corev1.Taint{
@@ -222,8 +221,8 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 		Effect:    "Custom",
 		TimeAdded: &metav1.Time{today},
 	}
-	na1 := gcr.NodeInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	na1 := gst.NodeInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			CreationTimestamp: dayBeforeYesterday,
 			SnapshotTimestamp: dayBeforeYesterday,
 			Name:              "A",
@@ -235,8 +234,8 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 		Allocatable: createResourceList("1", "3Gi", "19Gi"),
 		Capacity:    createResourceList("2", "4Gi", "20Gi"),
 	}
-	na2 := gcr.NodeInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	na2 := gst.NodeInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			CreationTimestamp: yesterday,
 			SnapshotTimestamp: yesterday,
 			Name:              "A",
@@ -248,8 +247,8 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 		Allocatable: createResourceList("1", "3Gi", "19Gi"),
 		Capacity:    createResourceList("2", "4Gi", "20Gi"),
 	}
-	nb1 := gcr.NodeInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	nb1 := gst.NodeInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			CreationTimestamp: yesterday,
 			SnapshotTimestamp: yesterday,
 			Name:              "B",
@@ -261,8 +260,8 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 		Allocatable: createResourceList("2", "6Gi", "20Gi"),
 		Capacity:    createResourceList("4", "8Gi", "22Gi"),
 	}
-	nb2 := gcr.NodeInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	nb2 := gst.NodeInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			CreationTimestamp: today,
 			SnapshotTimestamp: today,
 			Name:              "B",
@@ -276,8 +275,8 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	nc1 := gcr.NodeInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	nc1 := gst.NodeInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			CreationTimestamp: now,
 			SnapshotTimestamp: now,
 			Name:              "C",
@@ -290,17 +289,17 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 		Allocatable:        createResourceList("2", "8Gi", "12Gi"),
 		Capacity:           createResourceList("3", "9Gi", "13Gi"),
 	}
-	storeNodeInfos := []gcr.NodeInfo{na1, na2, nb1, nb2, nc1}
+	storeNodeInfos := []gst.NodeInfo{na1, na2, nb1, nb2, nc1}
 	for i, n := range storeNodeInfos {
 		storeNodeInfos[i].Hash = n.GetHash()
 		_, err := dataAccess.StoreNodeInfo(n)
 		assert.Nil(t, err)
 	}
-	slices.SortFunc(storeNodeInfos, gcr.CmpNodeInfoDescending)
+	slices.SortFunc(storeNodeInfos, gst.CmpNodeInfoDescending)
 	t.Run("loadNodeInfos equals storeNodeInfos", func(t *testing.T) {
 		loadNodeInfos, err := dataAccess.LoadNodeInfosBefore(time.Now())
 		assert.Nil(t, err)
-		isEqual := slices.EqualFunc(storeNodeInfos, loadNodeInfos, gcr.IsEqualNodeInfo)
+		isEqual := slices.EqualFunc(storeNodeInfos, loadNodeInfos, gst.IsEqualNodeInfo)
 		assert.True(t, isEqual)
 	})
 }
@@ -324,7 +323,7 @@ func getTodayYesterdayDayBeforeYesterday() (today, yesterday, dayBeforeYesterday
 
 func TestCanonicalizeQuantity(t *testing.T) {
 	// Create a resource.Quantity object
-	//save := resource.MustParse("1000Mi")
+	//save := resource.MustParseQuantity("1000Mi")
 	save := resource.MustParse("3.2")
 	bytes, err := json.Marshal(save)
 	t.Logf("marshalling quantity: %s", save.String())
@@ -334,7 +333,7 @@ func TestCanonicalizeQuantity(t *testing.T) {
 	err = json.Unmarshal(bytes, &load)
 	assert.Nil(t, err)
 	t.Logf("un-marshalled quantity: %s", load.String())
-	assert.True(t, gcr.IsEqualQuantity(save, load), "load and save quantities should be equal")
+	assert.True(t, gst.IsEqualQuantity(save, load), "load and save quantities should be equal")
 	//assert.Equal(t, save, load) //TODO:this fails as int64 scale is different.
 }
 
@@ -343,8 +342,8 @@ func TestStoreLoadMachineDeploymentInfos(t *testing.T) {
 	assert.Nil(t, err)
 
 	today, yesterday, dayBeforeYesterday := getTodayYesterdayDayBeforeYesterday()
-	m1 := gcr.MachineDeploymentInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	m1 := gst.MachineDeploymentInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			CreationTimestamp: dayBeforeYesterday,
 			SnapshotTimestamp: yesterday,
 			Name:              "A",
@@ -356,6 +355,18 @@ func TestStoreLoadMachineDeploymentInfos(t *testing.T) {
 		MaxSurge:         intstr.Parse("30"),
 		MaxUnavailable:   intstr.Parse("20%"),
 		MachineClassName: "bingo",
+		Labels: map[string]string{
+			"greeting": "howdy",
+			"weapon":   "light-saber",
+		},
+		Taints: []corev1.Taint{
+			{
+				Key:       "bingo",
+				Value:     "tringo",
+				Effect:    corev1.TaintEffectNoSchedule,
+				TimeAdded: &metav1.Time{Time: today},
+			},
+		},
 	}
 	m1.Hash = m1.GetHash()
 	t.Run("Simple single Store/Load", func(t *testing.T) {
@@ -379,8 +390,8 @@ func TestStoreLoadWorkerPoolInfos(t *testing.T) {
 	assert.Nil(t, err)
 
 	today, yesterday, dayBeforeYesterday := getTodayYesterdayDayBeforeYesterday()
-	w1 := gcr.WorkerPoolInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	w1 := gst.WorkerPoolInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			CreationTimestamp: dayBeforeYesterday,
 			SnapshotTimestamp: yesterday,
 			Name:              "A",
@@ -395,11 +406,25 @@ func TestStoreLoadWorkerPoolInfos(t *testing.T) {
 		Zones:          []string{"us-east-1a", "us-west-2b"},
 	}
 	w1.Hash = w1.GetHash()
-	t.Run("Simple single Store/Load", func(t *testing.T) {
-		t.Logf("StoreWorkerPoolInfo: %s", w1)
-		rowID, err := dataAccess.StoreWorkerPoolInfo(w1)
-		assert.Nil(t, err)
-		w1.RowID = rowID
+	t.Logf("StoreWorkerPoolInfo: %s", w1)
+	rowID, err := dataAccess.StoreWorkerPoolInfo(w1)
+	assert.Nil(t, err)
+	w1.RowID = rowID
+
+	w2 := w1
+	w2.CreationTimestamp = yesterday
+	w2.SnapshotTimestamp = today
+	w2.Name = "B"
+	w2.Minimum = 1
+	w2.Maximum = 3
+	w2.MachineType = "m5.xlarge"
+	w2.Zones = []string{"eu-east-1b", "us-west-2c"}
+	w2.Hash = w2.GetHash()
+	rowID, err = dataAccess.StoreWorkerPoolInfo(w2)
+	assert.Nil(t, err)
+	w2.RowID = rowID
+
+	t.Run("LoadWorkerPoolInfosBefore", func(t *testing.T) {
 		t.Logf("LoadWorkerPoolInfosBefore: %d", today.UnixMilli())
 		poolInfos, err := dataAccess.LoadWorkerPoolInfosBefore(today)
 		assert.Nil(t, err)
@@ -407,4 +432,101 @@ func TestStoreLoadWorkerPoolInfos(t *testing.T) {
 		t.Logf("LoadWorkerPoolInfosBefore returned:  %s", poolInfos[0])
 		assert.Equal(t, w1, poolInfos[0])
 	})
+
+	t.Run("LoadAllWorkerPoolInfoHashes", func(t *testing.T) {
+		poolHashes, err := dataAccess.LoadAllWorkerPoolInfoHashes()
+		assert.Nil(t, err)
+
+		assert.Equal(t, 2, len(poolHashes), "only 2 WorkerPoolInfo hashes should be present at this time")
+		t.Logf("LoadAllWorkerPoolInfoHashes returned:  %s", poolHashes)
+	})
+
+}
+
+const ResourceGPU corev1.ResourceName = "gpu"
+
+func TestStoreLoadMachineClassInfos(t *testing.T) {
+	dataAccess, err := initDataAccess()
+	assert.Nil(t, err)
+
+	today, yesterday, dayBeforeYesterday := getTodayYesterdayDayBeforeYesterday()
+	c1 := gsh.MachineClassInfo{
+		SnapshotMeta: gst.SnapshotMeta{
+			CreationTimestamp: dayBeforeYesterday,
+			SnapshotTimestamp: yesterday,
+			Name:              "A",
+			Namespace:         "nsA",
+		},
+		InstanceType: "m5.xlarge",
+		PoolName:     "bingo-pool",
+		Region:       "us-east1",
+		Zone:         "us-east1-c",
+		Labels: map[string]string{
+			"greeting": "howdy",
+			"weapon":   "light-saber",
+		},
+		Capacity: map[corev1.ResourceName]resource.Quantity{
+			corev1.ResourceCPU:     gsh.MustParseQuantity("20.2"),
+			corev1.ResourceMemory:  gsh.MustParseQuantity("16Gi"),
+			corev1.ResourceStorage: gsh.MustParseQuantity("20Gi"),
+			ResourceGPU:            gsh.MustParseQuantity("1"),
+		},
+	}
+	c1.Hash = c1.GetHash()
+	t.Logf("StoreMachineClassInfo: %s", c1)
+	rowID, err := dataAccess.StoreMachineClassInfo(c1)
+	assert.Nil(t, err)
+	c1.RowID = rowID
+
+	t.Run("Store/Load by name", func(t *testing.T) {
+		t.Logf("LoadLatestMachineClassInfo for name: %s", c1.Name)
+		loadInfo, err := dataAccess.LoadLatestMachineClassInfo(c1.Name)
+		assert.Nil(t, err)
+		t.Logf("LoadLatestMachineClassInfo returned:  %s", loadInfo)
+		assert.Equal(t, c1, loadInfo)
+	})
+
+	t.Run("Store/Load Before", func(t *testing.T) {
+		c2 := c1
+		c2.InstanceType = "m5.large"
+		c2.PoolName = "tringo-pool"
+		c2.Region = "eu-west1"
+		c2.Zone = "eu-west1-a"
+		c2.CreationTimestamp = today
+		c2.SnapshotTimestamp = today
+		c2.Hash = c1.GetHash()
+		t.Logf("StoreMachineClassInfo: %s", c2)
+		rowID, err := dataAccess.StoreMachineClassInfo(c2)
+		assert.Nil(t, err)
+		c2.RowID = rowID
+		t.Logf("LoadMachineClassInfosBefore: %d", yesterday.UnixMilli())
+		poolInfos, err := dataAccess.LoadMachineClassInfosBefore(yesterday)
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(poolInfos), "only 1 MachineClassInfo should be present at this time")
+
+		t.Logf("LoadMachineClassInfosBefore returned:  %s", poolInfos[0])
+		assert.Equal(t, c1, poolInfos[0])
+
+	})
+}
+
+func TestQuantityNormalization(t *testing.T) {
+	//q1 := resource.MustParseQuantity("20.2")
+	//q1 := resource.MustParseQuantity("20.24")
+	//q1 := resource.MustParseQuantity("20.245")
+	q1 := resource.MustParse("20.2456")
+
+	q1Str := q1.String()
+	q1FromStr, err := resource.ParseQuantity(q1Str)
+	assert.Nil(t, err)
+	t.Logf("q1=%s, q1FromStr=%s", q1.String(), q1FromStr.String())
+	assert.Equal(t, q1, q1FromStr)
+
+	q1Bytes, err := json.Marshal(q1)
+	assert.Nil(t, err)
+	var q1FromJson resource.Quantity
+	err = json.Unmarshal(q1Bytes, &q1FromJson)
+	assert.Nil(t, err)
+	t.Logf("q1=%s, q1FromJson=%s", q1.String(), q1FromJson.String())
+	assert.Equal(t, q1, q1FromJson)
 }

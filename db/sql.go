@@ -32,6 +32,7 @@ const InsertWorkerPoolInfo = `INSERT INTO worker_pool_info(
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const SelectWorkerPoolInfoBefore = `SELECT * from worker_pool_info where SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC`
+const SelectAllWorkerPoolInfoHashes = "SELECT RowID, Name, SnapshotTimestamp, Hash FROM worker_pool_info ORDER BY RowID desc"
 
 const CreateMCDInfoTable = `CREATE TABLE IF NOT EXISTS mcd_info(
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,6 +46,8 @@ const CreateMCDInfoTable = `CREATE TABLE IF NOT EXISTS mcd_info(
 	MaxSurge TEXT,
 	MaxUnavailable TEXT, 
 	MachineClassName TEXT,
+	Labels TEXT,
+	Taints TEXT,
 	DeletionTimestamp DATETIME,
 	Hash TEXT)`
 const InsertMCDInfo = `INSERT INTO mcd_info(
@@ -58,11 +61,44 @@ const InsertMCDInfo = `INSERT INTO mcd_info(
 	MaxSurge,
 	MaxUnavailable,
 	MachineClassName,
-	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectMCDBefore = `SELECT * from mcd_info where SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC`
+	Labels,
+	Taints,
+	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const SelectLatestMCDInfoBefore = `SELECT * from mcd_info where SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC`
 const UpdateMCDInfoDeletionTimestamp = `UPDATE mcd_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCDInfoHash = "SELECT Hash FROM mcd_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCDInfo = "SELECT * FROM mcd_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
+
+const CreateMCCInfoTable = `CREATE TABLE IF NOT EXISTS mcc_info(
+	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
+	CreationTimestamp INT NOT NULL,
+	SnapshotTimestamp INT NOT NULL,
+	Name TEXT,
+	Namespace TEXT,
+	InstanceType TEXT,
+	PoolName TEXT,
+	Region TEXT,
+	Zone TEXT,
+	Labels TEXT,
+	Capacity TEXT,
+	DeletionTimestamp DATETIME,
+	Hash TEXT)`
+const InsertMCCInfo = `INSERT INTO mcc_info(
+	CreationTimestamp,
+	SnapshotTimestamp,
+	Name,
+	Namespace,
+	InstanceType,
+	PoolName,
+	Region,
+	Zone,
+	Labels,
+	Capacity,
+	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+const SelectLatestMCCInfoBefore = `SELECT * from mcc_info where SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC`
+const UpdateMCCInfoDeletionTimestamp = `UPDATE mcc_info SET DeletionTimestamp = ? where Name = ?`
+const SelectMCCInfoHash = "SELECT Hash FROM mcc_info WHERE name=? ORDER BY RowID desc LIMIT 1"
+const SelectLatestMCCInfo = "SELECT * FROM mcc_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
 
 const CreateNodeInfoTable = `CREATE TABLE IF NOT EXISTS node_info (
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,

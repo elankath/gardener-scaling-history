@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/csv"
-	"github.com/elankath/gardener-cluster-recorder"
-	"github.com/elankath/gardener-cluster-recorder/recorder"
+	gsh "github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-history/recorder"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -41,12 +41,37 @@ func main() {
 		slog.Error("cannot read clusters config", "config-file", CLUSTERS_CFG_FILE, "error", err)
 		os.Exit(5)
 	}
-	var recorderParams = make([]gcr.RecorderParams, len(records))
-	for rowNum, row := range records {
-		recorderParams[rowNum] = gcr.RecorderParams{
-			ShootKubeConfigPath: filepath.Join(configDir, strings.TrimSpace(row[0])),
+	var recorderParams = make([]gsh.RecorderParams, len(records))
+	for rowIndex, row := range records {
+		if len(row) != 4 {
+			slog.Error("Invalid row in cluster config. Should be 4 columns in row: Landscape, ShootNameSpace, ShootKubeConfigPath, SeedKubeConfigPath", "rowIndex", rowIndex)
+			os.Exit(5)
+		}
+		shootKubeConfigPath := row[2]
+		if !filepath.IsAbs(shootKubeConfigPath) {
+			shootKubeConfigPath = filepath.Join(configDir, shootKubeConfigPath)
+		}
+		seedKubeConfigPath := row[3]
+		if !filepath.IsAbs(seedKubeConfigPath) {
+			seedKubeConfigPath = filepath.Join(configDir, seedKubeConfigPath)
+		}
+		if _, err := os.Stat(shootKubeConfigPath); os.IsNotExist(err) {
+			slog.Error("Shoot kubeconfig does not exist", "path", shootKubeConfigPath)
+			os.Exit(6)
+		}
+		if _, err := os.Stat(seedKubeConfigPath); os.IsNotExist(err) {
+			slog.Error("Seed kubeconfig does not exist", "path", seedKubeConfigPath)
+			os.Exit(6)
+		}
+		if _, err := os.Stat(dbDir); os.IsNotExist(err) {
+			slog.Error("DB Dir", "path", dbDir)
+			os.Exit(6)
+		}
+		recorderParams[rowIndex] = gsh.RecorderParams{
+			Landscape:           row[0],
 			ShootNameSpace:      row[1],
-			SeedKubeConfigPath:  filepath.Join(configDir, strings.TrimSpace(row[2])),
+			ShootKubeConfigPath: shootKubeConfigPath,
+			SeedKubeConfigPath:  seedKubeConfigPath,
 			DBDir:               dbDir,
 		}
 	}
@@ -56,20 +81,6 @@ func main() {
 		os.Exit(3)
 	}
 
-	for _, rp := range recorderParams {
-		if _, err := os.Stat(rp.ShootKubeConfigPath); os.IsNotExist(err) {
-			slog.Error("Shoot kubeconfig does not exist", "path", rp.ShootKubeConfigPath)
-			os.Exit(6)
-		}
-		if _, err := os.Stat(rp.SeedKubeConfigPath); os.IsNotExist(err) {
-			slog.Error("Seed kubeconfig does not exist", "path", rp.SeedKubeConfigPath)
-			os.Exit(6)
-		}
-		if _, err := os.Stat(rp.DBDir); os.IsNotExist(err) {
-			slog.Error("Seed kubeconfig does not exist", "path", rp.DBDir)
-			os.Exit(6)
-		}
-	}
 	slog.Info("Will monitor, record & analyze clusters for scaling history", "shootKubeConfigs", recorderParams[0].ShootKubeConfigPath, "dbdir", dbDir)
 
 	startTime := time.Now()

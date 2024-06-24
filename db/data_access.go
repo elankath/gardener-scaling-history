@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/blockloop/scan/v2"
-	gcr "github.com/elankath/gardener-cluster-recorder"
+	gsh "github.com/elankath/gardener-scaling-history"
+	gst "github.com/elankath/gardener-scaling-types"
 	_ "github.com/glebarez/go-sqlite"
 	"io"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
 	"log/slog"
@@ -22,11 +24,17 @@ type DataAccess struct {
 	dataDB                                      *sql.DB
 	insertWorkerPoolInfo                        *sql.Stmt
 	selectWorkerPoolInfosBefore                 *sql.Stmt
+	selectAllWorkerPoolInfoHashes               *sql.Stmt
 	insertMCDInfo                               *sql.Stmt
 	updateMCDInfoDeletionTimeStamp              *sql.Stmt
 	selectMCDInfoHash                           *sql.Stmt
-	selectMCDInfoBefore                         *sql.Stmt
+	selectLatestMCDInfoBefore                   *sql.Stmt
 	selectLatestMCDInfo                         *sql.Stmt
+	insertMCCInfo                               *sql.Stmt
+	updateMCCInfoDeletionTimeStamp              *sql.Stmt
+	selectMCCInfoHash                           *sql.Stmt
+	selectLatestMCCInfoBefore                   *sql.Stmt
+	selectLatestMCCInfo                         *sql.Stmt
 	insertEvent                                 *sql.Stmt
 	insertNodeInfo                              *sql.Stmt
 	updateNodeInfoDeletionTimeStamp             *sql.Stmt
@@ -41,7 +49,6 @@ type DataAccess struct {
 	selectUnscheduledPodsBeforeTimestamp        *sql.Stmt
 	selectScheduledPodsBeforeSnapshotTimestamp  *sql.Stmt
 	selectLatestPodInfosBeforeSnapshotTimestamp *sql.Stmt
-	selectAllActiveNodeGroupsDesc               *sql.Stmt
 	selectNodeInfosBefore                       *sql.Stmt
 	selectNodeCountWithNameAndHash              *sql.Stmt
 	selectLatestCADeployment                    *sql.Stmt
@@ -100,6 +107,11 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare selectWorkerPoolInfosBefore statement: %w", err)
 	}
 
+	d.selectAllWorkerPoolInfoHashes, err = db.Prepare(SelectAllWorkerPoolInfoHashes)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectAllWorkerPoolInfoHashes statement: %w", err)
+	}
+
 	d.insertNodeInfo, err = db.Prepare(InsertNodeInfo)
 	if err != nil {
 		return fmt.Errorf("cannot prepare insertNodeInfo statement: %w", err)
@@ -125,28 +137,54 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare updatePdbDeletionTimeStamp: %w", err)
 	}
 
+	d.insertMCDInfo, err = db.Prepare(InsertMCDInfo)
+	if err != nil {
+		return fmt.Errorf("cannot prepare insertMCDInfo: %w", err)
+	}
+
 	d.updateMCDInfoDeletionTimeStamp, err = db.Prepare(UpdateMCDInfoDeletionTimestamp)
 	if err != nil {
 		return fmt.Errorf("cannot prepare updateMCDInfoDeletionTimeStamp: %w", err)
 	}
 
-	d.selectMCDInfoBefore, err = db.Prepare(SelectMCDBefore)
+	d.selectLatestMCDInfoBefore, err = db.Prepare(SelectLatestMCDInfoBefore)
 	if err != nil {
-		return fmt.Errorf("cannot prepare selectNodeGroupsBefore statement: %w", err)
-	}
-
-	d.selectAllActiveNodeGroupsDesc, err = db.Prepare("SELECT * from nodegroup_info where  DeletionTimestamp is null  order by RowID desc")
-	if err != nil {
-		return fmt.Errorf("cannot prepare get active node groups  statement: %w", err)
-	}
-	d.selectMCDInfoHash, err = db.Prepare(SelectMCDInfoHash)
-	if err != nil {
-		return fmt.Errorf("cannot prepare selectMCDInfoHash: %w", err)
+		return fmt.Errorf("cannot prepare selectLatestMCDInfoBefore statement: %w", err)
 	}
 
 	d.selectLatestMCDInfo, err = db.Prepare(SelectLatestMCDInfo)
 	if err != nil {
 		return fmt.Errorf("cannot prepare selectLatestMCDInfo: %w", err)
+	}
+
+	d.selectMCDInfoHash, err = db.Prepare(SelectMCDInfoHash)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectMCDInfoHash: %w", err)
+	}
+
+	d.insertMCCInfo, err = db.Prepare(InsertMCCInfo)
+	if err != nil {
+		return fmt.Errorf("cannot prepare insertMCCInfo: %w", err)
+	}
+
+	d.updateMCCInfoDeletionTimeStamp, err = db.Prepare(UpdateMCCInfoDeletionTimestamp)
+	if err != nil {
+		return fmt.Errorf("cannot prepare updateMCCInfoDeletionTimeStamp: %w", err)
+	}
+
+	d.selectLatestMCCInfoBefore, err = db.Prepare(SelectLatestMCCInfoBefore)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectLatestMCCInfoBefore statement: %w", err)
+	}
+
+	d.selectLatestMCCInfo, err = db.Prepare(SelectLatestMCCInfo)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectLatestMCCInfo: %w", err)
+	}
+
+	d.selectMCCInfoHash, err = db.Prepare(SelectMCCInfoHash)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectMCCInfoHash: %w", err)
 	}
 
 	d.selectLatestPodInfoWithName, err = db.Prepare("SELECT * FROM pod_info WHERE Name=? ORDER BY CreationTimestamp DESC LIMIT 1")
@@ -171,11 +209,6 @@ func (d *DataAccess) prepareStatements() (err error) {
 	d.updatePodDeletionTimeStamp, err = db.Prepare(UpdatePodDeletionTimestamp)
 	if err != nil {
 		return fmt.Errorf("cannot prepare updatePodDeletionTimeStamp: %w", err)
-	}
-
-	d.insertMCDInfo, err = db.Prepare(InsertMCDInfo)
-	if err != nil {
-		return fmt.Errorf("cannot prepare insertMCDInfo: %w", err)
 	}
 
 	d.selectEventWithUID, err = db.Prepare("SELECT * from event_info where UID = ?")
@@ -243,6 +276,12 @@ func (d *DataAccess) createSchema() error {
 		return fmt.Errorf("cannot create mcd_info table: %w", err)
 	}
 	slog.Info("successfully created mcd_info table", "result", result)
+
+	result, err = db.Exec(CreateMCCInfoTable)
+	if err != nil {
+		return fmt.Errorf("cannot create mcc_info table: %w", err)
+	}
+	slog.Info("successfully created mcc_info table", "result", result)
 
 	result, err = db.Exec(CreateEventInfoTable)
 	if err != nil {
@@ -321,8 +360,8 @@ func (d *DataAccess) CountNodeInfoWithHash(name, hash string) (int, error) {
 	return -1, err
 }
 
-func (d *DataAccess) UpdatePodDeletionTimestamp(podUID types.UID, deletionTimestamp time.Time) (updated int64, err error) {
-	result, err := d.updatePodDeletionTimeStamp.Exec(deletionTimestamp.UTC().UnixMilli(), podUID)
+func updateDeletionTimestamp(stmt *sql.Stmt, name string, deletionTimestamp time.Time) (updated int64, err error) {
+	result, err := stmt.Exec(deletionTimestamp.UTC().UnixMilli(), name)
 	if err != nil {
 		return -1, err
 	}
@@ -331,33 +370,25 @@ func (d *DataAccess) UpdatePodDeletionTimestamp(podUID types.UID, deletionTimest
 		return -1, err
 	}
 	return updated, err
+}
+
+func (d *DataAccess) UpdatePodDeletionTimestamp(podUID types.UID, deletionTimestamp time.Time) (updated int64, err error) {
+	return updateDeletionTimestamp(d.updatePodDeletionTimeStamp, string(podUID), deletionTimestamp)
 }
 
 func (d *DataAccess) UpdateNodeInfoDeletionTimestamp(name string, deletionTimestamp time.Time) (updated int64, err error) {
-	result, err := d.updateNodeInfoDeletionTimeStamp.Exec(deletionTimestamp, name)
-	if err != nil {
-		return -1, err
-	}
-	updated, err = result.RowsAffected()
-	if err != nil {
-		return -1, err
-	}
-	return updated, err
+	return updateDeletionTimestamp(d.updateNodeInfoDeletionTimeStamp, name, deletionTimestamp)
 }
 
 func (d *DataAccess) UpdateMCDInfoDeletionTimestamp(name string, deletionTimestamp time.Time) (updated int64, err error) {
-	result, err := d.updateMCDInfoDeletionTimeStamp.Exec(deletionTimestamp, name)
-	if err != nil {
-		return -1, err
-	}
-	updated, err = result.RowsAffected()
-	if err != nil {
-		return -1, err
-	}
-	return updated, err
+	return updateDeletionTimestamp(d.updateMCDInfoDeletionTimeStamp, name, deletionTimestamp)
 }
 
-func (d *DataAccess) StoreEventInfo(event gcr.EventInfo) error {
+func (d *DataAccess) UpdateMCCInfoDeletionTimestamp(name string, deletionTimestamp time.Time) (updated int64, err error) {
+	return updateDeletionTimestamp(d.updateMCCInfoDeletionTimeStamp, name, deletionTimestamp)
+}
+
+func (d *DataAccess) StoreEventInfo(event gst.EventInfo) error {
 	//eventsStmt, err := db.Prepare("INSERT INTO event_info(UID, EventTime, ReportingController, Reason, Message, InvolvedObjectKind, InvolvedObjectName, InvolvedObjectNamespace, InvolvedObjectUID) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	_, err := d.insertEvent.Exec(
 		event.UID,
@@ -377,9 +408,21 @@ func (d *DataAccess) GetMachineDeploymentInfoHash(name string) (string, error) {
 	return getHash(d.selectMCDInfoHash, name)
 }
 
-func (d *DataAccess) StoreMachineDeploymentInfo(m gcr.MachineDeploymentInfo) (rowID int64, err error) {
+func (d *DataAccess) GetMachineClassInfoHash(name string) (string, error) {
+	return getHash(d.selectMCCInfoHash, name)
+}
+
+func (d *DataAccess) StoreMachineDeploymentInfo(m gst.MachineDeploymentInfo) (rowID int64, err error) {
 	if m.Hash == "" {
 		m.Hash = m.GetHash()
+	}
+	labels, err := labelsToText(m.Labels)
+	if err != nil {
+		return -1, err
+	}
+	taints, err := taintsToText(m.Taints)
+	if err != nil {
+		return -1, err
 	}
 	result, err := d.insertMCDInfo.Exec(
 		m.CreationTimestamp.UTC().UnixMilli(),
@@ -392,6 +435,8 @@ func (d *DataAccess) StoreMachineDeploymentInfo(m gcr.MachineDeploymentInfo) (ro
 		m.MaxSurge.String(),
 		m.MaxUnavailable.String(),
 		m.MachineClassName,
+		labels,
+		taints,
 		m.Hash)
 	if err != nil {
 		slog.Error("cannot insert MachineDeploymentInfo in the mcd_info table", "error", err)
@@ -404,15 +449,56 @@ func (d *DataAccess) StoreMachineDeploymentInfo(m gcr.MachineDeploymentInfo) (ro
 	}
 	slog.Info("StoreMachineDeploymentInfo successful.", "Name", m.Name,
 		"RowID", rowID,
-		"Replicas",
-		m.Replicas,
-		"Hash",
-		m.Hash,
+		"Replicas", m.Replicas,
+		"Hash", m.Hash,
 	)
 	return
 }
 
-func (d *DataAccess) StoreWorkerPoolInfo(w gcr.WorkerPoolInfo) (rowID int64, err error) {
+func (d *DataAccess) StoreMachineClassInfo(m gsh.MachineClassInfo) (rowID int64, err error) {
+	if m.Hash == "" {
+		m.Hash = m.GetHash()
+	}
+	labels, err := labelsToText(m.Labels)
+	if err != nil {
+		return -1, err
+	}
+	capacity, err := resourcesToText(m.Capacity)
+	if err != nil {
+		return -1, err
+	}
+	result, err := d.insertMCCInfo.Exec(
+		m.CreationTimestamp.UTC().UnixMilli(),
+		m.SnapshotTimestamp.UTC().UnixMilli(),
+		m.Name,
+		m.Namespace,
+		m.InstanceType,
+		m.PoolName,
+		m.Region,
+		m.Zone,
+		labels,
+		capacity,
+		m.Hash)
+	if err != nil {
+		slog.Error("cannot insert MachineClassInfo in the mcc_info table", "error", err)
+		return
+	}
+	rowID, err = result.LastInsertId()
+	if err != nil {
+		slog.Error("cannot retrieve rowID for MachineClassInfo from the mcc_info table", "error", err, "name", m.Name)
+		return
+	}
+	slog.Info("StoreMachineClassInfo successful.", "Name", m.Name,
+		"RowID", rowID,
+		"InstanceType", m.InstanceType,
+		"Region", m.Region,
+		"Capacity", m.Capacity,
+		"Hash", m.Hash,
+	)
+	return
+}
+
+func (d *DataAccess) StoreWorkerPoolInfo(w gst.WorkerPoolInfo) (rowID int64, err error) {
 	if w.Hash == "" {
 		w.Hash = w.GetHash()
 	}
@@ -448,27 +534,58 @@ func (d *DataAccess) StoreWorkerPoolInfo(w gcr.WorkerPoolInfo) (rowID int64, err
 	return
 }
 
-func (d *DataAccess) LoadWorkerPoolInfosBefore(snapshotTimestamp time.Time) ([]gcr.WorkerPoolInfo, error) {
-	workerPoolInfos, err := queryAndMapToInfos[gcr.WorkerPoolInfo, workerPoolRow](d.selectWorkerPoolInfosBefore, snapshotTimestamp)
+func (d *DataAccess) LoadAllWorkerPoolInfoHashes() (map[string]string, error) {
+	poolHashes := make(map[string]string)
+	nameHashTimes, err := queryRows[hashRow](d.selectAllWorkerPoolInfoHashes)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return poolHashes, nil //empty table is not an error
+		}
+		return nil, fmt.Errorf("LoadAllWorkerPoolInfoHashes could not scan rows: %w", err)
+	}
+	for _, v := range nameHashTimes {
+		_, ok := poolHashes[v.Name]
+		if ok {
+			continue
+		}
+		poolHashes[v.Name] = v.Hash
+	}
+	return poolHashes, nil
+}
+
+func (d *DataAccess) LoadWorkerPoolInfosBefore(snapshotTimestamp time.Time) ([]gst.WorkerPoolInfo, error) {
+	workerPoolInfos, err := queryAndMapToInfos[gst.WorkerPoolInfo, workerPoolRow](d.selectWorkerPoolInfosBefore, snapshotTimestamp)
 	if err != nil {
 		return nil, fmt.Errorf("LoadWorkerPoolInfosBefore could not scan rows: %w", err)
 	}
 	return workerPoolInfos, nil
 }
 
-func (d *DataAccess) LoadMachineDeploymentInfosBefore(snapshotTimestamp time.Time) ([]gcr.MachineDeploymentInfo, error) {
-	mcdInfos, err := queryAndMapToInfos[gcr.MachineDeploymentInfo, mcdRow](d.selectMCDInfoBefore, snapshotTimestamp)
+func (d *DataAccess) LoadMachineDeploymentInfosBefore(snapshotTimestamp time.Time) ([]gst.MachineDeploymentInfo, error) {
+	mcdInfos, err := queryAndMapToInfos[gst.MachineDeploymentInfo, mcdRow](d.selectLatestMCDInfoBefore, snapshotTimestamp)
 	if err != nil {
 		return nil, fmt.Errorf("LoadMachineDeploymentInfosBefore could not scan rows: %w", err)
 	}
 	return mcdInfos, nil
 }
 
-func (d *DataAccess) LoadLatestMachineDeploymentInfo(name string) (mcdInfo gcr.MachineDeploymentInfo, err error) {
-	return queryAndMapToInfo[gcr.MachineDeploymentInfo, mcdRow](d.selectLatestMCDInfo, name)
+func (d *DataAccess) LoadLatestMachineClassInfo(name string) (mccInfo gsh.MachineClassInfo, err error) {
+	return queryAndMapToInfo[gsh.MachineClassInfo, mccRow](d.selectLatestMCCInfo, name)
 }
 
-func (d *DataAccess) LoadEventInfoWithUID(eventUID string) (eventInfo gcr.EventInfo, err error) {
+func (d *DataAccess) LoadMachineClassInfosBefore(snapshotTimestamp time.Time) ([]gsh.MachineClassInfo, error) {
+	mccInfos, err := queryAndMapToInfos[gsh.MachineClassInfo, mccRow](d.selectLatestMCCInfoBefore, snapshotTimestamp)
+	if err != nil {
+		return nil, fmt.Errorf("LoadMachineClassInfosBefore could not scan rows: %w", err)
+	}
+	return mccInfos, nil
+}
+
+func (d *DataAccess) LoadLatestMachineDeploymentInfo(name string) (mcdInfo gst.MachineDeploymentInfo, err error) {
+	return queryAndMapToInfo[gst.MachineDeploymentInfo, mcdRow](d.selectLatestMCDInfo, name)
+}
+
+func (d *DataAccess) LoadEventInfoWithUID(eventUID string) (eventInfo gst.EventInfo, err error) {
 	rows, err := d.selectEventWithUID.Query(eventUID)
 	if err != nil { //TODO: wrap err with msg and return
 		return
@@ -478,7 +595,7 @@ func (d *DataAccess) LoadEventInfoWithUID(eventUID string) (eventInfo gcr.EventI
 }
 
 // LoadAllEvents TODO: move me to generics
-func (d *DataAccess) LoadAllEvents() (events []gcr.EventInfo, err error) {
+func (d *DataAccess) LoadAllEvents() (events []gst.EventInfo, err error) {
 	rows, err := d.selectAllEvents.Query()
 	if err != nil { //TODO: wrap err with msg and return
 		return
@@ -487,30 +604,30 @@ func (d *DataAccess) LoadAllEvents() (events []gcr.EventInfo, err error) {
 	return
 }
 
-func (d *DataAccess) LoadLatestPodInfoWithName(podName string) (podInfo gcr.PodInfo, err error) {
-	return queryAndMapToInfo[gcr.PodInfo, podRow](d.selectLatestPodInfoWithName, podName)
+func (d *DataAccess) LoadLatestPodInfoWithName(podName string) (podInfo gst.PodInfo, err error) {
+	return queryAndMapToInfo[gst.PodInfo, podRow](d.selectLatestPodInfoWithName, podName)
 }
 
-func (d *DataAccess) GetLatestUnscheduledPodsBeforeTimestamp(timeStamp time.Time) (podInfos []gcr.PodInfo, err error) {
-	return queryAndMapToInfos[gcr.PodInfo, podRow](d.selectUnscheduledPodsBeforeTimestamp, timeStamp)
+func (d *DataAccess) GetLatestUnscheduledPodsBeforeTimestamp(timeStamp time.Time) (podInfos []gst.PodInfo, err error) {
+	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectUnscheduledPodsBeforeTimestamp, timeStamp)
 }
 
-func (d *DataAccess) GetLatestPodInfosBeforeSnapshotTime(snapshotTime time.Time) (pods []gcr.PodInfo, err error) {
-	return queryAndMapToInfos[gcr.PodInfo, podRow](d.selectLatestPodInfosBeforeSnapshotTimestamp, snapshotTime)
+func (d *DataAccess) GetLatestPodInfosBeforeSnapshotTime(snapshotTime time.Time) (pods []gst.PodInfo, err error) {
+	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectLatestPodInfosBeforeSnapshotTimestamp, snapshotTime)
 }
 
-func (d *DataAccess) GetLatestScheduledPodsBeforeTimestamp(timestamp time.Time) (pods []gcr.PodInfo, err error) {
+func (d *DataAccess) GetLatestScheduledPodsBeforeTimestamp(timestamp time.Time) (pods []gst.PodInfo, err error) {
 	slog.Info("GetLatestScheduledPodsBeforeTimestamp: selectScheduledPodsBeforeSnapshotTimestamp", "timestamp", timestamp.UTC().UnixMilli())
-	return queryAndMapToInfos[gcr.PodInfo, podRow](d.selectScheduledPodsBeforeSnapshotTimestamp, timestamp, timestamp)
+	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectScheduledPodsBeforeSnapshotTimestamp, timestamp, timestamp)
 }
 
 // GetLatestCADeployment needs a TODO: move me to generics
-func (d *DataAccess) GetLatestCADeployment() (caDeployment *gcr.CASettingsInfo, err error) {
+func (d *DataAccess) GetLatestCADeployment() (caDeployment *gst.CASettingsInfo, err error) {
 	rows, err := d.selectLatestCADeployment.Query()
 	if err != nil {
 		return
 	}
-	var caDeployments []gcr.CASettingsInfo
+	var caDeployments []gst.CASettingsInfo
 	err = scan.Rows(&caDeployments, rows)
 	if err != nil {
 		return nil, err
@@ -523,12 +640,12 @@ func (d *DataAccess) GetLatestCADeployment() (caDeployment *gcr.CASettingsInfo, 
 }
 
 // GetCADeploymentWithHash has a  TODO: move me to generics
-func (d *DataAccess) GetCADeploymentWithHash(Hash string) (caDeployment *gcr.CASettingsInfo, err error) {
+func (d *DataAccess) GetCADeploymentWithHash(Hash string) (caDeployment *gst.CASettingsInfo, err error) {
 	rows, err := d.selectLatestCADeployment.Query(Hash)
 	if err != nil {
 		return
 	}
-	var caDeployments []gcr.CASettingsInfo
+	var caDeployments []gst.CASettingsInfo
 	err = scan.Rows(&caDeployments, rows)
 	if err != nil {
 		return nil, err
@@ -540,7 +657,7 @@ func (d *DataAccess) GetCADeploymentWithHash(Hash string) (caDeployment *gcr.CAS
 	return
 }
 
-func (d *DataAccess) StorePodInfo(podInfo gcr.PodInfo) (int64, error) {
+func (d *DataAccess) StorePodInfo(podInfo gst.PodInfo) (int64, error) {
 	if podInfo.Hash == "" {
 		podInfo.Hash = podInfo.GetHash()
 	}
@@ -577,7 +694,7 @@ func (d *DataAccess) StorePodInfo(podInfo gcr.PodInfo) (int64, error) {
 	return result.LastInsertId()
 }
 
-func (d *DataAccess) StoreNodeInfo(n gcr.NodeInfo) (rowID int64, err error) {
+func (d *DataAccess) StoreNodeInfo(n gst.NodeInfo) (rowID int64, err error) {
 	if n.Hash == "" {
 		n.Hash = n.GetHash()
 	}
@@ -619,15 +736,15 @@ func (d *DataAccess) StoreNodeInfo(n gcr.NodeInfo) (rowID int64, err error) {
 	return
 }
 
-func (d *DataAccess) LoadNodeInfosBefore(creationTimestamp time.Time) ([]gcr.NodeInfo, error) {
-	nodeInfos, err := queryAndMapToInfos[gcr.NodeInfo, nodeRow](d.selectNodeInfosBefore, creationTimestamp)
+func (d *DataAccess) LoadNodeInfosBefore(creationTimestamp time.Time) ([]gst.NodeInfo, error) {
+	nodeInfos, err := queryAndMapToInfos[gst.NodeInfo, nodeRow](d.selectNodeInfosBefore, creationTimestamp)
 	if err != nil {
 		return nil, fmt.Errorf("LoadNodeInfosBefore could not scan rows: %w", err)
 	}
 	return nodeInfos, nil
 }
 
-func (d *DataAccess) StoreCADeployment(caSettings gcr.CASettingsInfo) (int64, error) {
+func (d *DataAccess) StoreCADeployment(caSettings gst.CASettingsInfo) (int64, error) {
 	result, err := d.insertCADeployment.Exec(caSettings.Expander, caSettings.MaxNodesTotal, caSettings.Priorities, caSettings.Hash)
 	if err != nil {
 		return -1, err
@@ -635,8 +752,8 @@ func (d *DataAccess) StoreCADeployment(caSettings gcr.CASettingsInfo) (int64, er
 	return result.LastInsertId()
 }
 
-func (d *DataAccess) GetLatestNodesBeforeAndNotDeleted(timestamp time.Time) ([]gcr.NodeInfo, error) {
-	nodeInfos, err := queryAndMapToInfos[gcr.NodeInfo, nodeRow](d.selectLatestNodesBeforeAndNotDeleted, timestamp)
+func (d *DataAccess) GetLatestNodesBeforeAndNotDeleted(timestamp time.Time) ([]gst.NodeInfo, error) {
+	nodeInfos, err := queryAndMapToInfos[gst.NodeInfo, nodeRow](d.selectLatestNodesBeforeAndNotDeleted, timestamp)
 	if err != nil {
 		return nil, fmt.Errorf("GetLatestNodesBeforeAndNotDeleted could not scan rows: %w", err)
 	}
@@ -769,6 +886,12 @@ func taintsFromText(textValue string) (taints []corev1.Taint, err error) {
 	if err != nil {
 		err = fmt.Errorf("cannot de-serialize taints %q due to: %w", textValue, err)
 	}
+	for i, t := range taints {
+		if t.TimeAdded != nil {
+			t.TimeAdded = &metav1.Time{Time: t.TimeAdded.UTC()}
+		}
+		taints[i] = t
+	}
 	return
 }
 
@@ -800,9 +923,10 @@ func getHash(selectHashStmt *sql.Stmt, name string) (string, error) {
 
 }
 
-// queryAndMapToInfo executes the given prepared stmt with the given params and maps the rows to infoObjs which is a []I slice
-func queryAndMapToInfos[I any, T row[I]](stmt *sql.Stmt, params ...any) (infoObjs []I, err error) {
-	var rowObjs []T
+// queryAndMapToInfo executes the given prepared stmt with the given params and scans the db rows into rowObjs of specific generic type T.
+// It is expected that field names of T are mapped to column names of the query via blockloop/scan `db` annotation
+// if there are no rows returns sql.ErrNoRows as an error. Caller should check this.
+func queryRows[T any](stmt *sql.Stmt, params ...any) (rowObjs []T, err error) {
 	var rows *sql.Rows
 
 	var adjustedParams = make([]any, len(params))
@@ -810,7 +934,12 @@ func queryAndMapToInfos[I any, T row[I]](stmt *sql.Stmt, params ...any) (infoObj
 		adjustedParams[i] = adjustParam(p)
 	}
 
-	rows, err = stmt.Query(adjustedParams...)
+	if len(params) > 0 {
+		rows, err = stmt.Query(adjustedParams...)
+	} else {
+		rows, err = stmt.Query()
+	}
+
 	if err != nil {
 		return
 	}
@@ -820,6 +949,15 @@ func queryAndMapToInfos[I any, T row[I]](stmt *sql.Stmt, params ...any) (infoObj
 	}
 	if len(rowObjs) == 0 {
 		return nil, sql.ErrNoRows
+	}
+	return
+}
+
+// queryAndMapToInfo executes the given prepared stmt with the given params and maps the rows to infoObjs which is a []I slice
+func queryAndMapToInfos[I any, T row[I]](stmt *sql.Stmt, params ...any) (infoObjs []I, err error) {
+	rowObjs, err := queryRows[T](stmt, params)
+	if err != nil {
+		return nil, err
 	}
 	for _, r := range rowObjs {
 		infoObj, err := r.AsInfo()

@@ -2,7 +2,7 @@ package recorder
 
 import (
 	"fmt"
-	gcr "github.com/elankath/gardener-cluster-recorder"
+	gcr "github.com/elankath/gardener-scaling-history"
 	assert "github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"

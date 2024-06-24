@@ -2,7 +2,8 @@ package db
 
 import (
 	"database/sql"
-	gcr "github.com/elankath/gardener-cluster-recorder"
+	"github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"strings"
 	"time"
@@ -11,6 +12,14 @@ import (
 type row[I any] interface {
 	AsInfo() (I, error)
 }
+
+type hashRow struct {
+	RowID             int64 `db:"RowID"`
+	Name              string
+	SnapshotTimestamp int64 `db:"SnapshotTimestamp"`
+	Hash              string
+}
+
 type workerPoolRow struct {
 	RowID             int64 `db:"RowID"`
 	CreationTimestamp int64 `db:"CreationTimestamp"`
@@ -28,7 +37,7 @@ type workerPoolRow struct {
 	Hash              string
 }
 
-func (r workerPoolRow) AsInfo() (mcdInfo gcr.WorkerPoolInfo, err error) {
+func (r workerPoolRow) AsInfo() (mcdInfo gst.WorkerPoolInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
@@ -37,8 +46,8 @@ func (r workerPoolRow) AsInfo() (mcdInfo gcr.WorkerPoolInfo, err error) {
 	if strings.TrimSpace(r.Zones) != "" {
 		zones = strings.Split(r.Zones, " ")
 	}
-	mcdInfo = gcr.WorkerPoolInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	mcdInfo = gst.WorkerPoolInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -67,20 +76,30 @@ type mcdRow struct {
 	Replicas          int
 	PoolName          string `db:"PoolName"`
 	Zone              string
-	MaxSurge          string        `db:"MaxSurge"`
-	MaxUnavailable    string        `db:"MaxUnavailable"`
-	MachineClassName  string        `db:"MachineClassName"`
+	MaxSurge          string `db:"MaxSurge"`
+	MaxUnavailable    string `db:"MaxUnavailable"`
+	MachineClassName  string `db:"MachineClassName"`
+	Labels            string
+	Taints            string
 	DeletionTimeStamp sql.NullInt64 `db:"DeletionTimeStamp"`
 	Hash              string
 }
 
-func (r mcdRow) AsInfo() (mcdInfo gcr.MachineDeploymentInfo, err error) {
+func (r mcdRow) AsInfo() (mcdInfo gst.MachineDeploymentInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
 	}
-	mcdInfo = gcr.MachineDeploymentInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	labels, err := labelsFromText(r.Labels)
+	if err != nil {
+		return
+	}
+	taints, err := taintsFromText(r.Taints)
+	if err != nil {
+		return
+	}
+	mcdInfo = gst.MachineDeploymentInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -93,6 +112,57 @@ func (r mcdRow) AsInfo() (mcdInfo gcr.MachineDeploymentInfo, err error) {
 		MaxSurge:          intstr.Parse(r.MaxSurge),
 		MaxUnavailable:    intstr.Parse(r.MaxUnavailable),
 		MachineClassName:  r.MachineClassName,
+		Labels:            labels,
+		Taints:            taints,
+		DeletionTimestamp: delTimeStamp,
+		Hash:              r.Hash,
+	}
+	return
+}
+
+type mccRow struct {
+	RowID             int64 `db:"RowID"`
+	CreationTimestamp int64 `db:"CreationTimestamp"`
+	SnapshotTimestamp int64 `db:"SnapshotTimestamp"`
+	Name              string
+	Namespace         string
+	InstanceType      string `db:"InstanceType"`
+	PoolName          string `db:"PoolName"`
+	Region            string
+	Zone              string
+	Labels            string
+	Capacity          string
+	DeletionTimeStamp sql.NullInt64 `db:"DeletionTimeStamp"`
+	Hash              string
+}
+
+func (r mccRow) AsInfo() (mccInfo gsh.MachineClassInfo, err error) {
+	var delTimeStamp time.Time
+	if r.DeletionTimeStamp.Valid {
+		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
+	}
+	labels, err := labelsFromText(r.Labels)
+	if err != nil {
+		return
+	}
+	capacity, err := resourcesFromText(r.Capacity)
+	if err != nil {
+		return
+	}
+	mccInfo = gsh.MachineClassInfo{
+		SnapshotMeta: gst.SnapshotMeta{
+			RowID:             r.RowID,
+			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
+			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
+			Name:              r.Name,
+			Namespace:         r.Namespace,
+		},
+		InstanceType:      r.InstanceType,
+		PoolName:          r.PoolName,
+		Region:            r.Region,
+		Zone:              r.Zone,
+		Labels:            labels,
+		Capacity:          capacity,
 		DeletionTimestamp: delTimeStamp,
 		Hash:              r.Hash,
 	}
@@ -115,7 +185,7 @@ type nodeRow struct {
 	Hash               string
 }
 
-func (r nodeRow) AsInfo() (nodeInfo gcr.NodeInfo, err error) {
+func (r nodeRow) AsInfo() (nodeInfo gst.NodeInfo, err error) {
 	labels, err := labelsFromText(r.Labels)
 	if err != nil {
 		return
@@ -136,8 +206,8 @@ func (r nodeRow) AsInfo() (nodeInfo gcr.NodeInfo, err error) {
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
 	}
-	nodeInfo = gcr.NodeInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	nodeInfo = gst.NodeInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -173,7 +243,7 @@ type podRow struct {
 	Hash              string
 }
 
-func (r podRow) AsInfo() (podInfo gcr.PodInfo, err error) {
+func (r podRow) AsInfo() (podInfo gst.PodInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
@@ -190,8 +260,8 @@ func (r podRow) AsInfo() (podInfo gcr.PodInfo, err error) {
 	if err != nil {
 		return
 	}
-	podInfo = gcr.PodInfo{
-		SnapshotMeta: gcr.SnapshotMeta{
+	podInfo = gst.PodInfo{
+		SnapshotMeta: gst.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -204,7 +274,7 @@ func (r podRow) AsInfo() (podInfo gcr.PodInfo, err error) {
 		Labels:            labels,
 		Requests:          requests,
 		Spec:              spec,
-		PodScheduleStatus: gcr.PodScheduleStatus(r.ScheduleStatus),
+		PodScheduleStatus: gst.PodScheduleStatus(r.ScheduleStatus),
 		DeletionTimestamp: delTimeStamp,
 		Hash:              r.Hash,
 	}

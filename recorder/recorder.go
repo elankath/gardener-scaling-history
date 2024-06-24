@@ -5,15 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/elankath/gardener-cluster-recorder"
-	"github.com/elankath/gardener-cluster-recorder/db"
+	"github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-history/db"
+	"github.com/elankath/gardener-scaling-types"
 	"github.com/samber/lo"
+	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
@@ -25,7 +26,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"log/slog"
 	"path"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -38,6 +38,7 @@ const PoolLabel = "worker.gardener.cloud/pool"
 var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone"}
 
 var machineDeploymentGVR = schema.GroupVersionResource{Group: "machine.sapcloud.io", Version: "v1alpha1", Resource: "machinedeployments"}
+var machineClassGVR = schema.GroupVersionResource{Group: "machine.sapcloud.io", Version: "v1alpha1", Resource: "machineclasses"}
 var workerGVR = schema.GroupVersionResource{Group: "extensions.gardener.cloud", Version: "v1alpha1", Resource: "workers"}
 var deploymentGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 var configmapGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
@@ -51,7 +52,7 @@ const machineSetScaleUpPattern = `Scaled up.*? to (\d+)`
 var podTriggeredScaleUpRegex = regexp.MustCompile(podTriggerScaleUpPattern)
 var machineSetScaleUpRegex = regexp.MustCompile(machineSetScaleUpPattern)
 
-func NewDefaultRecorder(params gcr.RecorderParams, startTime time.Time) (gcr.Recorder, error) {
+func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Recorder, error) {
 	// Load kubeconfig file
 	config, err := clientcmd.BuildConfigFromFlags("", params.ShootKubeConfigPath)
 	if err != nil {
@@ -102,6 +103,7 @@ func NewDefaultRecorder(params gcr.RecorderParams, startTime time.Time) (gcr.Rec
 		csiInformer:            informerFactory.Storage().V1().CSINodes(),
 		controlInformerFactory: controlInformerFactory,
 		mcdInformer:            controlInformerFactory.ForResource(machineDeploymentGVR),
+		mccInformer:            controlInformerFactory.ForResource(machineClassGVR),
 		deploymentInformer:     controlInformerFactory.ForResource(deploymentGVR),
 		configmapInformer:      controlInformerFactory.ForResource(configmapGVR),
 		workerInformer:         controlInformerFactory.ForResource(workerGVR),
@@ -109,10 +111,10 @@ func NewDefaultRecorder(params gcr.RecorderParams, startTime time.Time) (gcr.Rec
 	}, nil
 }
 
-var _ gcr.Recorder = (*defaultRecorder)(nil)
+var _ gsh.Recorder = (*defaultRecorder)(nil)
 
 type defaultRecorder struct {
-	params                 *gcr.RecorderParams
+	params                 *gsh.RecorderParams
 	startTime              time.Time
 	connChecker            *ConnChecker
 	informerFactory        informers.SharedInformerFactory
@@ -124,6 +126,7 @@ type defaultRecorder struct {
 	csiInformer            storagev1informers.CSINodeInformer
 	controlInformerFactory dynamicinformer.DynamicSharedInformerFactory
 	mcdInformer            informers.GenericInformer
+	mccInformer            informers.GenericInformer
 	workerInformer         informers.GenericInformer
 	deploymentInformer     informers.GenericInformer
 	configmapInformer      informers.GenericInformer
@@ -184,60 +187,16 @@ func GetInnerMap(parentMap map[string]any, keys ...string) (map[string]any, erro
 	return childMap, nil
 }
 
-func getWorkerPoolInfos(worker *unstructured.Unstructured) (map[string]gcr.WorkerPoolInfo, error) {
-	specMapObj, err := GetInnerMap(worker.UnstructuredContent(), "spec")
-	if err != nil {
-		slog.Error("error getting the inner map for worker", "error", err)
-		return nil, err
-	}
-	poolsList := specMapObj["pools"].([]any)
-
-	gardenerTimestamp, err := getGardenerTimestamp(worker)
-	if err != nil {
-		slog.Error("error getting the gardenerTimestamp from worker obj", "error", err)
-		return nil, err
-	}
-	var poolInfosByName = make(map[string]gcr.WorkerPoolInfo)
-	for _, pool := range poolsList {
-		poolMap := pool.(map[string]any)
-		var zones []string
-		for _, z := range poolMap["zones"].([]any) {
-			zones = append(zones, z.(string))
-		}
-
-		maxSurge, err := parseIntOrStr(poolMap["maxSurge"])
-		if err != nil {
-			//TODO make better error message
-			return nil, err
-		}
-		maxUnavailable, err := parseIntOrStr(poolMap["maxUnavailable"])
-		if err != nil {
-			//TODO make better error message
-			return nil, err
-		}
-		wp := gcr.WorkerPoolInfo{
-			SnapshotMeta: gcr.SnapshotMeta{
-				CreationTimestamp: worker.GetCreationTimestamp().UTC(),
-				SnapshotTimestamp: gardenerTimestamp,
-				Name:              poolMap["name"].(string),
-				Namespace:         worker.GetNamespace(),
-			},
-			Minimum:        int(poolMap["minimum"].(int64)),
-			Maximum:        int(poolMap["maximum"].(int64)),
-			MaxSurge:       maxSurge,
-			MaxUnavailable: maxUnavailable,
-			MachineType:    poolMap["machineType"].(string),
-			Architecture:   poolMap["architecture"].(string),
-			Zones:          zones,
-		}
-		wp.Hash = wp.GetHash()
-		poolInfosByName[wp.Name] = wp
-	}
-	return poolInfosByName, nil
-}
-
 func (r *defaultRecorder) onAddPod(obj any) {
-	r.onUpdatePod(nil, obj)
+	if obj == nil {
+		return
+	}
+	podNew := obj.(*corev1.Pod)
+	slog.Info("onAddPod.", "podName", podNew.Name, "podNew.UID", podNew.UID, "podNew.UID", podNew.UID)
+	err := r.processPod(nil, podNew)
+	if err != nil {
+		slog.Error("onAddPod failed", "error", err)
+	}
 }
 
 func IsOwnedBy(pod *corev1.Pod, gvks []schema.GroupVersionKind) bool {
@@ -251,82 +210,21 @@ func IsOwnedBy(pod *corev1.Pod, gvks []schema.GroupVersionKind) bool {
 	return false
 }
 
-// ComputePodScheduleStatus -1 => NotDetermined, 0 => Scheduled, 1 => Unscheduled
-func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gcr.PodScheduleStatus) {
-
-	scheduleStatus = gcr.PodSchedulePending
-
-	if len(pod.Status.Conditions) == 0 && pod.Status.Phase == corev1.PodPending {
-		return scheduleStatus
-	}
-
-	for _, condition := range pod.Status.Conditions {
-		if condition.Type == corev1.PodScheduled && condition.Reason == corev1.PodReasonUnschedulable {
-			//Creation Time does not change for a unschedulable pod with single unschedulable condition.
-			scheduleStatus = gcr.PodUnscheduled
-			break
-		}
-	}
-
-	if pod.Spec.NodeName != "" {
-		scheduleStatus = gcr.PodScheduleCommited
-		return
-	}
-
-	if pod.Status.NominatedNodeName != "" {
-		scheduleStatus = gcr.PodScheduleNominated
-		return
-	}
-
-	if IsOwnedBy(pod, []schema.GroupVersionKind{
-		{Group: "apps", Version: "v1", Kind: "DaemonSet"},
-		{Version: "v1", Kind: "Node"},
-	}) {
-		scheduleStatus = gcr.PodScheduleCommited
-	}
-
-	return scheduleStatus
-}
-
 func (r *defaultRecorder) onUpdatePod(old, new any) {
-	var podOld *corev1.Pod
-	if old != nil {
-		podOld = old.(*corev1.Pod)
+	if old == nil || new == nil {
+		return
 	}
 	podNew := new.(*corev1.Pod)
-	if podNew.DeletionTimestamp != nil {
-		// ignore deletes and pod with no node
+	slog.Info("Pod obj changed.", "podNew", podNew.GetName(), "podNew.Generation", podNew.GetGeneration())
+	if new == nil {
+		slog.Error("onUpdatePod: new podNew is nil")
 		return
 	}
-	if podOld != nil {
-		slog.Debug("Pod Updated.", "podName", podOld.Name, "podOld.UID", podOld.UID,
-			"podNew.UID", podNew.UID)
-	} else {
-		slog.Info("Pod Created.", "podName", podNew.Name,
-			"podNew.UID", podNew.UID)
-	}
-
-	podInfo := podInfoFromPod(podNew)
-	if podInfo.PodScheduleStatus == gcr.PodSchedulePending {
-		slog.Info("pod is in PodSchedulePending state, skipping persisting it", "pod.UID", podInfo.UID, "pod.Name", podInfo.Name)
-		return
-	}
-
-	podCountWithSpecHash, err := r.dataAccess.CountPodInfoWithSpecHash(string(podNew.UID), podInfo.Hash)
+	podOld := old.(*corev1.Pod)
+	slog.Debug("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID)
+	err := r.processPod(podOld, podNew)
 	if err != nil {
-		slog.Error("CountPodInfoWithSpecHash failed", "error", err, "pod.Name", podNew.Name, "pod.uid", podNew.UID, "pod.hash", podInfo.Hash)
-		return
-	}
-
-	if podCountWithSpecHash > 0 {
-		slog.Debug("pod is already inserted with hash", "pod.Name", podNew.Name, "pod.uid", podNew.UID, "pod.nodeName", podNew.Spec.NodeName, "pod.Hash", podInfo.Hash)
-		return
-	}
-
-	_, err = r.dataAccess.StorePodInfo(podInfo)
-	if err != nil {
-		slog.Error("could not execute pod_info insert", "error", err, "pod.Name", podInfo.Name, "pod.UID", podInfo.UID, "pod.CreationTimestamp", podInfo.CreationTimestamp, "pod.Hash", podInfo.Hash)
-		return
+		slog.Error("onUpdatePod failed", "error", err)
 	}
 }
 
@@ -346,7 +244,7 @@ func (r *defaultRecorder) onAddNode(obj interface{}) {
 	r.onUpdateNode(nil, obj)
 }
 
-func (r *defaultRecorder) onUpdateNode(old interface{}, new interface{}) {
+func (r *defaultRecorder) onUpdateNode(old, new any) {
 	nodeNew := new.(*corev1.Node)
 	if nodeNew.DeletionTimestamp != nil {
 		// ignore deletes
@@ -358,14 +256,14 @@ func (r *defaultRecorder) onUpdateNode(old interface{}, new interface{}) {
 		nodeOld = old.(*corev1.Node)
 	}
 	allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
-	nodeNewInfo := nodeInfoFromNode(nodeNew, allocatableVolumes)
-	InvokeOrScheduleFunc("onUpdateNode", 10*time.Second, nodeNewInfo, func(_ gcr.NodeInfo) error {
+	nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, allocatableVolumes)
+	InvokeOrScheduleFunc("onUpdateNode", 10*time.Second, nodeNewInfo, func(_ gst.NodeInfo) error {
 		allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
 		if allocatableVolumes == 0 {
-			slog.Warn("Allocatable Volumes key not found. Skipping insert", "node.Name", nodeNewInfo.Name)
+			slog.Warn("Allocatable Volumes key not found. Deferring insert", "node.Name", nodeNewInfo.Name)
 			return ErrKeyNotFound
 		}
-		nodeNewInfo := nodeInfoFromNode(nodeNew, allocatableVolumes)
+		nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, allocatableVolumes)
 		countWithSameHash, err := r.dataAccess.CountNodeInfoWithHash(nodeNew.Name, nodeNewInfo.Hash)
 		if err != nil {
 			slog.Error("cannot CountPodInfoWithSpecHash", "node.Name", nodeNew.Name, "node.Hash", nodeNewInfo.Hash, "error", err)
@@ -405,13 +303,14 @@ func InvokeOrScheduleFunc[T any](label string, duration time.Duration, entity T,
 
 func (r *defaultRecorder) onDeleteNode(obj interface{}) {
 	node := obj.(*corev1.Node)
-	if node.DeletionTimestamp == nil {
-		return
+	delTimeStamp := time.Now().UTC() // shitty issue where sometimes >node.DeletionTimestamp is nil
+	if node.DeletionTimestamp != nil {
+		delTimeStamp = node.DeletionTimestamp.UTC()
 	}
-	rowsUpdated, err := r.dataAccess.UpdateNodeInfoDeletionTimestamp(node.Name, node.DeletionTimestamp.UTC())
-	slog.Info("updated DeletionTimestamp of Node.", "node.Name", node.Name, "node.DeletionTimestamp", node.DeletionTimestamp.UTC(), "rows.updated", rowsUpdated)
+	rowsUpdated, err := r.dataAccess.UpdateNodeInfoDeletionTimestamp(node.Name, delTimeStamp)
+	slog.Info("updated DeletionTimestamp of Node.", "node.Name", node.Name, "node.DeletionTimestamp", delTimeStamp, "rows.updated", rowsUpdated)
 	if err != nil {
-		slog.Error("could not execute UpdateNodeInfoDeletionTimestamp ", "error", err, "node.Name", node.Name, "node.DeletionTimestamp", node.DeletionTimestamp.UTC())
+		slog.Error("could not execute UpdateNodeInfoDeletionTimestamp ", "error", err, "node.Name", node.Name, "node.DeletionTimestamp", delTimeStamp)
 	}
 }
 
@@ -423,9 +322,6 @@ func (r *defaultRecorder) onAddEvent(obj any) {
 	isTriggerScaleUp := strings.Contains(event.Reason, "TriggeredScaleUp")
 	//isScaledUpNodeGroupEvent := strings.Contains(event.Reason, "ScaledUpGroup")
 	isNodeControllerEvent := strings.Contains(event.ReportingController, "node-controller")
-	if isTriggerScaleUp {
-		slog.Info("TriggeredScaleUp.", "event.Message", event.Message, "event.CreationTimestamp", event.CreationTimestamp)
-	}
 	var eventTime time.Time
 	if !event.EventTime.IsZero() {
 		eventTime = event.EventTime.Time.UTC()
@@ -440,6 +336,9 @@ func (r *defaultRecorder) onAddEvent(obj any) {
 	if eventTime.Before(r.startTime) {
 		return
 	}
+	if isTriggerScaleUp {
+		slog.Info("onAddEvent: TriggeredScaleUp.", "event.Message", event.Message, "event.CreationTimestamp", event.CreationTimestamp)
+	}
 	var reportingController string
 	if event.ReportingController != "" {
 		reportingController = event.ReportingController
@@ -447,7 +346,7 @@ func (r *defaultRecorder) onAddEvent(obj any) {
 		reportingController = event.Source.Component
 	}
 
-	eventInfo := gcr.EventInfo{
+	eventInfo := gst.EventInfo{
 		UID:                     string(event.UID),
 		EventTime:               eventTime,
 		ReportingController:     reportingController,
@@ -476,31 +375,76 @@ func parseMachineSetScaleUpMessage(msg string) (targetSize int, err error) {
 	return
 }
 
+func (r *defaultRecorder) getAllWorkerPoolHashes(workerOld *unstructured.Unstructured) (map[string]string, error) {
+	var oldPoolInfoHashes = make(map[string]string)
+	if workerOld != nil {
+		oldPoolInfos, err := gsh.WorkerPoolInfosFromUnstructured(workerOld)
+		if err != nil {
+			return nil, fmt.Errorf("cannot parse worker pools for worker %q of generation %d: %w", workerOld.GetName(), workerOld.GetGeneration(), err)
+		}
+		oldPoolInfoHashes = lo.MapValues(oldPoolInfos, func(value gst.WorkerPoolInfo, key string) string {
+			return value.Hash
+		})
+	}
+	hashesFromDb, err := r.dataAccess.LoadAllWorkerPoolInfoHashes()
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(oldPoolInfoHashes, hashesFromDb)
+	return oldPoolInfoHashes, nil
+}
+
 // processWorker has a TODO: should ideally leverage a generic helper method.
 func (r *defaultRecorder) processWorker(workerOld, workerNew *unstructured.Unstructured) error {
-	newPoolInfos, err := getWorkerPoolInfos(workerNew)
+	newPoolInfos, err := gsh.WorkerPoolInfosFromUnstructured(workerNew)
 	if err != nil {
 		return fmt.Errorf("cannot parse worker pools for worker %q of generation %d: %w", workerNew.GetName(), workerNew.GetGeneration(), err)
 	}
-	var oldPoolInfos map[string]gcr.WorkerPoolInfo
-	if workerOld != nil {
-		oldPoolInfos, err = getWorkerPoolInfos(workerOld)
-		if err != nil {
-			return fmt.Errorf("cannot parse worker pools for worker %q of generation %d: %w", workerOld.GetName(), workerOld.GetGeneration(), err)
-		}
+	oldPoolInfoHashes, err := r.getAllWorkerPoolHashes(workerOld)
+	if err != nil {
+		slog.Error("Error loading worker pool hashes", "error", err)
+		return err
 	}
 	for name, poolNew := range newPoolInfos {
-		if oldPoolInfos != nil {
-			poolOld, ok := oldPoolInfos[name]
-			if ok && poolOld.Hash == poolNew.Hash {
-				slog.Info("Skipping store of poolNew since it has same hash as poolOld.", "Name", name, "Hash", poolNew.Hash)
-				continue
-			}
+		existingHash, ok := oldPoolInfoHashes[name]
+		if ok && existingHash == poolNew.Hash {
+			slog.Info("Skipping store of poolNew since it has same hash as poolOld.", "Name", name, "Hash", poolNew.Hash)
+			continue
 		}
 		_, err = r.dataAccess.StoreWorkerPoolInfo(poolNew)
 		if err != nil {
 			return fmt.Errorf("cannot store WorkerPoolInfo %q: %w", poolNew, err)
 		}
+	}
+	return nil
+}
+
+func (r *defaultRecorder) processPod(podOld, podNew *corev1.Pod) error {
+	if podNew.DeletionTimestamp != nil {
+		// ignore deletes and pod with no node
+		return nil
+	}
+	podInfo := podInfoFromPod(podNew)
+	if podInfo.PodScheduleStatus == gst.PodSchedulePending {
+		slog.Debug("pod is in PodSchedulePending state, skipping persisting it", "pod.UID", podInfo.UID, "pod.Name", podInfo.Name)
+		return nil
+	}
+
+	podCountWithSpecHash, err := r.dataAccess.CountPodInfoWithSpecHash(string(podNew.UID), podInfo.Hash)
+	if err != nil {
+		slog.Error("CountPodInfoWithSpecHash failed", "error", err, "pod.Name", podNew.Name, "pod.uid", podNew.UID, "pod.hash", podInfo.Hash)
+		return err
+	}
+
+	if podCountWithSpecHash > 0 {
+		slog.Debug("pod is already inserted with hash", "pod.Name", podNew.Name, "pod.uid", podNew.UID, "pod.nodeName", podNew.Spec.NodeName, "pod.Hash", podInfo.Hash)
+		return err
+	}
+
+	_, err = r.dataAccess.StorePodInfo(podInfo)
+	if err != nil {
+		slog.Error("could not execute pod_info insert", "error", err, "pod.Name", podInfo.Name, "pod.UID", podInfo.UID, "pod.CreationTimestamp", podInfo.CreationTimestamp, "pod.Hash", podInfo.Hash)
+		return err
 	}
 	return nil
 }
@@ -526,37 +470,6 @@ func (r *defaultRecorder) onUpdateWorker(old, new any) {
 	if err != nil {
 		slog.Error("onUpdateWorker failed", "error", err)
 	}
-}
-
-//func getMachineDeploymentUpdateTime(worker *unstructured.Unstructured) (*time.Time, error) {
-//	statusMap, err := GetInnerMap(worker.UnstructuredContent(), "status")
-//	if err != nil {
-//		return nil, fmt.Errorf("cannot get worker.status for %q: %w", worker.GetName(), err)
-//	}
-//	timestampStr, ok := statusMap["machineDeploymentsLastUpdateTime"].(string)
-//	if !ok {
-//		return nil, fmt.Errorf("cannot get worker.status.machineDeploymentsLastUpdateTime for %q", worker.GetName())
-//	}
-//	timestamp, err := time.Parse(time.RFC3339, timestampStr)
-//	if err != nil {
-//		return nil, fmt.Errorf("cannot parse worker.status.machineDeploymentsLastUpdateTime %q for worker %q", timestampStr, worker.GetName())
-//	}
-//	return &timestamp, err
-//}
-
-func getGardenerTimestamp(worker *unstructured.Unstructured) (gardenerTimeStamp time.Time, err error) {
-	annotationsMap, err := GetInnerMap(worker.UnstructuredContent(), "metadata", "annotations")
-	if err != nil {
-		err = fmt.Errorf("cannot get metadata.annotations from worker %q: %w", worker.GetName(), err)
-		return
-	}
-	timeStampStr := annotationsMap["gardener.cloud/timestamp"].(string)
-	gardenerTimeStamp, err = time.Parse(time.RFC3339Nano, timeStampStr)
-	if err != nil {
-		err = fmt.Errorf("cannot parse timeStamp %q: %w", timeStampStr, err)
-		return
-	}
-	return gardenerTimeStamp.UTC(), nil
 }
 
 func (r *defaultRecorder) onAddPDB(pdbObj any) {
@@ -665,6 +578,12 @@ func (r *defaultRecorder) Start(ctx context.Context) error {
 		DeleteFunc: r.onDeleteMCD,
 	})
 
+	_, err = r.mccInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    r.onAddMCC,
+		UpdateFunc: r.onUpdateMCC,
+		DeleteFunc: r.onDeleteMCC,
+	})
+
 	_, err = r.controlEventsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: r.onAddControlEvent,
 	})
@@ -716,30 +635,12 @@ func (r *defaultRecorder) runInformers(stopCh <-chan struct{}) {
 	r.controlInformerFactory.Start(stopCh)
 }
 
-func (r *defaultRecorder) processMCD(mcdOld, mcdNew *unstructured.Unstructured) error {
-	var err error
-	var mcdOldInfo, mcdNewInfo gcr.MachineDeploymentInfo
-	now := time.Now().UTC()
-	if mcdOld != nil {
-		mcdOldInfo, err = asMachineDeploymentInfo(mcdOld, now)
-		if err != nil {
-			return err
-		}
-	}
-	mcdNewInfo, err = asMachineDeploymentInfo(mcdNew, now)
-	if err != nil {
-		return err
-	}
-	if mcdOld == nil || mcdOldInfo.Hash != mcdNewInfo.Hash {
-		_, err = r.dataAccess.StoreMachineDeploymentInfo(mcdNewInfo)
-	} else {
-		slog.Info("skipping store of MachineDeploymentInfo", "Name", mcdNewInfo.Name, "Hash", mcdNewInfo.Hash)
-	}
-	return err
-}
-
 func (r *defaultRecorder) onAddMCD(obj interface{}) {
 	mcd := obj.(*unstructured.Unstructured)
+	if mcd.GetDeletionTimestamp() != nil {
+		slog.Error("onAddMCD: MachineDeployment is already deleted.", "Name", mcd.GetName(), "DeletionTimestamp", mcd.GetDeletionTimestamp())
+		return
+	}
 	err := r.processMCD(nil, mcd)
 	if err != nil {
 		slog.Error("onAddMCD failed.", "error", err)
@@ -756,6 +657,31 @@ func (r *defaultRecorder) onUpdateMCD(old any, new any) {
 
 	if err != nil {
 		slog.Error("onUpdateMCD Failed.", "error", err)
+	}
+}
+
+func (r *defaultRecorder) onAddMCC(obj interface{}) {
+	mcc := obj.(*unstructured.Unstructured)
+	if mcc.GetDeletionTimestamp() != nil {
+		slog.Error("onAddMCC: MachineClass is already deleted.", "Name", mcc.GetName(), "DeletionTimestamp", mcc.GetDeletionTimestamp())
+		return
+	}
+	err := r.processMCC(nil, mcc)
+	if err != nil {
+		slog.Error("onAddMCC failed.", "error", err)
+	}
+}
+
+func (r *defaultRecorder) onUpdateMCC(old any, new any) {
+	oldObj := old.(*unstructured.Unstructured)
+	newObj := new.(*unstructured.Unstructured)
+	if newObj == nil {
+		return
+	}
+	err := r.processMCC(oldObj, newObj)
+
+	if err != nil {
+		slog.Error("onUpdateMCC Failed.", "error", err)
 	}
 }
 
@@ -802,11 +728,32 @@ func (r *defaultRecorder) onDeleteMCD(obj interface{}) {
 	if mcdObj == nil {
 		return
 	}
+	delTimeStamp := time.Now().UTC() // shitty issue where sometimes >node.DeletionTimestamp is nil
+	if mcdObj.GetDeletionTimestamp() != nil {
+		delTimeStamp = mcdObj.GetDeletionTimestamp().UTC()
+	}
 	mcdName := mcdObj.GetName()
-	slog.Info("onDeleteMCD: Updating the DeletionTimestamp for MachineDeploymentInfo with given name.", "Name", mcdName)
-	_, err := r.dataAccess.UpdateMCDInfoDeletionTimestamp(mcdName, mcdObj.GetDeletionTimestamp().UTC())
+	slog.Info("onDeleteMCD: Updating the DeletionTimestamp for MachineDeploymentInfo with given name.", "Name", mcdName, "DeletionTimestamp", delTimeStamp)
+	_, err := r.dataAccess.UpdateMCDInfoDeletionTimestamp(mcdName, delTimeStamp)
 	if err != nil {
-		slog.Error("cannot update the deletion timestamp for the nodegroup", "nodegroup.name", mcdObj.GetName())
+		slog.Error("cannot update the deletion timestamp for the MachineDeploymentInfo", "Name", mcdName, "DeletionTimestamp", delTimeStamp)
+	}
+}
+
+func (r *defaultRecorder) onDeleteMCC(obj interface{}) {
+	mccObj := obj.(*unstructured.Unstructured)
+	if mccObj == nil {
+		return
+	}
+	delTimeStamp := time.Now().UTC() // shitty issue where sometimes >node.DeletionTimestamp is nil
+	if mccObj.GetDeletionTimestamp() != nil {
+		delTimeStamp = mccObj.GetDeletionTimestamp().UTC()
+	}
+	mccName := mccObj.GetName()
+	slog.Info("onDeleteMCC: Updating the DeletionTimestamp for MachineClassInfo with given name.", "Name", mccName, "DeletionTimestamp", delTimeStamp)
+	_, err := r.dataAccess.UpdateMCCInfoDeletionTimestamp(mccName, delTimeStamp)
+	if err != nil {
+		slog.Error("cannot update the deletion timestamp for the MachineClassInfo", "Name", mccName, "DeletionTimestamp", delTimeStamp)
 	}
 }
 
@@ -855,7 +802,7 @@ func (r *defaultRecorder) onAddDeployment(obj interface{}) {
 		slog.Error("cannot convert maxNodesTotal string to int", "error", err)
 	}
 
-	caSettings := gcr.CASettingsInfo{
+	caSettings := gst.CASettingsInfo{
 		Expander:      processedCACommand["expander"],
 		MaxNodesTotal: maxNodesTotal,
 	}
@@ -905,7 +852,7 @@ func (r *defaultRecorder) onAddConfigMap(obj interface{}) {
 		slog.Error("cannot get the priorities from priority-expander config map", "error", err)
 	}
 	fmt.Printf("ConfigMap Priorities : %s\n", priorities)
-	caSettings := gcr.CASettingsInfo{
+	caSettings := gst.CASettingsInfo{
 		Priorities: priorities,
 	}
 	caSettings.Hash = caSettings.GetHash()
@@ -993,7 +940,7 @@ func (r *defaultRecorder) onAddControlEvent(obj interface{}) {
 		return
 	}
 	message := parentMap["message"].(string)
-	event := gcr.EventInfo{
+	event := gst.EventInfo{
 		UID:                     string(eventObj.GetUID()),
 		EventTime:               eventTime,
 		ReportingController:     sourceComponent.(string),
@@ -1052,56 +999,144 @@ func (r *defaultRecorder) onDeleteCSINode(obj interface{}) {
 	r.nodeAllocatableVolumes.Delete(csiNode.Name)
 }
 
-func parseIntOrStr(val any) (intstr.IntOrString, error) {
-	if reflect.TypeOf(val).Kind() == reflect.String {
-		return intstr.Parse(val.(string)), nil
+func (r *defaultRecorder) processMCD(mcdOld, mcdNew *unstructured.Unstructured) error {
+	var err error
+	var mcdOldInfo, mcdNewInfo gst.MachineDeploymentInfo
+	var mcdOldHash string
+	var mcdName = mcdNew.GetName()
+	now := time.Now().UTC()
+	if mcdOld != nil {
+		mcdOldInfo, err = gsh.MachineDeploymentInfoFromUnstructured(mcdOld, now)
+		if err != nil {
+			return err
+		}
+		mcdOldHash = mcdOldInfo.Hash
 	}
-	if reflect.TypeOf(val).Kind() == reflect.Int64 {
-		return intstr.FromInt32(int32(val.(int64))), nil
-	}
-	if reflect.TypeOf(val).Kind() == reflect.Int32 {
-		return intstr.FromInt32(val.(int32)), nil
-	}
-	return intstr.IntOrString{}, fmt.Errorf("cannot parse %v as int or string", val)
-}
-
-func getLastUpdateTimeForNode(n *corev1.Node) (lastUpdateTime time.Time) {
-	lastUpdateTime = n.ObjectMeta.CreationTimestamp.UTC()
-	for _, condition := range n.Status.Conditions {
-		if condition.LastTransitionTime.After(lastUpdateTime) {
-			lastUpdateTime = condition.LastTransitionTime.Time
+	if mcdOldHash == "" {
+		mcdOldHash, err = r.dataAccess.GetMachineDeploymentInfoHash(mcdName)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("error looking up MachineDeploymentInfo hash for name %q: %w", mcdName, err)
 		}
 	}
-	//if p.Status.StartTime.After(lastUpdateTime) {
-	//	lastUpdateTime = p.Status.StartTime.Time.UTC()
-	//}
-	return
+	mcdNewInfo, err = gsh.MachineDeploymentInfoFromUnstructured(mcdNew, now)
+	if err != nil {
+		return err
+	}
+	if mcdOldHash != mcdNewInfo.Hash {
+		_, err = r.dataAccess.StoreMachineDeploymentInfo(mcdNewInfo)
+	} else {
+		slog.Info("skipping store of MachineDeploymentInfo", "Name", mcdName, "Hash", mcdNewInfo.Hash)
+	}
+	return err
+}
+
+func (r *defaultRecorder) processMCC(mccOld, mccNew *unstructured.Unstructured) error {
+	var err error
+	var mccOldInfo, mccNewInfo gsh.MachineClassInfo
+	var mccOldHash string
+	var mccName = mccNew.GetName()
+	now := time.Now().UTC()
+	if mccOld != nil {
+		mccOldInfo, err = gsh.MachineClassInfoFromUnstructured(mccOld, now)
+		if err != nil {
+			return err
+		}
+		mccOldHash = mccOldInfo.Hash
+	}
+	if mccOldHash == "" {
+		mccOldHash, err = r.dataAccess.GetMachineClassInfoHash(mccName)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("error looking up MachineClassInfo hash for name %q: %w", mccName, err)
+		}
+	}
+	mccNewInfo, err = gsh.MachineClassInfoFromUnstructured(mccNew, now)
+	if err != nil {
+		return err
+	}
+	if mccOldHash != mccNewInfo.Hash {
+		_, err = r.dataAccess.StoreMachineClassInfo(mccNewInfo)
+	} else {
+		slog.Info("skipping store of MachineClassInfo", "Name", mccName, "Hash", mccNewInfo.Hash)
+	}
+	return err
 }
 
 func getLastUpdateTimeForPod(p *corev1.Pod) (lastUpdateTime time.Time) {
 	lastUpdateTime = p.ObjectMeta.CreationTimestamp.UTC()
 	for _, condition := range p.Status.Conditions {
-		if condition.LastTransitionTime.After(lastUpdateTime) {
-			lastUpdateTime = condition.LastTransitionTime.Time
+		lastTransitionTime := condition.LastTransitionTime.UTC()
+		if lastTransitionTime.After(lastUpdateTime) {
+			lastUpdateTime = lastTransitionTime
 		}
 	}
-	//if p.Status.StartTime.After(lastUpdateTime) {
-	//	lastUpdateTime = p.Status.StartTime.Time.UTC()
-	//}
 	return
 }
 
-func podInfoFromPod(p *corev1.Pod) gcr.PodInfo {
-	var pi gcr.PodInfo
+func podInfoFromPod(p *corev1.Pod) gst.PodInfo {
+	var pi gst.PodInfo
 	pi.UID = string(p.UID)
 	pi.Name = p.Name
 	pi.Namespace = p.Namespace
-	pi.CreationTimestamp = getLastUpdateTimeForPod(p)
+	pi.CreationTimestamp = p.CreationTimestamp.UTC()
+	pi.SnapshotTimestamp = getLastUpdateTimeForPod(p)
 	pi.NodeName = p.Spec.NodeName
 	pi.Labels = p.Labels
-	pi.Requests = gcr.CumulatePodRequests(p)
+	pi.Requests = gst.CumulatePodRequests(p)
 	pi.Spec = p.Spec
 	pi.PodScheduleStatus = ComputePodScheduleStatus(p)
 	pi.Hash = pi.GetHash()
 	return pi
 }
+
+// ComputePodScheduleStatus -1 => NotDetermined, 0 => Scheduled, 1 => Unscheduled
+func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gst.PodScheduleStatus) {
+
+	scheduleStatus = gst.PodSchedulePending
+
+	if len(pod.Status.Conditions) == 0 && pod.Status.Phase == corev1.PodPending {
+		return scheduleStatus
+	}
+
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Reason == corev1.PodReasonUnschedulable {
+			//Creation Time does not change for a unschedulable pod with single unschedulable condition.
+			scheduleStatus = gst.PodUnscheduled
+			break
+		}
+	}
+
+	if pod.Spec.NodeName != "" {
+		scheduleStatus = gst.PodScheduleCommited
+		return
+	}
+
+	if pod.Status.NominatedNodeName != "" {
+		scheduleStatus = gst.PodScheduleNominated
+		return
+	}
+
+	if IsOwnedBy(pod, []schema.GroupVersionKind{
+		{Group: "apps", Version: "v1", Kind: "DaemonSet"},
+		{Version: "v1", Kind: "Node"},
+	}) {
+		scheduleStatus = gst.PodScheduleCommited
+	}
+
+	return scheduleStatus
+}
+
+//func getMachineDeploymentUpdateTime(worker *unstructured.Unstructured) (*time.Time, error) {
+//	statusMap, err := GetInnerMap(worker.UnstructuredContent(), "status")
+//	if err != nil {
+//		return nil, fmt.Errorf("cannot get worker.status for %q: %w", worker.GetName(), err)
+//	}
+//	timestampStr, ok := statusMap["machineDeploymentsLastUpdateTime"].(string)
+//	if !ok {
+//		return nil, fmt.Errorf("cannot get worker.status.machineDeploymentsLastUpdateTime for %q", worker.GetName())
+//	}
+//	timestamp, err := time.Parse(time.RFC3339, timestampStr)
+//	if err != nil {
+//		return nil, fmt.Errorf("cannot parse worker.status.machineDeploymentsLastUpdateTime %q for worker %q", timestampStr, worker.GetName())
+//	}
+//	return &timestamp, err
+//}
