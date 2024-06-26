@@ -280,3 +280,45 @@ func (r podRow) AsInfo() (podInfo gst.PodInfo, err error) {
 	}
 	return
 }
+
+type stateInfoRow struct {
+	BeginTimestamp int64 `db:"BeginTimestamp"`
+}
+
+type caSettingsRow struct {
+	RowID                         int64 `db:"RowID"`
+	SnapshotTimestamp             int64 `db:"SnapshotTimestamp"`
+	Expander                      string
+	MaxNodeProvisionTime          int64 `db:"MaxNodeProvisionTime"`
+	ScanInterval                  int64 `db:"ScanInterval"`
+	MaxGracefulTerminationSeconds int   `db:"MaxGracefulTerminationSeconds"`
+	NewPodScaleUpDelay            int64 `db:"NewPodScaleUpDelay"`
+	MaxEmptyBulkDelete            int   `db:"MaxEmptyBulkDelete"`
+	IgnoreDaemonSetUtilization    bool  `db:"IgnoreDaemonSetUtilization"`
+	MaxNodesTotal                 int   `db:"MaxNodesTotal"`
+	// Priorities is the value of the `priorities` key in the `cluster-autoscaler-priority-expander` config map.
+	// See https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/expander/priority/readme.md#configuration
+	Priorities string
+	Hash       string //primary key
+}
+
+func timeFromMillis(timestamp int64) time.Time {
+	return time.UnixMilli(timestamp).UTC()
+}
+func (r caSettingsRow) AsInfo() (caSettingsInfo gst.CASettingsInfo, err error) {
+	caSettingsInfo = gst.CASettingsInfo{
+		SnapshotTimestamp:             timeFromMillis(r.SnapshotTimestamp),
+		Expander:                      r.Expander,
+		NodeGroupsMinMax:              nil,
+		MaxNodeProvisionTime:          time.Duration(r.MaxNodeProvisionTime),
+		ScanInterval:                  time.Duration(r.ScanInterval),
+		MaxGracefulTerminationSeconds: r.MaxGracefulTerminationSeconds,
+		NewPodScaleUpDelay:            time.Duration(r.NewPodScaleUpDelay),
+		MaxEmptyBulkDelete:            r.MaxEmptyBulkDelete,
+		IgnoreDaemonSetUtilization:    r.IgnoreDaemonSetUtilization,
+		MaxNodesTotal:                 r.MaxNodesTotal,
+		Priorities:                    r.Priorities,
+		Hash:                          r.Hash,
+	}
+	return
+}

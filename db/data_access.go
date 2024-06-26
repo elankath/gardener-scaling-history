@@ -20,41 +20,43 @@ import (
 
 type DataAccess struct {
 	io.Closer
-	dataDBPath                                  string
-	dataDB                                      *sql.DB
-	insertWorkerPoolInfo                        *sql.Stmt
-	selectWorkerPoolInfosBefore                 *sql.Stmt
-	selectAllWorkerPoolInfoHashes               *sql.Stmt
-	insertMCDInfo                               *sql.Stmt
-	updateMCDInfoDeletionTimeStamp              *sql.Stmt
-	selectMCDInfoHash                           *sql.Stmt
-	selectLatestMCDInfoBefore                   *sql.Stmt
-	selectLatestMCDInfo                         *sql.Stmt
-	insertMCCInfo                               *sql.Stmt
-	updateMCCInfoDeletionTimeStamp              *sql.Stmt
-	selectMCCInfoHash                           *sql.Stmt
-	selectLatestMCCInfoBefore                   *sql.Stmt
-	selectLatestMCCInfo                         *sql.Stmt
-	insertEvent                                 *sql.Stmt
-	insertNodeInfo                              *sql.Stmt
-	updateNodeInfoDeletionTimeStamp             *sql.Stmt
-	insertPodInfo                               *sql.Stmt
-	insertPDB                                   *sql.Stmt
-	updatePodDeletionTimeStamp                  *sql.Stmt
-	updatePdbDeletionTimeStamp                  *sql.Stmt
-	selectLatestPodInfoWithName                 *sql.Stmt
-	selectPodCountWithUIDAndHash                *sql.Stmt
-	selectEventWithUID                          *sql.Stmt
-	selectAllEvents                             *sql.Stmt
-	selectUnscheduledPodsBeforeTimestamp        *sql.Stmt
-	selectScheduledPodsBeforeSnapshotTimestamp  *sql.Stmt
-	selectLatestPodInfosBeforeSnapshotTimestamp *sql.Stmt
-	selectNodeInfosBefore                       *sql.Stmt
-	selectNodeCountWithNameAndHash              *sql.Stmt
-	selectLatestCADeployment                    *sql.Stmt
-	insertCADeployment                          *sql.Stmt
-	selectCADeploymentByHash                    *sql.Stmt
-	selectLatestNodesBeforeAndNotDeleted        *sql.Stmt
+	dataDBPath                                   string
+	dataDB                                       *sql.DB
+	insertWorkerPoolInfo                         *sql.Stmt
+	selectWorkerPoolInfosBefore                  *sql.Stmt
+	selectAllWorkerPoolInfoHashes                *sql.Stmt
+	insertMCDInfo                                *sql.Stmt
+	updateMCDInfoDeletionTimeStamp               *sql.Stmt
+	selectMCDInfoHash                            *sql.Stmt
+	selectLatestMCDInfoBefore                    *sql.Stmt
+	selectLatestMCDInfo                          *sql.Stmt
+	insertMCCInfo                                *sql.Stmt
+	updateMCCInfoDeletionTimeStamp               *sql.Stmt
+	selectMCCInfoHash                            *sql.Stmt
+	selectLatestMCCInfoBefore                    *sql.Stmt
+	selectLatestMCCInfo                          *sql.Stmt
+	insertEvent                                  *sql.Stmt
+	insertNodeInfo                               *sql.Stmt
+	updateNodeInfoDeletionTimeStamp              *sql.Stmt
+	insertPodInfo                                *sql.Stmt
+	insertPDB                                    *sql.Stmt
+	updatePodDeletionTimeStamp                   *sql.Stmt
+	updatePdbDeletionTimeStamp                   *sql.Stmt
+	selectLatestPodInfoWithName                  *sql.Stmt
+	selectPodCountWithUIDAndHash                 *sql.Stmt
+	selectEventWithUID                           *sql.Stmt
+	selectAllEvents                              *sql.Stmt
+	selectUnscheduledPodsBeforeSnapshotTimestamp *sql.Stmt
+	selectScheduledPodsBeforeSnapshotTimestamp   *sql.Stmt
+	selectLatestPodInfosBeforeSnapshotTimestamp  *sql.Stmt
+	selectNodeInfosBefore                        *sql.Stmt
+	selectNodeCountWithNameAndHash               *sql.Stmt
+	selectLatestCASettingsInfo                   *sql.Stmt
+	insertCADeployment                           *sql.Stmt
+	selectCADeploymentByHash                     *sql.Stmt
+	selectLatestNodesBeforeAndNotDeleted         *sql.Stmt
+	selectLatestCASettingsInfoBefore             *sql.Stmt
+	selectInitialRecorderStateInfo               *sql.Stmt
 }
 
 func NewDataAccess(dataDBPath string) *DataAccess {
@@ -92,6 +94,14 @@ func (d *DataAccess) Close() error {
 		return err
 	}
 	d.dataDB = nil
+	return nil
+}
+
+func (d *DataAccess) InsertRecorderStartTime(startTime time.Time) error {
+	_, err := d.dataDB.Exec(InsertRecorderStateInfo, startTime.UTC().UnixMilli())
+	if err != nil {
+		return fmt.Errorf("cannot execute the InsertRecorderStateInfo statement: %w", err)
+	}
 	return nil
 }
 
@@ -218,9 +228,9 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare selectAllEvents statement: %w", err)
 	}
 
-	d.selectUnscheduledPodsBeforeTimestamp, err = db.Prepare(SelectPodsWithEmptyNameAndBeforeCreationTimestamp)
+	d.selectUnscheduledPodsBeforeSnapshotTimestamp, err = db.Prepare(SelectUnscheduledPodsBeforeSnapshotTimestamp)
 	if err != nil {
-		return fmt.Errorf("cannot prepare selectUnscheduledPodsBeforeTimestamp statement: %w", err)
+		return fmt.Errorf("cannot prepare selectUnscheduledPodsBeforeSnapshotTimestamp statement: %w", err)
 	}
 
 	d.selectScheduledPodsBeforeSnapshotTimestamp, err = db.Prepare(SelectLatestScheduledPodsBeforeSnapshotTimestamp)
@@ -243,12 +253,17 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare selectCADeploymentByHash: %w", err)
 	}
 
-	d.selectLatestCADeployment, err = db.Prepare(SelectLatestCADeployment)
+	d.selectLatestCASettingsInfo, err = db.Prepare(SelectLatestCASettingsInfo)
 	if err != nil {
-		return fmt.Errorf("cannot prepare selectLatestCADeployment")
+		return fmt.Errorf("cannot prepare selectLatestCASettingsInfo")
 	}
 
-	d.insertCADeployment, err = db.Prepare(InsertCADeployment)
+	d.selectLatestCASettingsInfoBefore, err = db.Prepare(SelectLatestCASettingsBefore)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectLatestCASettingsInfoBefore")
+	}
+
+	d.insertCADeployment, err = db.Prepare(InsertCASettingsInfo)
 	if err != nil {
 		return fmt.Errorf("cannot prepare insertCADeployment statement")
 	}
@@ -258,12 +273,22 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare ")
 	}
 
+	d.selectInitialRecorderStateInfo, err = d.dataDB.Prepare(SelectInitialRecorderStateInfo)
+	if err != nil {
+		return
+	}
 	return err
 }
 func (d *DataAccess) createSchema() error {
 	var db = d.dataDB
 	var err error
 	var result sql.Result
+
+	result, err = db.Exec(CreateRecorderStateInfo)
+	if err != nil {
+		return fmt.Errorf("cannot create recorder_state_info table: %w", err)
+	}
+	slog.Info("successfully created recorder_state_info table", "result", result)
 
 	result, err = db.Exec(CreateWorkerPoolInfo)
 	if err != nil {
@@ -609,7 +634,7 @@ func (d *DataAccess) LoadLatestPodInfoWithName(podName string) (podInfo gst.PodI
 }
 
 func (d *DataAccess) GetLatestUnscheduledPodsBeforeTimestamp(timeStamp time.Time) (podInfos []gst.PodInfo, err error) {
-	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectUnscheduledPodsBeforeTimestamp, timeStamp)
+	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectUnscheduledPodsBeforeSnapshotTimestamp, timeStamp, timeStamp)
 }
 
 func (d *DataAccess) GetLatestPodInfosBeforeSnapshotTime(snapshotTime time.Time) (pods []gst.PodInfo, err error) {
@@ -621,9 +646,13 @@ func (d *DataAccess) GetLatestScheduledPodsBeforeTimestamp(timestamp time.Time) 
 	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectScheduledPodsBeforeSnapshotTimestamp, timestamp, timestamp)
 }
 
-// GetLatestCADeployment needs a TODO: move me to generics
-func (d *DataAccess) GetLatestCADeployment() (caDeployment *gst.CASettingsInfo, err error) {
-	rows, err := d.selectLatestCADeployment.Query()
+func (d *DataAccess) LoadCASettingsBefore(timestamp time.Time) (caSettings gst.CASettingsInfo, err error) {
+	return queryAndMapToInfo[gst.CASettingsInfo, caSettingsRow](d.selectLatestCASettingsInfoBefore, timestamp)
+}
+
+// GetLatestCASettingsInfo needs a TODO: move me to generics
+func (d *DataAccess) GetLatestCASettingsInfo() (caDeployment *gst.CASettingsInfo, err error) {
+	rows, err := d.selectLatestCASettingsInfo.Query()
 	if err != nil {
 		return
 	}
@@ -641,7 +670,7 @@ func (d *DataAccess) GetLatestCADeployment() (caDeployment *gst.CASettingsInfo, 
 
 // GetCADeploymentWithHash has a  TODO: move me to generics
 func (d *DataAccess) GetCADeploymentWithHash(Hash string) (caDeployment *gst.CASettingsInfo, err error) {
-	rows, err := d.selectLatestCADeployment.Query(Hash)
+	rows, err := d.selectLatestCASettingsInfo.Query(Hash)
 	if err != nil {
 		return
 	}
@@ -744,8 +773,19 @@ func (d *DataAccess) LoadNodeInfosBefore(creationTimestamp time.Time) ([]gst.Nod
 	return nodeInfos, nil
 }
 
-func (d *DataAccess) StoreCADeployment(caSettings gst.CASettingsInfo) (int64, error) {
-	result, err := d.insertCADeployment.Exec(caSettings.Expander, caSettings.MaxNodesTotal, caSettings.Priorities, caSettings.Hash)
+func (d *DataAccess) StoreCASettingsInfo(caSettings gst.CASettingsInfo) (int64, error) {
+	result, err := d.insertCADeployment.Exec(
+		caSettings.SnapshotTimestamp.UTC().UnixMilli(),
+		caSettings.Expander,
+		caSettings.MaxNodeProvisionTime.Milliseconds(),
+		caSettings.ScanInterval.Milliseconds(),
+		caSettings.MaxGracefulTerminationSeconds,
+		caSettings.NewPodScaleUpDelay.Milliseconds(),
+		caSettings.MaxEmptyBulkDelete,
+		caSettings.IgnoreDaemonSetUtilization,
+		caSettings.MaxNodesTotal,
+		caSettings.Priorities,
+		caSettings.Hash)
 	if err != nil {
 		return -1, err
 	}
@@ -758,6 +798,15 @@ func (d *DataAccess) GetLatestNodesBeforeAndNotDeleted(timestamp time.Time) ([]g
 		return nil, fmt.Errorf("GetLatestNodesBeforeAndNotDeleted could not scan rows: %w", err)
 	}
 	return nodeInfos, nil
+}
+
+func (d *DataAccess) GetInitialRecorderStartTime() (startTime time.Time, err error) {
+
+	rows, err := queryRows[stateInfoRow](d.selectInitialRecorderStateInfo)
+	if err != nil {
+		return
+	}
+	return time.UnixMilli(rows[0].BeginTimestamp).UTC(), nil
 }
 
 func labelsToText(valMap map[string]string) (textVal string, err error) {
@@ -955,7 +1004,7 @@ func queryRows[T any](stmt *sql.Stmt, params ...any) (rowObjs []T, err error) {
 
 // queryAndMapToInfo executes the given prepared stmt with the given params and maps the rows to infoObjs which is a []I slice
 func queryAndMapToInfos[I any, T row[I]](stmt *sql.Stmt, params ...any) (infoObjs []I, err error) {
-	rowObjs, err := queryRows[T](stmt, params)
+	rowObjs, err := queryRows[T](stmt, params...)
 	if err != nil {
 		return nil, err
 	}

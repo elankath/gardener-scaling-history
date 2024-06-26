@@ -7,6 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"time"
 )
+
 var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone"}
 
 // Recorder monitors the cluster denoted by given kubeconfig and records events and cluster data into cluster database
@@ -27,9 +28,28 @@ type RecorderParams struct {
 	SchedulerName       string
 }
 
-type ReporterParams struct {
-	DBDir     string
-	ReportDir string
+type ReplayerParams struct {
+	DBPath                   string
+	ReportDir                string
+	VirtualAutoScalerConfig  string
+	VirtualClusterKubeConfig string
+	StabilizeInterval        time.Duration
+	BatchInterval            time.Duration
+}
+
+type ClusterSnapshot struct {
+	SnapshotTime     time.Time
+	AutoscalerConfig gst.AutoScalerConfig
+	ScheduledPods    []gst.PodInfo
+	UnscheduledPods  []gst.PodInfo
+	Nodes            []gst.NodeInfo
+}
+
+type Replayer interface {
+	io.Closer
+	Start(ctx context.Context) error
+	GetClusterSnapshot(time.Time) (ClusterSnapshot, error)
+	GetParams() ReplayerParams
 }
 
 type MachineClassInfo struct {

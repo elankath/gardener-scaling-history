@@ -1,5 +1,14 @@
 package db
 
+const CreateRecorderStateInfo = `CREATE TABLE IF NOT EXISTS recorder_state_info(
+    BeginTimestamp INT NOT NULL )`
+
+const InsertRecorderStateInfo = `INSERT INTO recorder_state_info(
+    BeginTimestamp
+) VALUES (?)`
+
+const SelectInitialRecorderStateInfo = `SELECT * FROM recorder_state_info ORDER BY BeginTimestamp  LIMIT 1`
+
 const CreateWorkerPoolInfo = `CREATE TABLE IF NOT EXISTS worker_pool_info(
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
 	CreationTimestamp INT NOT NULL,
@@ -48,7 +57,7 @@ const CreateMCDInfoTable = `CREATE TABLE IF NOT EXISTS mcd_info(
 	MachineClassName TEXT,
 	Labels TEXT,
 	Taints TEXT,
-	DeletionTimestamp DATETIME,
+	DeletionTimestamp INT,
 	Hash TEXT)`
 const InsertMCDInfo = `INSERT INTO mcd_info(
 	CreationTimestamp,
@@ -81,7 +90,7 @@ const CreateMCCInfoTable = `CREATE TABLE IF NOT EXISTS mcc_info(
 	Zone TEXT,
 	Labels TEXT,
 	Capacity TEXT,
-	DeletionTimestamp DATETIME,
+	DeletionTimestamp INT,
 	Hash TEXT)`
 const InsertMCCInfo = `INSERT INTO mcc_info(
 	CreationTimestamp,
@@ -163,9 +172,9 @@ const InsertPodInfo = `INSERT INTO pod_info(
 	Hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 const UpdatePodDeletionTimestamp = "UPDATE pod_info SET DeletionTimestamp=? WHERE UID=?"
 const SelectPodCountWithUIDAndHash = "SELECT COUNT(*) from pod_info where UID=? and Hash=?"
-const SelectPodsWithEmptyNameAndBeforeCreationTimestamp = `SELECT * FROM (SELECT * from pod_info
-               WHERE ScheduleStatus = 0 AND CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >= ?)
-               ORDER BY CreationTimestamp DESC) GROUP BY Name;`
+const SelectUnscheduledPodsBeforeSnapshotTimestamp = `SELECT * FROM (SELECT * from pod_info
+               WHERE ScheduleStatus = 0 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >= ?)
+               ORDER BY SnapshotTimestamp DESC) GROUP BY Name;`
 
 const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT * FROM pod_info WHERE (ScheduleStatus = 1)  
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
@@ -196,21 +205,36 @@ const InsertEvent = `INSERT INTO event_info(
 	InvolvedObjectUID) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(UID) DO NOTHING`
 
 const CreateCASettingsInfoTable = `CREATE TABLE IF NOT EXISTS ca_settings_info(
-    Id INTEGER PRIMARY KEY AUTOINCREMENT,
+    RowID INTEGER PRIMARY KEY AUTOINCREMENT,
+    SnapshotTimestamp INT NOT NULL,
     Expander TEXT,
-    MaxNodesTotal INT,
+    ScanInterval INT,
+    MaxNodeProvisionTime          INT,
+    MaxGracefulTerminationSeconds INT,
+    NewPodScaleUpDelay            INT,
+    MaxEmptyBulkDelete            INT,
+    IgnoreDaemonSetUtilization    BOOLEAN,
+    MaxNodesTotal                 INT,
 	Priorities TEXT,
 	Hash TEXT)`
 
 const SelectCADeploymentByHash = `SELECT * FROM ca_settings_info WHERE Hash=?`
 
-const SelectLatestCADeployment = `SELECT * FROM ca_settings_info ORDER BY Id DESC LIMIT 1`
+const SelectLatestCASettingsInfo = `SELECT * FROM ca_settings_info ORDER BY RowID DESC LIMIT 1`
 
-const InsertCADeployment = `INSERT INTO ca_settings_info (
+const InsertCASettingsInfo = `INSERT INTO ca_settings_info (
+    SnapshotTimestamp,                   
     Expander,
+    ScanInterval,
+    MaxNodeProvisionTime,
+    MaxGracefulTerminationSeconds,
+    NewPodScaleUpDelay,
+    MaxEmptyBulkDelete, 
+    IgnoreDaemonSetUtilization,
     MaxNodesTotal,
 	Priorities,
     Hash
-) VALUES (? ,? , ? ,?)`
+) VALUES (? ,? , ? ,?, ?, ?, ? , ? , ? , ? , ?)`
 
+const SelectLatestCASettingsBefore = `SELECT * from ca_settings_info WHERE SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC LIMIT 1`
 const SelectLatestNodesBeforeAndNotDeleted = `SELECT * from (select * from node_info where node_info.CreationTimestamp <= ? and node_info.DeletionTimestamp = 0 order by RowID DESC) GROUP by Name`

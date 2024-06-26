@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/informers"
@@ -44,6 +45,7 @@ var deploymentGVR = schema.GroupVersionResource{Group: "apps", Version: "v1", Re
 var configmapGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "configmaps"}
 var eventGVR = schema.GroupVersionResource{Group: "", Version: "v1", Resource: "events"}
 
+var caOptions = sets.New("expander", "max-nodes-total", "max-graceful-termination-sec", "max-node-provision-time", "scan-interval", "ignore-daemonsets-utilization", "new-pod-scale-up-delay", "max-empty-bulk-delete")
 var ErrKeyNotFound = errors.New("key not found")
 
 const podTriggerScaleUpPattern = `.*(shoot--\S+) (\d+)\->(\d+) .*max: (\d+).*`
@@ -530,6 +532,10 @@ func (r *defaultRecorder) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	err = r.dataAccess.InsertRecorderStartTime(r.startTime)
+	if err != nil {
+		return err
+	}
 	_, err = r.eventsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: r.onAddEvent,
 	})
@@ -770,6 +776,7 @@ func getCACommand(deployment *unstructured.Unstructured) ([]string, error) {
 }
 
 func processCACommand(caCommand []string) (result map[string]string) {
+	//TODO get the priority expander for CA and record the priorities
 	result = make(map[string]string)
 	for _, command := range caCommand {
 		command = strings.TrimPrefix(command, "--")
@@ -779,13 +786,53 @@ func processCACommand(caCommand []string) (result map[string]string) {
 		}
 		key := commandParts[0]
 		value := commandParts[1]
-		if key == "expander" || key == "max-nodes-total" {
+		if caOptions.Has(key) {
 			result[key] = value
 		}
 	}
 	return
 }
 
+func parseCACommand(caCommand map[string]string) (caSettings gst.CASettingsInfo, err error) {
+
+	caSettings.Expander = caCommand["expander"]
+	caSettings.MaxNodeProvisionTime, err = time.ParseDuration(caCommand["max-node-provision-time"])
+	if err != nil {
+		err = fmt.Errorf("cannot parse max-node-provision-time  to duration: %w", err)
+		return
+	}
+	caSettings.ScanInterval, err = time.ParseDuration(caCommand["scan-interval"])
+	if err != nil {
+		err = fmt.Errorf("cannot parse scan-interval  to duration: %w", err)
+		return
+	}
+	caSettings.MaxGracefulTerminationSeconds, err = strconv.Atoi(caCommand["max-graceful-termination-sec"])
+	if err != nil {
+		err = fmt.Errorf("cannot parse max-graceful-termination-sec  to int: %w", err)
+		return
+	}
+	caSettings.NewPodScaleUpDelay, err = time.ParseDuration(caCommand["new-pod-scale-up-delay"])
+	if err != nil {
+		err = fmt.Errorf("cannot parse new-pod-scale-up-delay to duration: %w", err)
+		return
+	}
+	caSettings.MaxEmptyBulkDelete, err = strconv.Atoi(caCommand["max-empty-bulk-delete"])
+	if err != nil {
+		err = fmt.Errorf("cannot parse max-empty-bulk-delete to int: %w", err)
+		return
+	}
+	caSettings.IgnoreDaemonSetUtilization, err = strconv.ParseBool(caCommand["ignore-daemonsets-utilization"])
+	if err != nil {
+		err = fmt.Errorf("cannot parse ignore-daemonsets-utilization  to bool: %w", err)
+		return
+	}
+	caSettings.MaxNodesTotal, err = strconv.Atoi(caCommand["max-nodes-total"])
+	if err != nil {
+		err = fmt.Errorf("cannot convert maxNodesTotal string to int: %w", err)
+		return
+	}
+	return
+}
 func (r *defaultRecorder) onAddDeployment(obj interface{}) {
 	deployment := obj.(*unstructured.Unstructured)
 	if deployment.GetName() != "cluster-autoscaler" {
@@ -797,29 +844,26 @@ func (r *defaultRecorder) onAddDeployment(obj interface{}) {
 		return
 	}
 	processedCACommand := processCACommand(caCommands)
-	maxNodesTotal, err := strconv.Atoi(processedCACommand["max-nodes-total"])
-	if err != nil {
-		slog.Error("cannot convert maxNodesTotal string to int", "error", err)
-	}
 
-	caSettings := gst.CASettingsInfo{
-		Expander:      processedCACommand["expander"],
-		MaxNodesTotal: maxNodesTotal,
+	caSettings, err := parseCACommand(processedCACommand)
+	if err != nil {
+		slog.Error("cannot parse the ca command from deployment", "error", err)
+		return
 	}
-	caSettings.Hash = caSettings.GetHash()
-	latestCaDeployment, err := r.dataAccess.GetLatestCADeployment()
+	caSettings.SnapshotTimestamp = time.Now().UTC()
+	storedCASettingsInfo, err := r.dataAccess.GetLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Error("cannot get the latest ca deployment stored in db", "error", err)
 			return
 		}
 	}
-	if latestCaDeployment != nil {
-		caSettings.Priorities = latestCaDeployment.Priorities
+	if storedCASettingsInfo != nil {
+		caSettings.Priorities = storedCASettingsInfo.Priorities
 	}
-
-	if latestCaDeployment == nil || latestCaDeployment.Hash != caSettings.Hash {
-		_, err := r.dataAccess.StoreCADeployment(caSettings)
+	caSettings.Hash = caSettings.GetHash()
+	if storedCASettingsInfo == nil || storedCASettingsInfo.Hash != caSettings.Hash {
+		_, err := r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
 			slog.Error("cannot store ca settings in ca_settings_info", "error", err)
 			return
@@ -856,7 +900,7 @@ func (r *defaultRecorder) onAddConfigMap(obj interface{}) {
 		Priorities: priorities,
 	}
 	caSettings.Hash = caSettings.GetHash()
-	latestCaDeployment, err := r.dataAccess.GetLatestCADeployment()
+	latestCaDeployment, err := r.dataAccess.GetLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Error("cannot get the latest ca deployment stored in db", "error", err)
@@ -868,7 +912,7 @@ func (r *defaultRecorder) onAddConfigMap(obj interface{}) {
 		caSettings.Expander = latestCaDeployment.Expander
 	}
 	if latestCaDeployment == nil || latestCaDeployment.Hash != caSettings.Hash {
-		_, err = r.dataAccess.StoreCADeployment(caSettings)
+		_, err = r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
 			slog.Error("cannot store ca settings in ca_settings_info", "error", err)
 			return
