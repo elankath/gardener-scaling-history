@@ -466,10 +466,10 @@ func TestStoreLoadMachineClassInfos(t *testing.T) {
 			"weapon":   "light-saber",
 		},
 		Capacity: map[corev1.ResourceName]resource.Quantity{
-			corev1.ResourceCPU:     gsh.MustParseQuantity("20.2"),
-			corev1.ResourceMemory:  gsh.MustParseQuantity("16Gi"),
-			corev1.ResourceStorage: gsh.MustParseQuantity("20Gi"),
-			ResourceGPU:            gsh.MustParseQuantity("1"),
+			corev1.ResourceCPU:     gst.MustParseQuantity("20.2"),
+			corev1.ResourceMemory:  gst.MustParseQuantity("16Gi"),
+			corev1.ResourceStorage: gst.MustParseQuantity("20Gi"),
+			ResourceGPU:            gst.MustParseQuantity("1"),
 		},
 	}
 	c1.Hash = c1.GetHash()

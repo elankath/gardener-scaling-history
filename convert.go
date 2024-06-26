@@ -275,7 +275,7 @@ func ResourceListFromMap(input map[string]any) (corev1.ResourceList, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error parsing quantity for key %s: %v", key, err)
 		}
-		quantity, err = NormalizeQuantity(quantity)
+		quantity, err = gst.NormalizeQuantity(quantity)
 		if err != nil {
 			return nil, fmt.Errorf("cannot normalize quantity %q: %w", quantity, err)
 		}

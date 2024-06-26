@@ -17,16 +17,18 @@ Execute `go run cmd/recorder/main.go`
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+- replayer: compute starttime -> intial -> recordtime + delay ; else -> previousStarttime + batchinterval
+- replayer: get the clusterSnapshot for initial time
+- replayer: get the ca config from snapshot
+- replayer: write it to `virtualAutoscalerConfigPath`
+- autoscaler: performs refresh activity
+- replayer:
+  - find nodes delta (deleted nodes and new nodes created)
+  - find scheduled pods delta
+  - find unscheduled pods delta
+  - compute `deltaClusterSnapshot` using above info.
+  - if delta = 0 continue to new batch
+  - replayer applies delta snapshot to virtual cluster
+  - replayer waits for stabilize interval
+- autoscaler: performs scaling activity (if any)
+- replayer: generate scenario report

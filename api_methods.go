@@ -327,31 +327,6 @@ func hashResource(hasher hash.Hash, name corev1.ResourceName, quantity resource.
 	hasher.Write(rvBytes)
 }
 
-// MustParseQuantity parses given str as normalized quantity or panics.
-// NOTE: ONLY USE FOR UNIT TESTS OR LITERALS
-func MustParseQuantity(str string) (norm resource.Quantity) {
-	q := resource.MustParse(str)
-	norm, err := NormalizeQuantity(q)
-	if err != nil {
-		panic(err)
-	}
-	return
-}
-
-func AsQuantity(str string) (norm resource.Quantity, err error) {
-	q, err := resource.ParseQuantity(str)
-	if err != nil {
-		return
-	}
-	return NormalizeQuantity(q)
-}
-
-func NormalizeQuantity(q resource.Quantity) (norm resource.Quantity, err error) {
-	qstr := q.String()
-	norm, err = resource.ParseQuantity(qstr)
-	return
-}
-
 //}
 
 //
@@ -388,7 +363,7 @@ func NormalizeQuantity(q resource.Quantity) (norm resource.Quantity, err error) 
 //
 //func (rp RecorderParams) String() string {
 //	return fmt.Sprintf("RecorderParams(ShootKubeConfigPath:%s,ShootNamespace:%s, SeedKubeConfigPath:%s, DataDBPath:%s, ScheduelerName:%s",
-//		rp.ShootKubeConfigPath, rp.ShootNameSpace, rp.SeedKubeConfigPath, rp.DBDir, rp.SchedulerName)
+//		rp.ShootKubeConfigPath, rp.ShootNameSpace, rp.SeedKubeConfigPath, rp.DBPath, rp.SchedulerName)
 //}
 //
 //func (ca CASettingsInfo) GetHash() string {
