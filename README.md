@@ -32,3 +32,10 @@ Execute `go run cmd/recorder/main.go`
   - replayer waits for stabilize interval
 - autoscaler: performs scaling activity (if any)
 - replayer: generate scenario report
+
+
+ReplayInterval - 5m
+
+lastsp (t1) -> 2 unsc pods, 2 nodes, 5 sc pods
+currentsp (t2 = t1 + replayInterval) -> 0 unsc pods, 3 nodes, 7 sc pods
+deltawork -> 0 unsc pods, 1 node, 2 sc pods

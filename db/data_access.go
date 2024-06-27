@@ -638,7 +638,7 @@ func (d *DataAccess) GetLatestUnscheduledPodsBeforeTimestamp(timeStamp time.Time
 }
 
 func (d *DataAccess) GetLatestPodInfosBeforeSnapshotTime(snapshotTime time.Time) (pods []gst.PodInfo, err error) {
-	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectLatestPodInfosBeforeSnapshotTimestamp, snapshotTime)
+	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectLatestPodInfosBeforeSnapshotTimestamp, snapshotTime, snapshotTime)
 }
 
 func (d *DataAccess) GetLatestScheduledPodsBeforeTimestamp(timestamp time.Time) (pods []gst.PodInfo, err error) {

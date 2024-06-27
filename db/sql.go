@@ -22,7 +22,7 @@ const CreateWorkerPoolInfo = `CREATE TABLE IF NOT EXISTS worker_pool_info(
 	MaxSurge          TEXT,
 	MaxUnavailable    TEXT,
 	Zones             TEXT,
-	DeletionTimestamp DATETIME,
+	DeletionTimestamp INT,
 	Hash TEXT)`
 
 const InsertWorkerPoolInfo = `INSERT INTO worker_pool_info(
@@ -40,7 +40,7 @@ const InsertWorkerPoolInfo = `INSERT INTO worker_pool_info(
 	Hash
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-const SelectWorkerPoolInfoBefore = `SELECT * from worker_pool_info where SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC`
+const SelectWorkerPoolInfoBefore = `SELECT * FROM worker_pool_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
 const SelectAllWorkerPoolInfoHashes = "SELECT RowID, Name, SnapshotTimestamp, Hash FROM worker_pool_info ORDER BY RowID desc"
 
 const CreateMCDInfoTable = `CREATE TABLE IF NOT EXISTS mcd_info(
@@ -73,7 +73,7 @@ const InsertMCDInfo = `INSERT INTO mcd_info(
 	Labels,
 	Taints,
 	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectLatestMCDInfoBefore = `SELECT * from mcd_info where SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC`
+const SelectLatestMCDInfoBefore = `SELECT * FROM mcd_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
 const UpdateMCDInfoDeletionTimestamp = `UPDATE mcd_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCDInfoHash = "SELECT Hash FROM mcd_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCDInfo = "SELECT * FROM mcd_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
@@ -104,7 +104,7 @@ const InsertMCCInfo = `INSERT INTO mcc_info(
 	Labels,
 	Capacity,
 	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectLatestMCCInfoBefore = `SELECT * from mcc_info where SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC`
+const SelectLatestMCCInfoBefore = `SELECT * FROM mcc_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
 const UpdateMCCInfoDeletionTimestamp = `UPDATE mcc_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCCInfoHash = "SELECT Hash FROM mcc_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCCInfo = "SELECT * FROM mcc_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
@@ -180,7 +180,7 @@ const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT 
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
                 GROUP BY Name;`
 const SelectLatestPodsBeforeSnapshotTimestamp = `SELECT * FROM pod_info WHERE
-                SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC;`
+                SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pod_info.UID HAVING max(SnapshotTimestamp);`
 
 const CreateEventInfoTable = `CREATE TABLE IF NOT EXISTS event_info(
 	UID varchar(128) PRIMARY KEY,

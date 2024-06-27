@@ -29,27 +29,28 @@ type RecorderParams struct {
 }
 
 type ReplayerParams struct {
-	DBPath                   string
-	ReportDir                string
-	VirtualAutoScalerConfig  string
-	VirtualClusterKubeConfig string
-	StabilizeInterval        time.Duration
-	BatchInterval            time.Duration
+	DBPath                       string
+	ReportDir                    string
+	VirtualAutoScalerConfigPath  string
+	VirtualClusterKubeConfigPath string
+	StabilizeInterval            time.Duration
+	ReplayInterval               time.Duration
+	TotalReplayTime              time.Duration
 }
 
 type ClusterSnapshot struct {
 	SnapshotTime     time.Time
 	AutoscalerConfig gst.AutoScalerConfig
-	ScheduledPods    []gst.PodInfo
-	UnscheduledPods  []gst.PodInfo
+	Pods             []gst.PodInfo
 	Nodes            []gst.NodeInfo
 }
 
 type Replayer interface {
 	io.Closer
-	Start(ctx context.Context) error
+	Start(context.Context) error
 	GetClusterSnapshot(time.Time) (ClusterSnapshot, error)
 	GetParams() ReplayerParams
+	Replay(context.Context) error
 }
 
 type MachineClassInfo struct {
