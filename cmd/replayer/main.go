@@ -6,7 +6,22 @@ import (
 	"github.com/elankath/gardener-scaling-history/replayer"
 	"log/slog"
 	"os"
+	"time"
 )
+
+func GetDuration(name string, defVal time.Duration) time.Duration {
+	val := os.Getenv(name)
+	if val == "" {
+		slog.Warn("env not set, assuming default", "name", name, "default", defVal)
+		return defVal
+	}
+	duration, err := time.ParseDuration(val)
+	if err != nil {
+		slog.Error("cannot parse the env val as duration", "name", name)
+		os.Exit(1)
+	}
+	return duration
+}
 
 func main() {
 
@@ -30,11 +45,19 @@ func main() {
 		slog.Error("VIRTUAL_CLUSTER_KUBECONFIG env must be set")
 		os.Exit(1)
 	}
+
+	stabilizeInterval := GetDuration("STABILIZE_INTERVAL", replayer.DefaultStabilizeInterval)
+	totalReplayTime := GetDuration("TOTAL_REPLAY_TIME", replayer.DefaultTotalReplayTime)
+	replayInterval := GetDuration("REPLAY_INTERVAL", replayer.DefaultReplayInterval)
+
 	defaultReplayer, err := replayer.NewDefaultReplayer(gsh.ReplayerParams{
-		DBPath:                   dbPath,
-		ReportDir:                reportDir,
-		VirtualAutoScalerConfig:  virtualAutoScalerConfig,
-		VirtualClusterKubeConfig: virtualClusterKubeConfig,
+		DBPath:                       dbPath,
+		ReportDir:                    reportDir,
+		VirtualAutoScalerConfigPath:  virtualAutoScalerConfig,
+		VirtualClusterKubeConfigPath: virtualClusterKubeConfig,
+		TotalReplayTime:              totalReplayTime,
+		StabilizeInterval:            stabilizeInterval,
+		ReplayInterval:               replayInterval,
 	})
 	if err != nil {
 		slog.Error("cannot contruct the default replayer", "error", err)

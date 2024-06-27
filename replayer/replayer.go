@@ -2,8 +2,6 @@ package replayer
 
 import (
 	"context"
-	"database/sql"
-	"errors"
 	"fmt"
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/db"
@@ -19,17 +17,22 @@ import (
 	"time"
 )
 
+const DefaultStabilizeInterval = time.Duration(45 * time.Second)
+const DefaultTotalReplayTime = time.Duration(1 * time.Hour)
+const DefaultReplayInterval = time.Duration(5 * time.Minute)
+
 type defaultReplayer struct {
-	dataAccess *db.DataAccess
-	clientSet  *kubernetes.Clientset
-	params     gsh.ReplayerParams
+	dataAccess          *db.DataAccess
+	clientSet           *kubernetes.Clientset
+	params              gsh.ReplayerParams
+	lastClusterSnapshot gsh.ClusterSnapshot
 }
 
 var _ gsh.Replayer = (*defaultReplayer)(nil)
 
 func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 	// Load kubeconfig file
-	config, err := clientcmd.BuildConfigFromFlags("", params.VirtualClusterKubeConfig)
+	config, err := clientcmd.BuildConfigFromFlags("", params.VirtualClusterKubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create client config: %w", err)
 	}
@@ -45,6 +48,18 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 	}, nil
 }
 
+func WriteAutoScalerConfig(autoscalerConfig gst.AutoScalerConfig, path string) error {
+	bytes, err := json.Marshal(autoscalerConfig)
+	if err != nil {
+		return err
+	}
+	err = os.WriteFile(path, bytes, 0644)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (d *defaultReplayer) Start(ctx context.Context) error {
 	err := d.dataAccess.Init()
 	if err != nil {
@@ -54,22 +69,74 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	autoscalerConfig := clusterSnapshot.AutoscalerConfig
-	bytes, err := json.Marshal(autoscalerConfig)
+	err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
 	}
-	err = os.WriteFile(d.params.VirtualAutoScalerConfig, bytes, 0644)
-	if err != nil {
-		return err
-	}
-	slog.Info("wrote initial autoscaler config, waiting for stabilization", "config", d.params.VirtualAutoScalerConfig,
+	d.lastClusterSnapshot = clusterSnapshot
+	slog.Info("wrote initial autoscaler config, waiting for stabilization", "config", d.params.VirtualAutoScalerConfigPath,
 		"stabilizeInterval", d.params.StabilizeInterval)
 	<-time.After(d.params.StabilizeInterval)
-	for {
-		select {}
-	}
 	return nil
+}
+
+type deltaWork struct {
+	podsToDeploy []gst.PodInfo
+	podsToDelete []gst.PodInfo
+}
+
+func (d deltaWork) IsEmpty() bool {
+	return len(d.podsToDelete) == 0 && len(d.podsToDeploy) == 0
+}
+func GetPodsByUID(pods []gst.PodInfo) (podsMap map[string]gst.PodInfo) {
+	return lo.KeyBy(pods, func(item gst.PodInfo) string {
+		return item.UID
+	})
+}
+
+func computeDeltaWork(lastClusterSnapshot, currentClusterSnapshot gsh.ClusterSnapshot) (dW deltaWork, err error) {
+	lastPods := lastClusterSnapshot.Pods
+	currentPods := currentClusterSnapshot.Pods
+
+	prevUIDs := lastClusterSnapshot.GetPodUIDs()
+	currUIDs := currentClusterSnapshot.GetPodUIDs()
+
+	podsToDeleteUIDs := prevUIDs.Difference(currUIDs)
+	podsToDeployUIDs := currUIDs.Difference(prevUIDs)
+}
+
+func (d *defaultReplayer) doReplay() error {
+	snapshotTime := d.lastClusterSnapshot.SnapshotTime.Add(d.params.ReplayInterval)
+	slog.Info("getting cluster snapshot at time", "snapshotTime", snapshotTime)
+	clusterSnapshot, err := d.GetClusterSnapshot(snapshotTime)
+	if err != nil {
+		return err
+	}
+	err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+	if err != nil {
+		return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+	}
+	d.lastClusterSnapshot = clusterSnapshot
+	slog.Info("wrote initial autoscaler config, waiting for stabilization", "config", d.params.VirtualAutoScalerConfigPath,
+		"stabilizeInterval", d.params.StabilizeInterval)
+	<-time.After(d.params.StabilizeInterval)
+	return nil
+}
+
+func (d *defaultReplayer) Replay(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("context has expired, exiting replayer")
+			return nil
+		case <-time.After(d.params.ReplayInterval):
+			err := d.doReplay()
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }
 
 func (d *defaultReplayer) Close() error {
@@ -107,13 +174,7 @@ func (d *defaultReplayer) GetClusterSnapshot(startTime time.Time) (cs gsh.Cluste
 	cs.AutoscalerConfig.Mode = gst.AutoscalerReplayerMode
 	cs.SnapshotTime = startTime
 
-	cs.UnscheduledPods, err = d.dataAccess.GetLatestUnscheduledPodsBeforeTimestamp(startTime)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-
-		return
-	}
-
-	cs.ScheduledPods, err = d.dataAccess.GetLatestScheduledPodsBeforeTimestamp(startTime)
+	cs.Pods, err = d.dataAccess.GetLatestPodInfosBeforeSnapshotTime(startTime)
 	if err != nil {
 		return
 	}

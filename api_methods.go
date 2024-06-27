@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/elankath/gardener-scaling-types"
+	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
 	"hash"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"slices"
 )
 
@@ -325,6 +327,13 @@ func hashResource(hasher hash.Hash, name corev1.ResourceName, quantity resource.
 	hasher.Write([]byte(name))
 	rvBytes, _ := quantity.AsCanonicalBytes(nil)
 	hasher.Write(rvBytes)
+}
+
+func (c ClusterSnapshot) GetPodUIDs() sets.Set[string] {
+	uids := lo.Map(c.Pods, func(item gst.PodInfo, index int) string {
+		return item.UID
+	})
+	return sets.New(uids...)
 }
 
 //}

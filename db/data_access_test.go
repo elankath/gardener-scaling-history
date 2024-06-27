@@ -17,6 +17,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -130,6 +131,19 @@ func TestStoreLoadPodInfo(t *testing.T) {
 		assert.Nil(t, err)
 		slog.Info("invoking GetLatestScheduledPodsBeforeTimestampWithTomorrowTimestamp", "timestamp", snapshotTime.UnixMilli())
 		pods, err := dataAccess.GetLatestScheduledPodsBeforeTimestamp(snapshotTime)
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(pods), "there should be one scheduled pod info")
+	})
+
+	t.Run("GetLatestPodInfosBeforeSnapshotTime", func(t *testing.T) {
+		snapshotTime := time.Now().Add(time.Second * 10).UTC()
+		savePodInfo.SnapshotTimestamp = snapshotTime
+		savePodInfo.Hash = savePodInfo.GetHash()
+		rowId, err := dataAccess.StorePodInfo(savePodInfo)
+		assert.Nil(t, err)
+		slog.Info("persisted pod info.", "rowId", rowId, "savePodInfo", savePodInfo)
+		slog.Info("invoking GetLatestPodInfosBeforeSnapshotTime", "timestamp", snapshotTime.UnixMilli())
+		pods, err := dataAccess.GetLatestPodInfosBeforeSnapshotTime(snapshotTime)
 		assert.Nil(t, err)
 		assert.Equal(t, 1, len(pods), "there should be one scheduled pod info")
 	})
@@ -428,9 +442,14 @@ func TestStoreLoadWorkerPoolInfos(t *testing.T) {
 		t.Logf("LoadWorkerPoolInfosBefore: %d", today.UnixMilli())
 		poolInfos, err := dataAccess.LoadWorkerPoolInfosBefore(today)
 		assert.Nil(t, err)
-		assert.Equal(t, 1, len(poolInfos), "only 1 WorkerPoolInfo should be present at this time")
-		t.Logf("LoadWorkerPoolInfosBefore returned:  %s", poolInfos[0])
+		assert.Equal(t, 2, len(poolInfos), "2 WorkerPoolInfo should be present at this time")
+		t.Logf("LoadWorkerPoolInfosBefore returned:  %s", poolInfos)
+		slices.SortFunc(poolInfos, func(a, b gst.WorkerPoolInfo) int {
+			return strings.Compare(a.Name, b.Name)
+		})
 		assert.Equal(t, w1, poolInfos[0])
+		assert.Equal(t, w2, poolInfos[1])
+
 	})
 
 	t.Run("LoadAllWorkerPoolInfoHashes", func(t *testing.T) {
@@ -529,4 +548,8 @@ func TestQuantityNormalization(t *testing.T) {
 	assert.Nil(t, err)
 	t.Logf("q1=%s, q1FromJson=%s", q1.String(), q1FromJson.String())
 	assert.Equal(t, q1, q1FromJson)
+}
+
+func TestLatestPodInfosBeforeSnapshotTime(t *testing.T) {
+
 }
