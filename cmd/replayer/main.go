@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	gsh "github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/replayer"
 	"log/slog"
 	"os"
@@ -63,11 +64,21 @@ func main() {
 		slog.Error("cannot contruct the default replayer", "error", err)
 		os.Exit(1)
 	}
-	//TODO make context cancellable and listen for shutdown signal
-	err = defaultReplayer.Start(context.Background())
+
+	//TODO listen for shutdown and call cancel Fn
+	ctx, cancelFn := context.WithTimeout(context.Background(), totalReplayTime)
+	err = defaultReplayer.Start(ctx)
 	if err != nil {
 		slog.Error("cannot start the replayer", "error", err)
 		os.Exit(1)
+	}
+
+	go apputil.WaitForSignalAndShutdown(cancelFn)
+
+	err = defaultReplayer.Replay(ctx)
+	if err != nil {
+		slog.Error("cannot replay on the replayer", "error", err)
+		os.Exit(3)
 	}
 
 }
