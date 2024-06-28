@@ -8,9 +8,13 @@ import (
 	gst "github.com/elankath/gardener-scaling-types"
 	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/utils/pointer"
 	"log/slog"
 	"os"
 	"strings"
@@ -25,7 +29,9 @@ type defaultReplayer struct {
 	dataAccess          *db.DataAccess
 	clientSet           *kubernetes.Clientset
 	params              gsh.ReplayerParams
+	initNodes           []gst.NodeInfo
 	lastClusterSnapshot gsh.ClusterSnapshot
+	lastReplayTime      time.Time
 }
 
 var _ gsh.Replayer = (*defaultReplayer)(nil)
@@ -60,23 +66,68 @@ func WriteAutoScalerConfig(autoscalerConfig gst.AutoScalerConfig, path string) e
 	return nil
 }
 
+func (d *defaultReplayer) CleanCluster(ctx context.Context) error {
+	pods, err := d.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		slog.Error("cannot list the pods", "error", err)
+		return err
+	}
+	for _, pod := range pods.Items {
+		err = d.clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{
+			GracePeriodSeconds: pointer.Int64(0),
+		})
+		if err != nil {
+			slog.Error("cannot delete the pod", "pod.Name", pod.Name, "error", err)
+			return err
+		}
+	}
+	nodes, err := d.clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	for _, node := range nodes.Items {
+		err = d.clientSet.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
+		if err != nil {
+			slog.Error("cannot delete the node", "node.Name", node.Name, "error", err)
+			return err
+		}
+	}
+	slog.Info("cleaned the cluster, deleted all pods in all namespaces")
+	return nil
+}
+
 func (d *defaultReplayer) Start(ctx context.Context) error {
-	err := d.dataAccess.Init()
+	err := d.CleanCluster(ctx)
 	if err != nil {
 		return err
 	}
-	clusterSnapshot, err := d.GetInitialClusterSnapshot()
+	err = d.dataAccess.Init()
 	if err != nil {
 		return err
 	}
-	err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+
+	replayTime, err := d.getReplayTime()
 	if err != nil {
-		return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+		return err
 	}
-	d.lastClusterSnapshot = clusterSnapshot
-	slog.Info("wrote initial autoscaler config, waiting for stabilization", "config", d.params.VirtualAutoScalerConfigPath,
-		"stabilizeInterval", d.params.StabilizeInterval)
-	<-time.After(d.params.StabilizeInterval)
+
+	d.initNodes, err = d.dataAccess.LoadNodeInfosBefore(replayTime)
+	if err != nil {
+		return fmt.Errorf("cannot get the initial node infos: %w", err)
+	}
+	if len(d.initNodes) == 0 {
+		return fmt.Errorf("no initial nodeinfos available before replay time %q", replayTime)
+	}
+	//clusterSnapshot, err := d.GetInitialClusterSnapshot()
+	//if err != nil {
+	//	return err
+	//}
+	//err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+	//if err != nil {
+	//	return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+	//}
+	//d.lastClusterSnapshot = clusterSnapshot
+	//d.lastReplayTime = clusterSnapshot.SnapshotTime
+	//slog.Info("wrote initial autoscaler config, waiting for stabilization", "config", d.params.VirtualAutoScalerConfigPath,
+	//	"stabilizeInterval", d.params.StabilizeInterval)
+	//<-time.After(d.params.StabilizeInterval)
 	return nil
 }
 
@@ -88,13 +139,31 @@ type deltaWork struct {
 func (d deltaWork) IsEmpty() bool {
 	return len(d.podsToDelete) == 0 && len(d.podsToDeploy) == 0
 }
+
+func (d deltaWork) String() string {
+	var sb strings.Builder
+	sb.WriteString("podsToDelete: (")
+	lo.Reduce(d.podsToDelete, func(agg *strings.Builder, item gst.PodInfo, index int) *strings.Builder {
+		agg.WriteString(item.Name + ",")
+		return agg
+	}, &sb)
+	sb.WriteString(")")
+	sb.WriteString("podsToDeploy: (")
+	lo.Reduce(d.podsToDeploy, func(agg *strings.Builder, item gst.PodInfo, index int) *strings.Builder {
+		agg.WriteString(item.Name + ",")
+		return agg
+	}, &sb)
+	sb.WriteString(")")
+	return sb.String()
+}
+
 func GetPodsByUID(pods []gst.PodInfo) (podsMap map[string]gst.PodInfo) {
 	return lo.KeyBy(pods, func(item gst.PodInfo) string {
 		return item.UID
 	})
 }
 
-func computeDeltaWork(lastClusterSnapshot, currentClusterSnapshot gsh.ClusterSnapshot) (dW deltaWork, err error) {
+func computeDeltaWork(lastClusterSnapshot, currentClusterSnapshot gsh.ClusterSnapshot) (dW deltaWork) {
 	lastPods := lastClusterSnapshot.Pods
 	currentPods := currentClusterSnapshot.Pods
 
@@ -103,23 +172,106 @@ func computeDeltaWork(lastClusterSnapshot, currentClusterSnapshot gsh.ClusterSna
 
 	podsToDeleteUIDs := prevUIDs.Difference(currUIDs)
 	podsToDeployUIDs := currUIDs.Difference(prevUIDs)
+
+	dW.podsToDelete = lo.Filter(lastPods, func(item gst.PodInfo, index int) bool {
+		return podsToDeleteUIDs.Has(item.UID)
+	})
+
+	dW.podsToDeploy = lo.Filter(currentPods, func(item gst.PodInfo, index int) bool {
+		return podsToDeployUIDs.Has(item.UID)
+	})
+
+	return
 }
 
-func (d *defaultReplayer) doReplay() error {
-	snapshotTime := d.lastClusterSnapshot.SnapshotTime.Add(d.params.ReplayInterval)
-	slog.Info("getting cluster snapshot at time", "snapshotTime", snapshotTime)
-	clusterSnapshot, err := d.GetClusterSnapshot(snapshotTime)
+func getCorePodFromPodInfo(podInfo gst.PodInfo) corev1.Pod {
+	pod := corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "Pod",
+			APIVersion: "v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Labels:    podInfo.Labels,
+			Name:      podInfo.Name,
+			Namespace: podInfo.Namespace,
+			UID:       types.UID(podInfo.UID),
+		},
+		Spec: podInfo.Spec,
+	}
+	pod.Spec.NodeName = ""
+	pod.Status.NominatedNodeName = ""
+	return pod
+}
+
+func (d *defaultReplayer) applyWork(ctx context.Context, work deltaWork) error {
+	for _, pod := range work.podsToDelete {
+		err := d.clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return fmt.Errorf("cannot delete the pod %q: %w", pod.Name, err)
+		}
+
+	}
+	for _, pod := range work.podsToDeploy {
+		corePod := getCorePodFromPodInfo(pod)
+		pd, err := d.clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &corePod, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("cannot create the pod %q: %w", pd.Name, err)
+		}
+	}
+	slog.Info("applied deltaWork", "deltaWork", work)
+	return nil
+}
+
+func (d *defaultReplayer) getReplayTime() (replayTime time.Time, err error) {
+	if d.lastReplayTime.IsZero() {
+		replayTime, err = d.dataAccess.GetInitialRecorderStartTime()
+		if err != nil {
+			return
+		}
+		replayTime = replayTime.Add(d.params.StabilizeInterval).UTC()
+		return
+	}
+	replayTime = d.lastReplayTime.Add(d.params.ReplayInterval).UTC()
+	now := time.Now().UTC()
+	if replayTime.After(now) {
+		replayTime = now
+	}
+	return
+}
+
+func (d *defaultReplayer) doReplay(ctx context.Context) error {
+	replayTime, err := d.getReplayTime()
 	if err != nil {
 		return err
 	}
-	err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+	defer func() { d.lastReplayTime = replayTime }()
+	slog.Info("getting cluster snapshot at time", "snapshotTime", replayTime)
+	clusterSnapshot, err := d.GetClusterSnapshot(replayTime)
 	if err != nil {
-		return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+		return err
 	}
-	d.lastClusterSnapshot = clusterSnapshot
-	slog.Info("wrote initial autoscaler config, waiting for stabilization", "config", d.params.VirtualAutoScalerConfigPath,
-		"stabilizeInterval", d.params.StabilizeInterval)
+	if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
+		slog.Info("wrote autoscaler config", "prevHash", d.lastClusterSnapshot.AutoscalerConfig.Hash, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
+		err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+		if err != nil {
+			return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+		}
+		slog.Info("waiting for stabilization", "config", d.params.VirtualAutoScalerConfigPath,
+			"stabilizeInterval", d.params.StabilizeInterval)
+		<-time.After(d.params.StabilizeInterval)
+	}
+	deltaWk := computeDeltaWork(d.lastClusterSnapshot, clusterSnapshot)
+	if deltaWk.IsEmpty() {
+		slog.Info("no delta work to apply.")
+		return nil
+	}
+	err = d.applyWork(ctx, deltaWk)
+	if err != nil {
+		return err
+	}
+	slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
 	<-time.After(d.params.StabilizeInterval)
+	d.lastClusterSnapshot = clusterSnapshot
 	return nil
 }
 
@@ -129,14 +281,14 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 		case <-ctx.Done():
 			slog.Info("context has expired, exiting replayer")
 			return nil
-		case <-time.After(d.params.ReplayInterval):
-			err := d.doReplay()
+		default:
+			err := d.doReplay(ctx)
 			if err != nil {
 				return err
 			}
 		}
-		return nil
 	}
+	return nil
 }
 
 func (d *defaultReplayer) Close() error {
@@ -144,6 +296,7 @@ func (d *defaultReplayer) Close() error {
 }
 
 func (d *defaultReplayer) GetClusterSnapshot(startTime time.Time) (cs gsh.ClusterSnapshot, err error) {
+
 	mccs, err := d.dataAccess.LoadMachineClassInfosBefore(startTime)
 	if err != nil {
 		return
@@ -169,11 +322,11 @@ func (d *defaultReplayer) GetClusterSnapshot(startTime time.Time) (cs gsh.Cluste
 	}
 
 	autoscalerConfig.CASettings, err = d.dataAccess.LoadCASettingsBefore(startTime)
-
 	cs.AutoscalerConfig = autoscalerConfig
 	cs.AutoscalerConfig.Mode = gst.AutoscalerReplayerMode
 	cs.SnapshotTime = startTime
-
+	cs.AutoscalerConfig.InitNodes = d.initNodes
+	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Pods, err = d.dataAccess.GetLatestPodInfosBeforeSnapshotTime(startTime)
 	if err != nil {
 		return
@@ -226,6 +379,7 @@ func GetNodeTemplates(mccs []gsh.MachineClassInfo, mcds []gst.MachineDeploymentI
 		}
 		nodeTemplate.Taints = mcd.Taints
 		maps.Copy(nodeTemplate.Labels, mcd.Labels)
+		nodeTemplate.Hash = nodeTemplate.GetHash()
 		nodeTemplates[ngName] = nodeTemplate
 	}
 	return
@@ -256,12 +410,12 @@ func GetNodeGroups(mcds []gst.MachineDeploymentInfo, workerPools []gst.WorkerPoo
 	return
 }
 
-func (d *defaultReplayer) GetInitialClusterSnapshot() (gsh.ClusterSnapshot, error) {
-	startTime, err := d.dataAccess.GetInitialRecorderStartTime()
-	if err != nil {
-		return gsh.ClusterSnapshot{}, err
-	}
-	startTime = startTime.Add(1 * time.Minute)
-
-	return d.GetClusterSnapshot(startTime)
-}
+//func (d *defaultReplayer) GetInitialClusterSnapshot() (gsh.ClusterSnapshot, error) {
+//	startTime, err := d.dataAccess.GetInitialRecorderStartTime()
+//	if err != nil {
+//		return gsh.ClusterSnapshot{}, err
+//	}
+//	startTime = startTime.Add(1 * time.Minute)
+//
+//	return d.GetClusterSnapshot(startTime)
+//}
