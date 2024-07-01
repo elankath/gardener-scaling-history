@@ -14,7 +14,7 @@ var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone
 type Recorder interface {
 	io.Closer
 	Start(ctx context.Context) error
-	//	GetClusterSnapshot(time time.Time) (ClusterSnapshot, error)
+	//	GetRecordedClusterSnapshot(time time.Time) (ClusterSnapshot, error)
 }
 
 //Current ClusterInfo in gst -> ClusterAutoscalerConfig
@@ -41,14 +41,29 @@ type ReplayerParams struct {
 type ClusterSnapshot struct {
 	SnapshotTime     time.Time
 	AutoscalerConfig gst.AutoScalerConfig
+	PriorityClasses  []gst.PriorityClassInfo
 	Pods             []gst.PodInfo
 	Nodes            []gst.NodeInfo
+}
+
+type Scenario struct {
+	ExistingNodes      []corev1.Node
+	UnscheduledPods    []corev1.Pod
+	ScaledUpNodeGroups map[string]int
+	NominatedPods      []corev1.Pod
+	ScheduledPods      []corev1.Pod
+	ScaledUpNodes      []corev1.Node
+}
+
+type ReplayReport struct {
+	StartTime time.Time
+	Scenarios []Scenario
 }
 
 type Replayer interface {
 	io.Closer
 	Start(context.Context) error
-	GetClusterSnapshot(time.Time) (ClusterSnapshot, error)
+	GetRecordedClusterSnapshot(time.Time) (ClusterSnapshot, error)
 	GetParams() ReplayerParams
 	Replay(context.Context) error
 }

@@ -210,8 +210,8 @@ const InsertPriorityClassInfo = `INSERT INTO pc_info(
 
 const SelectLatestPriorityClassInfoBeforeSnapshotTimestamp = `SELECT * FROM pc_info WHERE
                 SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pc_info.Name HAVING max(SnapshotTimestamp);`
-const UpdatePriorityClassInfoDeletionTimestamp = "UPDATE pc_info SET DeletionTimestamp=? WHERE Name=?"
-const SelectPriorityClassInfoCountWithNameAndHash = "SELECT COUNT(*) from pc_info where Name=? and Hash=?"
+const UpdatePriorityClassInfoDeletionTimestamp = "UPDATE pc_info SET DeletionTimestamp=? WHERE UID=?"
+const SelectPriorityClassInfoCountWithUIDAndHash = "SELECT COUNT(*) from pc_info where UID=? and Hash=?"
 
 const CreateEventInfoTable = `CREATE TABLE IF NOT EXISTS event_info(
 	UID varchar(128) PRIMARY KEY,

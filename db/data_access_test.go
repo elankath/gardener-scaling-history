@@ -590,4 +590,10 @@ func TestLoadStorePriorityClassInfo(t *testing.T) {
 	t.Logf("Loaded PriorityClassInfo: %s", pcInfos[0])
 	assert.Equal(t, pc1.Hash, pcInfos[0].Hash)
 
+	t.Run("CountPCInfoWithSpecHash", func(t *testing.T) {
+		count, err := dataAccess.CountPCInfoWithSpecHash(string(pc1.UID), pc1.Hash)
+		assert.Nil(t, err)
+		assert.Equal(t, 1, count)
+	})
+
 }

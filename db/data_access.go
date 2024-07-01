@@ -49,7 +49,7 @@ type DataAccess struct {
 	selectAllEvents                                      *sql.Stmt
 	selectUnscheduledPodsBeforeSnapshotTimestamp         *sql.Stmt
 	selectScheduledPodsBeforeSnapshotTimestamp           *sql.Stmt
-	selectPriorityClassInfoWithNameAndHash               *sql.Stmt
+	selectPriorityClassInfoWithUIDAndHash                *sql.Stmt
 	selectLatestPodInfosBeforeSnapshotTimestamp          *sql.Stmt
 	selectLatestPriorityClassInfoBeforeSnapshotTimestamp *sql.Stmt
 	selectNodeInfosBefore                                *sql.Stmt
@@ -260,9 +260,9 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare selectPodCountWithUIDAndHash: %w", err)
 	}
 
-	d.selectPriorityClassInfoWithNameAndHash, err = db.Prepare(SelectPriorityClassInfoCountWithNameAndHash)
+	d.selectPriorityClassInfoWithUIDAndHash, err = db.Prepare(SelectPriorityClassInfoCountWithUIDAndHash)
 	if err != nil {
-		return fmt.Errorf("cannot prepare selectPriorityClassInfoWithNameAndHash: %w", err)
+		return fmt.Errorf("cannot prepare selectPriorityClassInfoWithUIDAndHash: %w", err)
 	}
 
 	d.selectNodeCountWithNameAndHash, err = db.Prepare(SelectNodeCountWithNameAndHash)
@@ -384,6 +384,20 @@ func (d *DataAccess) createSchema() error {
 	slog.Info("successfully created the ca_settings_info table")
 
 	return nil
+}
+
+func (d *DataAccess) CountPCInfoWithSpecHash(uid, hash string) (int, error) {
+	var count sql.NullInt32
+	err := d.selectPriorityClassInfoWithUIDAndHash.QueryRow(uid, hash).Scan(&count)
+	if count.Valid {
+		return int(count.Int32), nil
+	}
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return -1, nil
+		}
+	}
+	return -1, err
 }
 
 func (d *DataAccess) CountPodInfoWithSpecHash(uid, hash string) (int, error) {
