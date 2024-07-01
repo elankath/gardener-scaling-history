@@ -20,43 +20,46 @@ import (
 
 type DataAccess struct {
 	io.Closer
-	dataDBPath                                   string
-	dataDB                                       *sql.DB
-	insertWorkerPoolInfo                         *sql.Stmt
-	selectWorkerPoolInfosBefore                  *sql.Stmt
-	selectAllWorkerPoolInfoHashes                *sql.Stmt
-	insertMCDInfo                                *sql.Stmt
-	updateMCDInfoDeletionTimeStamp               *sql.Stmt
-	selectMCDInfoHash                            *sql.Stmt
-	selectLatestMCDInfoBefore                    *sql.Stmt
-	selectLatestMCDInfo                          *sql.Stmt
-	insertMCCInfo                                *sql.Stmt
-	updateMCCInfoDeletionTimeStamp               *sql.Stmt
-	selectMCCInfoHash                            *sql.Stmt
-	selectLatestMCCInfoBefore                    *sql.Stmt
-	selectLatestMCCInfo                          *sql.Stmt
-	insertEvent                                  *sql.Stmt
-	insertNodeInfo                               *sql.Stmt
-	updateNodeInfoDeletionTimeStamp              *sql.Stmt
-	insertPodInfo                                *sql.Stmt
-	insertPDB                                    *sql.Stmt
-	updatePodDeletionTimeStamp                   *sql.Stmt
-	updatePdbDeletionTimeStamp                   *sql.Stmt
-	selectLatestPodInfoWithName                  *sql.Stmt
-	selectPodCountWithUIDAndHash                 *sql.Stmt
-	selectEventWithUID                           *sql.Stmt
-	selectAllEvents                              *sql.Stmt
-	selectUnscheduledPodsBeforeSnapshotTimestamp *sql.Stmt
-	selectScheduledPodsBeforeSnapshotTimestamp   *sql.Stmt
-	selectLatestPodInfosBeforeSnapshotTimestamp  *sql.Stmt
-	selectNodeInfosBefore                        *sql.Stmt
-	selectNodeCountWithNameAndHash               *sql.Stmt
-	selectLatestCASettingsInfo                   *sql.Stmt
-	insertCADeployment                           *sql.Stmt
-	selectCADeploymentByHash                     *sql.Stmt
-	selectLatestNodesBeforeAndNotDeleted         *sql.Stmt
-	selectLatestCASettingsInfoBefore             *sql.Stmt
-	selectInitialRecorderStateInfo               *sql.Stmt
+	dataDBPath                                           string
+	dataDB                                               *sql.DB
+	insertWorkerPoolInfo                                 *sql.Stmt
+	selectWorkerPoolInfosBefore                          *sql.Stmt
+	selectAllWorkerPoolInfoHashes                        *sql.Stmt
+	insertMCDInfo                                        *sql.Stmt
+	updateMCDInfoDeletionTimeStamp                       *sql.Stmt
+	selectMCDInfoHash                                    *sql.Stmt
+	selectLatestMCDInfoBefore                            *sql.Stmt
+	selectLatestMCDInfo                                  *sql.Stmt
+	insertMCCInfo                                        *sql.Stmt
+	updateMCCInfoDeletionTimeStamp                       *sql.Stmt
+	selectMCCInfoHash                                    *sql.Stmt
+	selectLatestMCCInfoBefore                            *sql.Stmt
+	selectLatestMCCInfo                                  *sql.Stmt
+	insertEvent                                          *sql.Stmt
+	insertNodeInfo                                       *sql.Stmt
+	updateNodeInfoDeletionTimeStamp                      *sql.Stmt
+	insertPodInfo                                        *sql.Stmt
+	insertPriorityClassInfo                              *sql.Stmt
+	insertPDB                                            *sql.Stmt
+	updatePodDeletionTimeStamp                           *sql.Stmt
+	updatePdbDeletionTimeStamp                           *sql.Stmt
+	selectLatestPodInfoWithName                          *sql.Stmt
+	selectPodCountWithUIDAndHash                         *sql.Stmt
+	selectEventWithUID                                   *sql.Stmt
+	selectAllEvents                                      *sql.Stmt
+	selectUnscheduledPodsBeforeSnapshotTimestamp         *sql.Stmt
+	selectScheduledPodsBeforeSnapshotTimestamp           *sql.Stmt
+	selectPriorityClassInfoWithNameAndHash               *sql.Stmt
+	selectLatestPodInfosBeforeSnapshotTimestamp          *sql.Stmt
+	selectLatestPriorityClassInfoBeforeSnapshotTimestamp *sql.Stmt
+	selectNodeInfosBefore                                *sql.Stmt
+	selectNodeCountWithNameAndHash                       *sql.Stmt
+	selectLatestCASettingsInfo                           *sql.Stmt
+	insertCADeployment                                   *sql.Stmt
+	selectCADeploymentByHash                             *sql.Stmt
+	selectLatestNodesBeforeAndNotDeleted                 *sql.Stmt
+	selectLatestCASettingsInfoBefore                     *sql.Stmt
+	selectInitialRecorderStateInfo                       *sql.Stmt
 }
 
 func NewDataAccess(dataDBPath string) *DataAccess {
@@ -209,6 +212,10 @@ func (d *DataAccess) prepareStatements() (err error) {
 	if err != nil {
 		return fmt.Errorf("cannot prepare pod insert statement: %w", err)
 	}
+	d.insertPriorityClassInfo, err = db.Prepare(InsertPriorityClassInfo)
+	if err != nil {
+		return fmt.Errorf("cannot prepare InsertPriorityClassInfo statement: %w", err)
+	}
 
 	//TODO: must create indexes
 	d.selectPodCountWithUIDAndHash, err = db.Prepare(SelectPodCountWithUIDAndHash)
@@ -241,6 +248,21 @@ func (d *DataAccess) prepareStatements() (err error) {
 	d.selectLatestPodInfosBeforeSnapshotTimestamp, err = db.Prepare(SelectLatestPodsBeforeSnapshotTimestamp)
 	if err != nil {
 		return fmt.Errorf("cannot prepare selectLatestPodInfosBeforeSnapshotTimestamp statement: %w", err)
+	}
+
+	d.selectLatestPriorityClassInfoBeforeSnapshotTimestamp, err = db.Prepare(SelectLatestPriorityClassInfoBeforeSnapshotTimestamp)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectLatestPriorityClassInfoBeforeSnapshotTimestamp statement: %w", err)
+	}
+
+	d.selectPodCountWithUIDAndHash, err = db.Prepare(SelectPodCountWithUIDAndHash)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectPodCountWithUIDAndHash: %w", err)
+	}
+
+	d.selectPriorityClassInfoWithNameAndHash, err = db.Prepare(SelectPriorityClassInfoCountWithNameAndHash)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectPriorityClassInfoWithNameAndHash: %w", err)
 	}
 
 	d.selectNodeCountWithNameAndHash, err = db.Prepare(SelectNodeCountWithNameAndHash)
@@ -279,6 +301,7 @@ func (d *DataAccess) prepareStatements() (err error) {
 	}
 	return err
 }
+
 func (d *DataAccess) createSchema() error {
 	var db = d.dataDB
 	var err error
@@ -315,7 +338,7 @@ func (d *DataAccess) createSchema() error {
 
 	slog.Info("successfully created event_info table", "result", result)
 
-	//result, err = db.Exec(CreateNodeGroupInfoTable)
+	//result, err = db.Exec(CreateNodeGroupInfoTable)SelectLatestPodsBeforeSnapshotTimestamp
 	//if err != nil {
 	//	return fmt.Errorf("cannot create nodegroup_info table: %w", err)
 	//}
@@ -332,6 +355,12 @@ func (d *DataAccess) createSchema() error {
 		return fmt.Errorf("cannot create pod_info table: %w", err)
 	}
 	slog.Info("successfully created pod_info table", "result", result)
+
+	result, err = db.Exec(CreatePriorityClassInfoTable)
+	if err != nil {
+		return fmt.Errorf("cannot create pc_info table: %w", err)
+	}
+	slog.Info("successfully created pc_info table", "result", result)
 
 	result, err = db.Exec(`CREATE TABLE IF NOT EXISTS pdb_info(
     							id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -646,6 +675,10 @@ func (d *DataAccess) GetLatestScheduledPodsBeforeTimestamp(timestamp time.Time) 
 	return queryAndMapToInfos[gst.PodInfo, podRow](d.selectScheduledPodsBeforeSnapshotTimestamp, timestamp, timestamp)
 }
 
+func (d *DataAccess) LoadLatestPriorityClassInfoBeforeSnapshotTime(snapshotTime time.Time) (pcInfos []gst.PriorityClassInfo, err error) {
+	return queryAndMapToInfos[gst.PriorityClassInfo, priorityClassRow](d.selectLatestPriorityClassInfoBeforeSnapshotTimestamp, snapshotTime, snapshotTime)
+}
+
 func (d *DataAccess) LoadCASettingsBefore(timestamp time.Time) (caSettings gst.CASettingsInfo, err error) {
 	return queryAndMapToInfo[gst.CASettingsInfo, caSettingsRow](d.selectLatestCASettingsInfoBefore, timestamp)
 }
@@ -720,6 +753,33 @@ func (d *DataAccess) StorePodInfo(podInfo gst.PodInfo) (int64, error) {
 	}
 	slog.Info("stored row into pod_info.", "pod.Name", podInfo.Name, "pod.Namespace", podInfo.Namespace,
 		"pod.CreationTimestamp", podInfo.CreationTimestamp, "pod.Hash", podInfo.Hash)
+	return result.LastInsertId()
+}
+
+func (d *DataAccess) StorePriorityClassInfo(pcInfo gst.PriorityClassInfo) (int64, error) {
+	if pcInfo.Hash == "" {
+		pcInfo.Hash = pcInfo.GetHash()
+	}
+	labels, err := labelsToText(pcInfo.Labels)
+	result, err := d.insertPriorityClassInfo.Exec(
+		pcInfo.CreationTimestamp.UTC().UnixMilli(),
+		pcInfo.SnapshotTimestamp.UTC().UnixMilli(),
+		pcInfo.Name,
+		pcInfo.UID,
+		pcInfo.Value,
+		pcInfo.GlobalDefault,
+		*pcInfo.PreemptionPolicy,
+		pcInfo.Description,
+		labels,
+		pcInfo.Hash)
+	if err != nil {
+		return -1, fmt.Errorf("could not persist PriorityClassInfo %s: %w", pcInfo, err)
+	}
+	slog.Info("stored row into pc_info.",
+		"Name", pcInfo.Name,
+		"Value", pcInfo.Value,
+		"PreemptionPolicy", pcInfo.PreemptionPolicy,
+		"Hash", pcInfo.Hash)
 	return result.LastInsertId()
 }
 

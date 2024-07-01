@@ -8,6 +8,7 @@ import (
 	"github.com/elankath/gardener-scaling-types"
 	assert "github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -550,6 +551,43 @@ func TestQuantityNormalization(t *testing.T) {
 	assert.Equal(t, q1, q1FromJson)
 }
 
-func TestLatestPodInfosBeforeSnapshotTime(t *testing.T) {
+func TestLoadStorePriorityClassInfo(t *testing.T) {
+	dataAccess, err := initDataAccess()
+	assert.Nil(t, err)
+
+	_, yesterday, dayBeforeYesterday := getTodayYesterdayDayBeforeYesterday()
+
+	premptionPolicy := corev1.PreemptLowerPriority
+	pc1 := gst.PriorityClassInfo{
+		SnapshotTimestamp: dayBeforeYesterday,
+		PriorityClass: schedulingv1.PriorityClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "howdy",
+				UID:               "uid1",
+				Generation:        0,
+				CreationTimestamp: metav1.Time{Time: dayBeforeYesterday},
+				Labels: map[string]string{
+					"greeting": "howdy",
+					"weapon":   "light-saber",
+				},
+			},
+			Value:            123,
+			GlobalDefault:    false,
+			Description:      "bingo",
+			PreemptionPolicy: &premptionPolicy,
+		},
+	}
+	pc1.Hash = pc1.GetHash()
+	t.Logf("StorePriorityClassInfo: %s", pc1)
+	rowID, err := dataAccess.StorePriorityClassInfo(pc1)
+	assert.Nil(t, err)
+	pc1.RowID = rowID
+
+	t.Logf("LoadLatestPriorityClassInfoBeforeSnapshotTime: %d", yesterday.UnixMilli())
+	pcInfos, err := dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(yesterday)
+	assert.Nil(t, err)
+	assert.Equal(t, 1, len(pcInfos), "only 1 PriorityClassInfo should be present at this time")
+	t.Logf("Loaded PriorityClassInfo: %s", pcInfos[0])
+	assert.Equal(t, pc1.Hash, pcInfos[0].Hash)
 
 }

@@ -4,6 +4,10 @@ import (
 	"database/sql"
 	"github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-types"
+	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"strings"
 	"time"
@@ -279,6 +283,53 @@ func (r podRow) AsInfo() (podInfo gst.PodInfo, err error) {
 		Hash:              r.Hash,
 	}
 	return
+}
+
+type priorityClassRow struct {
+	RowID             int64  `db:"RowID"`
+	UID               string `db:"UID"`
+	CreationTimestamp int64  `db:"CreationTimestamp"`
+	SnapshotTimestamp int64  `db:"SnapshotTimestamp"`
+	Name              string
+	Value             int32
+	GlobalDefault     bool   `db:"GlobalDefault"`
+	PreemptionPolicy  string `db:"PreemptionPolicy"`
+	Description       string
+	Labels            string
+	DeletionTimeStamp sql.NullInt64
+	Hash              string
+}
+
+func (r priorityClassRow) AsInfo() (info gst.PriorityClassInfo, err error) {
+	var delTimeStamp *metav1.Time
+	if r.DeletionTimeStamp.Valid {
+		delTimeStamp = &metav1.Time{Time: time.UnixMilli(r.DeletionTimeStamp.Int64)}
+	}
+	var preemptionPolicy corev1.PreemptionPolicy
+	if r.PreemptionPolicy != "" {
+		preemptionPolicy = corev1.PreemptionPolicy(r.PreemptionPolicy)
+	}
+	labels, err := labelsFromText(r.Labels)
+	priorityClass := schedulingv1.PriorityClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              r.Name,
+			UID:               types.UID(r.UID),
+			CreationTimestamp: metav1.Time{Time: time.UnixMilli(r.CreationTimestamp).UTC()},
+			DeletionTimestamp: delTimeStamp,
+			Labels:            labels,
+		},
+		Value:            r.Value,
+		GlobalDefault:    r.GlobalDefault,
+		Description:      r.Description,
+		PreemptionPolicy: &preemptionPolicy,
+	}
+	pcInfo := gst.PriorityClassInfo{
+		RowID:             r.RowID,
+		SnapshotTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
+		PriorityClass:     priorityClass,
+	}
+	pcInfo.Hash = pcInfo.GetHash()
+	return pcInfo, nil
 }
 
 type stateInfoRow struct {

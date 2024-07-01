@@ -4,7 +4,7 @@ go 1.22.0
 
 require (
 	github.com/blockloop/scan/v2 v2.5.0
-	github.com/elankath/gardener-scaling-types v0.0.0-20240628111204-5b234faf9f50
+	github.com/elankath/gardener-scaling-types v0.0.0-20240701082633-4e1f0d4e2383
 	github.com/glebarez/go-sqlite v1.22.0
 	github.com/samber/lo v1.39.0
 	github.com/stretchr/testify v1.9.0

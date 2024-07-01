@@ -182,6 +182,37 @@ const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT 
 const SelectLatestPodsBeforeSnapshotTimestamp = `SELECT * FROM pod_info WHERE
                 SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pod_info.UID HAVING max(SnapshotTimestamp);`
 
+const CreatePriorityClassInfoTable = `CREATE TABLE IF NOT EXISTS pc_info (
+	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
+	CreationTimestamp INT NOT NULL,
+	SnapshotTimestamp INT NOT NULL,
+	Name TEXT,
+	UID TEXT,
+	Value INT NOT NULL,
+	GlobalDefault BOOLEAN,
+	PreemptionPolicy TEXT,
+	Description TEXT,
+	Labels TEXT,
+	DeletionTimestamp INT,
+	Hash TEXT)`
+
+const InsertPriorityClassInfo = `INSERT INTO pc_info(
+    CreationTimestamp,
+	SnapshotTimestamp,
+	Name, 
+	UID, 
+	Value,
+    GlobalDefault,
+	PreemptionPolicy,
+	Description,
+    Labels,
+	Hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+const SelectLatestPriorityClassInfoBeforeSnapshotTimestamp = `SELECT * FROM pc_info WHERE
+                SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pc_info.Name HAVING max(SnapshotTimestamp);`
+const UpdatePriorityClassInfoDeletionTimestamp = "UPDATE pc_info SET DeletionTimestamp=? WHERE Name=?"
+const SelectPriorityClassInfoCountWithNameAndHash = "SELECT COUNT(*) from pc_info where Name=? and Hash=?"
+
 const CreateEventInfoTable = `CREATE TABLE IF NOT EXISTS event_info(
 	UID varchar(128) PRIMARY KEY,
 	EventTime DATETIME NOT NULL,
