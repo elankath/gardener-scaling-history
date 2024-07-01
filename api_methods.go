@@ -46,6 +46,13 @@ func (m MachineClassInfo) GetHash() string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
+func (c ClusterSnapshot) GetPriorityClassUIDs() sets.Set[string] {
+	uids := lo.Map(c.PriorityClasses, func(item gst.PriorityClassInfo, index int) string {
+		return string(item.UID)
+	})
+	return sets.New(uids...)
+}
+
 //import (
 //	"crypto/md5"
 //	"encoding/binary"

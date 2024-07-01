@@ -11,6 +11,7 @@ import (
 	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
+	schedulingv1 "k8s.io/api/scheduling/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,6 +22,7 @@ import (
 	"k8s.io/client-go/informers"
 	corev1informers "k8s.io/client-go/informers/core/v1"
 	policyv1informers "k8s.io/client-go/informers/policy/v1"
+	schedulingv1informers "k8s.io/client-go/informers/scheduling/v1"
 	storagev1informers "k8s.io/client-go/informers/storage/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -100,6 +102,7 @@ func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Rec
 		eventsInformer:         informerFactory.Core().V1().Events(),
 		controlEventsInformer:  controlInformerFactory.ForResource(eventGVR),
 		podsInformer:           informerFactory.Core().V1().Pods(),
+		pcInformer:             informerFactory.Scheduling().V1().PriorityClasses(),
 		pdbInformer:            informerFactory.Policy().V1().PodDisruptionBudgets(),
 		nodeInformer:           informerFactory.Core().V1().Nodes(),
 		csiInformer:            informerFactory.Storage().V1().CSINodes(),
@@ -123,6 +126,7 @@ type defaultRecorder struct {
 	eventsInformer         corev1informers.EventInformer
 	controlEventsInformer  informers.GenericInformer
 	podsInformer           corev1informers.PodInformer
+	pcInformer             schedulingv1informers.PriorityClassInformer
 	pdbInformer            policyv1informers.PodDisruptionBudgetInformer
 	nodeInformer           corev1informers.NodeInformer
 	csiInformer            storagev1informers.CSINodeInformer
@@ -201,6 +205,59 @@ func (r *defaultRecorder) onAddPod(obj any) {
 	}
 }
 
+func (r *defaultRecorder) processPC(pcOld, pcNew *schedulingv1.PriorityClass) error {
+	if pcNew.DeletionTimestamp != nil {
+		// ignore deletes and pod with no node
+		return nil
+	}
+	pcInfo := pcInfoFromPC(pcNew)
+
+	pcCountWithSpecHash, err := r.dataAccess.CountPCInfoWithSpecHash(pcNew.Name, pcInfo.Hash)
+	if err != nil {
+		slog.Error("CountPCInfoWithSpecHash failed", "error", err, "pc.Name", pcNew.Name, "pc.uid", pcNew.UID, "pc.hash", pcInfo.Hash)
+		return err
+	}
+
+	if pcCountWithSpecHash > 0 {
+		slog.Debug("pc is already inserted with hash", "pc.Name", pcNew.Name, "pc.uid", pcNew.UID, "pc.Hash", pcInfo.Hash)
+		return err
+	}
+
+	_, err = r.dataAccess.StorePriorityClassInfo(pcInfo)
+	if err != nil {
+		slog.Error("could not execute pc_info insert", "error", err, "pod.Name", pcInfo.Name, "pod.UID", pcInfo.UID, "pod.CreationTimestamp", pcInfo.CreationTimestamp, "pod.Hash", pcInfo.Hash)
+		return err
+	}
+	return nil
+}
+
+func (r *defaultRecorder) onUpdatePC(old, new any) {
+	if old == nil || new == nil {
+		return
+	}
+	pcNew := new.(*schedulingv1.PriorityClass)
+	slog.Info("PC obj changed.", "pcNew", pcNew.GetName(), "PC.Generation", pcNew.GetGeneration())
+	pcOld := old.(*schedulingv1.PriorityClass)
+	slog.Debug("onUpdatepc.", "pcName", pcOld.Name, "pcOld.UID", pcOld.UID, "pcNew.UID", pcNew.UID)
+	err := r.processPC(pcOld, pcNew)
+	if err != nil {
+		slog.Error("onUpdatePod failed", "error", err)
+	}
+}
+
+func (r *defaultRecorder) onAddPC(obj any) {
+	if obj == nil {
+		return
+	}
+	pcNew := obj.(*schedulingv1.PriorityClass)
+	slog.Info("onAddPC.", "pcName", pcNew.Name, "pcNew.UID", pcNew.UID, "pcNew.Value", pcNew.Value, "pcNew.PreemptionPolicy", pcNew.PreemptionPolicy)
+	err := r.processPC(nil, pcNew)
+	if err != nil {
+		slog.Error("onAddPC failed", "error", err)
+		return
+	}
+}
+
 func IsOwnedBy(pod *corev1.Pod, gvks []schema.GroupVersionKind) bool {
 	for _, ignoredOwner := range gvks {
 		for _, owner := range pod.ObjectMeta.OwnerReferences {
@@ -218,10 +275,6 @@ func (r *defaultRecorder) onUpdatePod(old, new any) {
 	}
 	podNew := new.(*corev1.Pod)
 	slog.Info("Pod obj changed.", "podNew", podNew.GetName(), "podNew.Generation", podNew.GetGeneration())
-	if new == nil {
-		slog.Error("onUpdatePod: new podNew is nil")
-		return
-	}
 	podOld := old.(*corev1.Pod)
 	slog.Debug("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID)
 	err := r.processPod(podOld, podNew)
@@ -560,6 +613,13 @@ func (r *defaultRecorder) Start(ctx context.Context) error {
 		return fmt.Errorf("cannot add event handler on podsInformer: %w", err)
 	}
 
+	_, err = r.pcInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    r.onAddPC,
+		UpdateFunc: r.onUpdatePC,
+	})
+	if err != nil {
+		return fmt.Errorf("cannot add event handler on pcInformer: %w", err)
+	}
 	_, err = r.pdbInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    r.onAddPDB,
 		UpdateFunc: r.onUpdatePDB,
@@ -1114,6 +1174,15 @@ func getLastUpdateTimeForPod(p *corev1.Pod) (lastUpdateTime time.Time) {
 		}
 	}
 	return
+}
+
+func pcInfoFromPC(p *schedulingv1.PriorityClass) gst.PriorityClassInfo {
+	pc := gst.PriorityClassInfo{
+		SnapshotTimestamp: time.Now().UTC(),
+		PriorityClass:     *p,
+	}
+	pc.Hash = pc.GetHash()
+	return pc
 }
 
 func podInfoFromPod(p *corev1.Pod) gst.PodInfo {
