@@ -14,12 +14,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/utils/pointer"
 	"log/slog"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 )
@@ -259,6 +261,42 @@ func getCorePodFromPodInfo(podInfo gst.PodInfo) corev1.Pod {
 	return pod
 }
 
+func getNamespaces(ctx context.Context, clientSet *kubernetes.Clientset) (sets.Set[string], error) {
+	virtualNamespaceList, err := clientSet.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		err = fmt.Errorf("cannot list the namespaces in virtual cluster")
+		return nil, err
+	}
+	return sets.New[string](lo.Map(virtualNamespaceList.Items, func(item corev1.Namespace, index int) string {
+		return item.Name
+	})...), nil
+}
+
+func deployNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss ...string) error {
+	for _, ns := range nss {
+		namespace := corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: ns,
+			},
+		}
+		_, err := clientSet.CoreV1().Namespaces().Create(ctx, &namespace, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("cannot create the namespace %q in virtual cluster: %w", ns, err)
+		}
+	}
+	return nil
+}
+
+func deleteNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss ...string) error {
+	for _, ns := range nss {
+		err := clientSet.CoreV1().Namespaces().Delete(ctx, ns, metav1.DeleteOptions{})
+		if err != nil {
+			return fmt.Errorf("cannot delete the namespace %q in virtual cluster: %w", ns, err)
+		}
+	}
+	return nil
+}
+
 func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.ClusterSnapshot) (workDone bool, err error) {
 
 	virtualPCs, err := d.clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
@@ -280,6 +318,20 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.Clu
 		}
 		slog.Info("successfully create the priority class", "pc.Name", pcInfo.Name)
 		workDone = true
+	}
+
+	podNamespaces := clusterSnapshot.GetPodNamspaces()
+	virtualNamespaces, err := getNamespaces(ctx, d.clientSet)
+	if err != nil {
+		return
+	}
+
+	//nsToDelete := virtualNamespaces.Difference(podNamespaces)
+	nsToDeploy := podNamespaces.Difference(virtualNamespaces)
+
+	err = deployNamespaces(ctx, d.clientSet, nsToDeploy.UnsortedList()...)
+	if err != nil {
+		return
 	}
 
 	virtualPodsList, err := d.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
@@ -322,6 +374,11 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.Clu
 		}
 		workDone = true
 	}
+
+	//err = deleteNamespaces(ctx, d.clientSet, nsToDelete.UnsortedList()...)
+	//if err != nil {
+	//	return
+	//}
 	slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
 	return
 }
@@ -426,8 +483,13 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, node
 		delete(virtualNodesMap, vnode.Name)
 	}
 	for _, nodeInfo := range nodeInfos {
-		_, ok := virtualNodesMap[nodeInfo.Name]
-		if ok {
+		oldVNode, exists := virtualNodesMap[nodeInfo.Name]
+		var sameLabels, sameTaints bool
+		if exists {
+			sameLabels = maps.Equal(oldVNode.Labels, nodeInfo.Labels)
+			sameTaints = slices.EqualFunc(oldVNode.Spec.Taints, nodeInfo.Taints, gst.IsEqualTaint)
+		}
+		if exists && sameLabels && sameTaints {
 			continue
 		}
 		node := corev1.Node{
@@ -447,9 +509,13 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, node
 			},
 		}
 		nodeStatus := node.Status
-		_, err = clientSet.CoreV1().Nodes().Create(context.Background(), &node, metav1.CreateOptions{})
+		if !exists {
+			_, err = clientSet.CoreV1().Nodes().Create(context.Background(), &node, metav1.CreateOptions{})
+		} else {
+			_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
+		}
 		if err != nil {
-			err = fmt.Errorf("cannot create node with name %q: %w", node.Name, err)
+			err = fmt.Errorf("cannot create/update node with name %q: %w", node.Name, err)
 			return
 		}
 		node.Status = nodeStatus
@@ -492,9 +558,16 @@ func (d *defaultReplayer) doReplay(ctx context.Context) error {
 			"stabilizeInterval", d.params.StabilizeInterval)
 		<-time.After(d.params.StabilizeInterval)
 	}
-	_, err = synchronizeNodes(ctx, d.clientSet, clusterSnapshot.Nodes)
+	virtualNodes, err := synchronizeNodes(ctx, d.clientSet, clusterSnapshot.Nodes)
 	if err != nil {
 		return fmt.Errorf("cannot synchronize the nodes from actual cluster: %w", err)
+	}
+	virtualNodeNames := lo.Map(virtualNodes, func(item corev1.Node, index int) string {
+		return item.Name
+	})
+	err = deletePodsNotBelongingTo(ctx, d.clientSet, virtualNodeNames)
+	if err != nil {
+		return err
 	}
 	workDone, err := d.applyWork(ctx, clusterSnapshot)
 	if err != nil {
@@ -509,6 +582,24 @@ func (d *defaultReplayer) doReplay(ctx context.Context) error {
 		return err
 	}
 	d.lastClusterSnapshot = clusterSnapshot
+	return nil
+}
+
+func deletePodsNotBelongingTo(ctx context.Context, clientSet *kubernetes.Clientset, nodes []string) error {
+	nodeNames := sets.New[string](nodes...)
+	podsList, err := clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
+	}
+	for _, pod := range podsList.Items {
+		if nodeNames.Has(pod.Spec.NodeName) {
+			continue
+		}
+		err = clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+		if err != nil {
+			return fmt.Errorf("cannot delete the pod %q in namespace %q: %w", pod.Name, pod.Namespace, err)
+		}
+	}
 	return nil
 }
 

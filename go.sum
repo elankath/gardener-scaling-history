@@ -10,6 +10,8 @@ github.com/elankath/gardener-scaling-types v0.0.0-20240701082633-4e1f0d4e2383 h1
 github.com/elankath/gardener-scaling-types v0.0.0-20240701082633-4e1f0d4e2383/go.mod h1:NRbtdKj6AIVITNektyI/9o1KBeqG4z1OrzB+lDKx+eA=
 github.com/elankath/gardener-scaling-types v0.0.0-20240703113323-e2807e2f936e h1:J3Iv1j8v3VJ/Bdx8BF/4+sY992ZweXCpRsNCO6shqKs=
 github.com/elankath/gardener-scaling-types v0.0.0-20240703113323-e2807e2f936e/go.mod h1:NRbtdKj6AIVITNektyI/9o1KBeqG4z1OrzB+lDKx+eA=
+github.com/elankath/gardener-scaling-types v0.0.0-20240705082540-19dc39cf96e4 h1:jz7BIUWZPB0bNSWG1lUV+4L6HU1n/8bWd81fPjxAeD4=
+github.com/elankath/gardener-scaling-types v0.0.0-20240705082540-19dc39cf96e4/go.mod h1:NRbtdKj6AIVITNektyI/9o1KBeqG4z1OrzB+lDKx+eA=
 github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
 github.com/emicklei/go-restful/v3 v3.11.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/evanphx/json-patch v4.12.0+incompatible h1:4onqiflcdA9EOZ4RxV643DvftH5pOlLGNtQ5lPWQu84=

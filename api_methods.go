@@ -353,6 +353,13 @@ func (c ClusterSnapshot) GetPodsWithScheduleStatus(status gst.PodScheduleStatus)
 	})
 }
 
+func (c ClusterSnapshot) GetPodNamspaces() sets.Set[string] {
+	namespaces := lo.Map(c.Pods, func(item gst.PodInfo, index int) string {
+		return item.Namespace
+	})
+	return sets.New(namespaces...)
+}
+
 //}
 
 //
