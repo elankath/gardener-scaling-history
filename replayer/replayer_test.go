@@ -64,3 +64,11 @@ func TestNodeCreation(t *testing.T) {
 	nd, err = clientSet.CoreV1().Nodes().UpdateStatus(context.Background(), nd, metav1.UpdateOptions{})
 	assert.Nil(t, err)
 }
+
+func TestIncrementMap(t *testing.T) {
+	mp := make(map[string]int)
+	mp["a"]++
+	assert.Equal(t, 1, mp["a"])
+	mp["a"]++
+	assert.Equal(t, 2, mp["a"])
+}

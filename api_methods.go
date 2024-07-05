@@ -53,6 +53,10 @@ func (c ClusterSnapshot) GetPriorityClassUIDs() sets.Set[string] {
 	return sets.New(uids...)
 }
 
+func (pz PoolZone) String() string {
+	return fmt.Sprintf("PoolZone ( %s, %s)", pz.PoolName, pz.Zone)
+}
+
 //import (
 //	"crypto/md5"
 //	"encoding/binary"
@@ -341,6 +345,12 @@ func (c ClusterSnapshot) GetPodUIDs() sets.Set[string] {
 		return item.UID
 	})
 	return sets.New(uids...)
+}
+
+func (c ClusterSnapshot) GetPodsWithScheduleStatus(status gst.PodScheduleStatus) []gst.PodInfo {
+	return lo.Filter(c.Pods, func(item gst.PodInfo, _ int) bool {
+		return item.PodScheduleStatus == status
+	})
 }
 
 //}
