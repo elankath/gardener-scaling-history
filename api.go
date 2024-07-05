@@ -47,12 +47,13 @@ type ClusterSnapshot struct {
 }
 
 type Scenario struct {
-	ExistingNodes      []corev1.Node
-	UnscheduledPods    []corev1.Pod
-	ScaledUpNodeGroups map[string]int
-	NominatedPods      []corev1.Pod
-	ScheduledPods      []corev1.Pod
-	ScaledUpNodes      []corev1.Node
+	ExistingNodes          []gst.NodeInfo
+	UnscheduledPods        []gst.PodInfo
+	ScaledUpNodeGroups     map[string]int
+	NominatedPods          []gst.PodInfo
+	ScheduledPods          []gst.PodInfo
+	ScaledUpNodes          []gst.NodeInfo
+	PendingUnscheduledPods []gst.PodInfo
 }
 
 type ReplayReport struct {
@@ -97,4 +98,9 @@ type PodInfoKey struct {
 	UID  string
 	Name string
 	Hash string
+}
+
+type PoolZone struct {
+	PoolName string
+	Zone     string
 }

@@ -479,7 +479,7 @@ func (r *defaultRecorder) processPod(podOld, podNew *corev1.Pod) error {
 		// ignore deletes and pod with no node
 		return nil
 	}
-	podInfo := podInfoFromPod(podNew)
+	podInfo := PodInfoFromPod(podNew)
 	if podInfo.PodScheduleStatus == gst.PodSchedulePending {
 		slog.Debug("pod is in PodSchedulePending state, skipping persisting it", "pod.UID", podInfo.UID, "pod.Name", podInfo.Name)
 		return nil
@@ -1185,7 +1185,7 @@ func pcInfoFromPC(p *schedulingv1.PriorityClass) gst.PriorityClassInfo {
 	return pc
 }
 
-func podInfoFromPod(p *corev1.Pod) gst.PodInfo {
+func PodInfoFromPod(p *corev1.Pod) gst.PodInfo {
 	var pi gst.PodInfo
 	pi.UID = string(p.UID)
 	pi.Name = p.Name

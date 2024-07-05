@@ -8,6 +8,8 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/elankath/gardener-scaling-types v0.0.0-20240701082633-4e1f0d4e2383 h1:+XTCsr93qkG4V8hDj1RHtyfzKm7AdxwLbnSfiMLUBX8=
 github.com/elankath/gardener-scaling-types v0.0.0-20240701082633-4e1f0d4e2383/go.mod h1:NRbtdKj6AIVITNektyI/9o1KBeqG4z1OrzB+lDKx+eA=
+github.com/elankath/gardener-scaling-types v0.0.0-20240703113323-e2807e2f936e h1:J3Iv1j8v3VJ/Bdx8BF/4+sY992ZweXCpRsNCO6shqKs=
+github.com/elankath/gardener-scaling-types v0.0.0-20240703113323-e2807e2f936e/go.mod h1:NRbtdKj6AIVITNektyI/9o1KBeqG4z1OrzB+lDKx+eA=
 github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
 github.com/emicklei/go-restful/v3 v3.11.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/evanphx/json-patch v4.12.0+incompatible h1:4onqiflcdA9EOZ4RxV643DvftH5pOlLGNtQ5lPWQu84=

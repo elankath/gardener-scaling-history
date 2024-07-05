@@ -138,7 +138,9 @@ const InsertNodeInfo = `INSERT INTO node_info(
 	Hash) 
 	VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-const SelectNodeInfoBefore = `SELECT * FROM node_info WHERE CreationTimestamp < ? ORDER BY CreationTimestamp DESC`
+// `SELECT * FROM node_info WHERE CreationTimestamp < ? ORDER BY CreationTimestamp DESC`
+const SelectNodeInfoBefore = `SELECT * FROM node_info WHERE
+SnapshotTimestamp < ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY node_info.Name HAVING max(SnapshotTimestamp)`
 const SelectNodeCountWithNameAndHash = "SELECT COUNT(*) from node_info where Name=? and Hash=?"
 const UpdateNodeInfoDeletionTimestamp = `UPDATE node_info SET DeletionTimestamp = ? where Name = ?`
 

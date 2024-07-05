@@ -839,8 +839,8 @@ func (d *DataAccess) StoreNodeInfo(n gst.NodeInfo) (rowID int64, err error) {
 	return
 }
 
-func (d *DataAccess) LoadNodeInfosBefore(creationTimestamp time.Time) ([]gst.NodeInfo, error) {
-	nodeInfos, err := queryAndMapToInfos[gst.NodeInfo, nodeRow](d.selectNodeInfosBefore, creationTimestamp)
+func (d *DataAccess) LoadNodeInfosBefore(snapshotTimestamp time.Time) ([]gst.NodeInfo, error) {
+	nodeInfos, err := queryAndMapToInfos[gst.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp, snapshotTimestamp)
 	if err != nil {
 		return nil, fmt.Errorf("LoadNodeInfosBefore could not scan rows: %w", err)
 	}
