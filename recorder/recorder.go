@@ -274,7 +274,7 @@ func (r *defaultRecorder) onUpdatePod(old, new any) {
 		return
 	}
 	podNew := new.(*corev1.Pod)
-	slog.Info("Pod obj changed.", "podNew", podNew.GetName(), "podNew.Generation", podNew.GetGeneration())
+	slog.Info("Pod obj changed.", "podNew", podNew.GetName(), "podNew.ResourceVersion", podNew.GetResourceVersion())
 	podOld := old.(*corev1.Pod)
 	slog.Debug("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID)
 	err := r.processPod(podOld, podNew)
