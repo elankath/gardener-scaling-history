@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path"
+	"strings"
 	"syscall"
 )
 
@@ -29,6 +31,7 @@ func FileExists(filepath string) bool {
 	}
 	return true
 }
+func FilenameWithoutExtension(fn string) string { return strings.TrimSuffix(fn, path.Ext(fn)) }
 
 func DirExists(filepath string) bool {
 	fileinfo, err := os.Stat(filepath)

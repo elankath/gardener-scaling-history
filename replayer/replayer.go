@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	gsh "github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/db"
 	"github.com/elankath/gardener-scaling-history/recorder"
 	gst "github.com/elankath/gardener-scaling-types"
@@ -134,8 +135,6 @@ func clearPods(ctx context.Context, c *kubernetes.Clientset) error {
 	return err
 }
 
-func FilenameWithoutExtension(fn string) string { return strings.TrimSuffix(fn, path.Ext(fn)) }
-
 func (d *defaultReplayer) Start(ctx context.Context) error {
 	err := d.CleanCluster(ctx)
 	if err != nil {
@@ -158,7 +157,8 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 	if len(d.initNodes) == 0 {
 		return fmt.Errorf("no initial nodeinfos available before replay time %q", replayTime)
 	}
-	d.reportPath = path.Join(d.params.ReportDir, "report.json")
+	reportFileName := apputil.FilenameWithoutExtension(d.params.DBPath + "-report.json")
+	d.reportPath = path.Join(d.params.ReportDir, reportFileName)
 	//clusterSnapshot, err := d.GetInitialClusterSnapshot()
 	//if err != nil {
 	//	return err
