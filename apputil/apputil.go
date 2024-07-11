@@ -17,6 +17,26 @@ func WaitForSignalAndShutdown(cancelFunc context.CancelFunc) {
 	s := <-quit
 	slog.Warn("Cleanup and Exit!", "signal", s.String())
 	cancelFunc()
-	//TODO: Clean up and exit code here.
+}
 
+func FileExists(filepath string) bool {
+	fileinfo, err := os.Stat(filepath)
+	if err != nil {
+		return false
+	}
+	if fileinfo.IsDir() {
+		return false
+	}
+	return true
+}
+
+func DirExists(filepath string) bool {
+	fileinfo, err := os.Stat(filepath)
+	if err != nil {
+		return false
+	}
+	if fileinfo.IsDir() {
+		return true
+	}
+	return false
 }

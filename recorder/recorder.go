@@ -284,7 +284,22 @@ func (r *defaultRecorder) onUpdatePod(old, new any) {
 }
 
 func (r *defaultRecorder) onDeletePod(obj any) {
-	pod := obj.(*corev1.Pod)
+	if obj == nil {
+		return
+	}
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			slog.Error("onDeletePod got an obj that is neither pod nor cache.DeletedFinalStateUnknown", "object", obj)
+			return
+		}
+		pod, ok = tombstone.Obj.(*corev1.Pod)
+		if !ok {
+			slog.Error("Tombstone contained object that is not a Pod", "object", obj)
+			return
+		}
+	}
 	if pod.DeletionTimestamp == nil {
 		return //sometimes this handler is invoked with null deletiontimestamp!
 	}
@@ -356,8 +371,23 @@ func InvokeOrScheduleFunc[T any](label string, duration time.Duration, entity T,
 	}
 }
 
-func (r *defaultRecorder) onDeleteNode(obj interface{}) {
-	node := obj.(*corev1.Node)
+func (r *defaultRecorder) onDeleteNode(obj any) {
+	if obj == nil {
+		return
+	}
+	node, ok := obj.(*corev1.Node)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			slog.Error("onDeleteNode got an obj that is neither node nor cache.DeletedFinalStateUnknown", "object", obj)
+			return
+		}
+		node, ok = tombstone.Obj.(*corev1.Node)
+		if !ok {
+			slog.Error("Tombstone contained object that is not a Node", "object", obj)
+			return
+		}
+	}
 	delTimeStamp := time.Now().UTC() // shitty issue where sometimes >node.DeletionTimestamp is nil
 	if node.DeletionTimestamp != nil {
 		delTimeStamp = node.DeletionTimestamp.UTC()
@@ -789,10 +819,22 @@ func getNodeConditionsFromUnstructuredMCD(obj *unstructured.Unstructured) (condi
 	return
 }
 
-func (r *defaultRecorder) onDeleteMCD(obj interface{}) {
-	mcdObj := obj.(*unstructured.Unstructured)
-	if mcdObj == nil {
+func (r *defaultRecorder) onDeleteMCD(obj any) {
+	if obj == nil {
 		return
+	}
+	mcdObj, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			slog.Error("onDeleteMCD got an obj that is neither unstructured nor cache.DeletedFinalStateUnknown", "object", obj)
+			return
+		}
+		mcdObj, ok = tombstone.Obj.(*unstructured.Unstructured)
+		if !ok {
+			slog.Error("Tombstone contained object that is not a unstructured", "object", obj)
+			return
+		}
 	}
 	delTimeStamp := time.Now().UTC() // shitty issue where sometimes >node.DeletionTimestamp is nil
 	if mcdObj.GetDeletionTimestamp() != nil {
@@ -807,9 +849,21 @@ func (r *defaultRecorder) onDeleteMCD(obj interface{}) {
 }
 
 func (r *defaultRecorder) onDeleteMCC(obj interface{}) {
-	mccObj := obj.(*unstructured.Unstructured)
-	if mccObj == nil {
+	if obj == nil {
 		return
+	}
+	mccObj, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			slog.Error("onDeleteMCC got an obj that is neither unstructured nor cache.DeletedFinalStateUnknown", "object", obj)
+			return
+		}
+		mccObj, ok = tombstone.Obj.(*unstructured.Unstructured)
+		if !ok {
+			slog.Error("Tombstone contained object that is not a unstructured", "object", obj)
+			return
+		}
 	}
 	delTimeStamp := time.Now().UTC() // shitty issue where sometimes >node.DeletionTimestamp is nil
 	if mccObj.GetDeletionTimestamp() != nil {
@@ -1098,8 +1152,23 @@ func (r *defaultRecorder) onUpdateCSINode(_ interface{}, newObj interface{}) {
 	r.onAddCSINode(newObj)
 }
 
-func (r *defaultRecorder) onDeleteCSINode(obj interface{}) {
-	csiNode := obj.(*storagev1.CSINode)
+func (r *defaultRecorder) onDeleteCSINode(obj any) {
+	if obj == nil {
+		return
+	}
+	csiNode, ok := obj.(*storagev1.CSINode)
+	if !ok {
+		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+		if !ok {
+			slog.Error("onDeleteCSINode got an obj that is neither csinode nor cache.DeletedFinalStateUnknown", "object", obj)
+			return
+		}
+		csiNode, ok = tombstone.Obj.(*storagev1.CSINode)
+		if !ok {
+			slog.Error("Tombstone contained object that is not a CSINode", "object", obj)
+			return
+		}
+	}
 	r.nodeAllocatableVolumes.Delete(csiNode.Name)
 }
 

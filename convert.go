@@ -168,6 +168,7 @@ func MachineClassInfoFromUnstructured(mcc *unstructured.Unstructured, snapshotTi
 		return
 	}
 
+	// worker.gardener.cloud/pool
 	providerSpecLabelsPath := []string{"providerSpec", "labels"}
 	labelsMap, found, err := unstructured.NestedStringMap(mcc.UnstructuredContent(), providerSpecLabelsPath...)
 	if err != nil {
@@ -175,15 +176,22 @@ func MachineClassInfoFromUnstructured(mcc *unstructured.Unstructured, snapshotTi
 		return
 	}
 	if !found {
-		err = fmt.Errorf("cannot find value in path %q in %q", providerSpecLabelsPath, mccName)
-		return
+		providerSpecLabelsPath = []string{"providerSpec", "tags"} //fallback
+		labelsMap, found, err = unstructured.NestedStringMap(mcc.UnstructuredContent(), providerSpecLabelsPath...)
+		if !found {
+			err = fmt.Errorf("cannot find value in path %q in %q", providerSpecLabelsPath, mccName)
+			return
+		}
 	}
 	maps.Copy(labelsMap, mcc.GetLabels())
 
 	poolName, ok := labelsMap[PoolLabelAlt]
 	if !ok {
-		err = fmt.Errorf("cant find pool label %q in labels of MachineClass %q", PoolLabelAlt, mccName)
-		return
+		poolName, ok = labelsMap[PoolLabel]
+		if !ok {
+			err = fmt.Errorf("cant find pool label %q or %q in labels of MachineClass %q", PoolLabel, PoolLabelAlt, mccName)
+			return
+		}
 	}
 
 	mccInfo = MachineClassInfo{
@@ -375,3 +383,14 @@ func parseIntOrStr(val any) (intstr.IntOrString, error) {
 	}
 	return intstr.IntOrString{}, fmt.Errorf("cannot parse %v as int or string", val)
 }
+
+//func GetMapValue[M map[string]V, V any](m M, keys ...string) (value V, ok bool) {
+//	for _, k := range keys {
+//		value, ok = m[k]
+//		if ok {
+//			return
+//		}
+//	}
+//	ok = false
+//	return
+//}

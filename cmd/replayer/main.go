@@ -25,26 +25,29 @@ func GetDuration(name string, defVal time.Duration) time.Duration {
 }
 
 func main() {
-
 	dbPath := os.Getenv("DB_PATH")
 	if len(dbPath) == 0 {
-		slog.Error("DB_PATH env must be set")
+		slog.Error("DB_PATH env MUST be set")
 		os.Exit(1)
+	}
+	virtualClusterKubeConfig := os.Getenv("KUBECONFIG")
+	if len(virtualClusterKubeConfig) == 0 {
+		virtualClusterKubeConfig = "/tmp/vck.yaml"
+		slog.Warn("KUBECONFIG env must be set. Assuming path.", "virtualClusterKubeConfig", virtualClusterKubeConfig)
+		if !apputil.FileExists(virtualClusterKubeConfig) {
+			slog.Error("virtualClusterKubeConfig does not exist. Exiting")
+			os.Exit(1)
+		}
 	}
 	reportDir := os.Getenv("REPORT_DIR")
 	if len(reportDir) == 0 {
-		slog.Error("REPORT_DIR env must be set")
-		os.Exit(1)
+		reportDir = "/tmp"
+		slog.Warn("REPORT_DIR not set. Assuming tmp dir", "reportDir", reportDir)
 	}
-	virtualAutoScalerConfig := os.Getenv("VIRTUAL_AUTOSCALER_CONFIG")
-	if len(virtualAutoScalerConfig) == 0 {
-		slog.Error("VIRTUAL_AUTOSCALER_CONFIG env must be set")
-		os.Exit(1)
-	}
-	virtualClusterKubeConfig := os.Getenv("VIRTUAL_CLUSTER_KUBECONFIG")
-	if len(virtualAutoScalerConfig) == 0 {
-		slog.Error("VIRTUAL_CLUSTER_KUBECONFIG env must be set")
-		os.Exit(1)
+	virtualAutoscalerConfig := os.Getenv("VIRTUAL_AUTOSCALER_CONFIG")
+	if len(virtualAutoscalerConfig) == 0 {
+		virtualAutoscalerConfig = "/tmp/vas-config.json"
+		slog.Error("VIRTUAL_AUTOSCALER_CONFIG env is not set - Assuming path.", "virtualAutoscalerConfig", virtualAutoscalerConfig)
 	}
 
 	stabilizeInterval := GetDuration("STABILIZE_INTERVAL", replayer.DefaultStabilizeInterval)
@@ -54,14 +57,14 @@ func main() {
 	defaultReplayer, err := replayer.NewDefaultReplayer(gsh.ReplayerParams{
 		DBPath:                       dbPath,
 		ReportDir:                    reportDir,
-		VirtualAutoScalerConfigPath:  virtualAutoScalerConfig,
+		VirtualAutoScalerConfigPath:  virtualAutoscalerConfig,
 		VirtualClusterKubeConfigPath: virtualClusterKubeConfig,
 		TotalReplayTime:              totalReplayTime,
 		StabilizeInterval:            stabilizeInterval,
 		ReplayInterval:               replayInterval,
 	})
 	if err != nil {
-		slog.Error("cannot contruct the default replayer", "error", err)
+		slog.Error("cannot construct the default replayer", "error", err)
 		os.Exit(1)
 	}
 

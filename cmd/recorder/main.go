@@ -24,8 +24,8 @@ func main() {
 	}
 	dbDir := os.Getenv("DB_DIR")
 	if len(dbDir) == 0 {
-		slog.Error("DB_DIR env must be set")
-		os.Exit(2)
+		slog.Warn("DB_DIR is NOT set. Assuming same as CONFIG_DIR", "config_dir", configDir)
+		dbDir = configDir
 	}
 
 	result, err := os.ReadFile(path.Join(configDir, CLUSTERS_CFG_FILE))
@@ -82,17 +82,20 @@ func main() {
 
 	slog.Info("Will monitor, record & analyze clusters for scaling history", "shootKubeConfigs", recorderParams[0].ShootKubeConfigPath, "dbdir", dbDir)
 
-	startTime := time.Now()
-	defaultRecorder, err := recorder.NewDefaultRecorder(recorderParams[0], startTime)
-	if err != nil {
-		slog.Error("cannot create recorder recorder", "error", err)
-		os.Exit(3)
-	}
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	err = defaultRecorder.Start(ctx)
-	if err != nil {
-		slog.Error("cannot start recorder recorder", "error", err)
-		os.Exit(4)
+	for _, rp := range recorderParams {
+		startTime := time.Now()
+		defaultRecorder, err := recorder.NewDefaultRecorder(rp, startTime)
+		if err != nil {
+			slog.Error("cannot create recorder recorder", "error", err)
+			os.Exit(3)
+		}
+		err = defaultRecorder.Start(ctx)
+		slog.Info("STARTED recorder", "startTime", startTime, "params", rp)
+		if err != nil {
+			slog.Error("cannot start recorder recorder", "error", err)
+			os.Exit(4)
+		}
 	}
 	apputil.WaitForSignalAndShutdown(cancelFunc)
 

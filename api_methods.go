@@ -57,6 +57,10 @@ func (pz PoolZone) String() string {
 	return fmt.Sprintf("PoolZone ( %s, %s)", pz.PoolName, pz.Zone)
 }
 
+func (rp RecorderParams) String() string {
+	return fmt.Sprintf("(Landscape:%s,ShootNamespace:%s,DBDir:%s)", rp.Landscape, rp.ShootNameSpace, rp.DBDir)
+}
+
 //import (
 //	"crypto/md5"
 //	"encoding/binary"
