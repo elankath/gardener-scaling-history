@@ -11,6 +11,7 @@ import (
 	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
@@ -26,7 +27,7 @@ import (
 	"time"
 )
 
-const DefaultStabilizeInterval = time.Duration(45 * time.Second)
+const DefaultStabilizeInterval = time.Duration(30 * time.Second)
 const DefaultTotalReplayTime = time.Duration(1 * time.Hour)
 const DefaultReplayInterval = time.Duration(5 * time.Minute)
 
@@ -76,6 +77,7 @@ func WriteAutoScalerConfig(autoscalerConfig gst.AutoScalerConfig, path string) e
 }
 
 func (d *defaultReplayer) CleanCluster(ctx context.Context) error {
+	slog.Info("Cleaning the virtual cluster  nodes, priority-classes...")
 	err := clearPods(ctx, d.clientSet)
 	if err != nil {
 		return err
@@ -85,6 +87,7 @@ func (d *defaultReplayer) CleanCluster(ctx context.Context) error {
 		slog.Error("cannot list the nodes", "error", err)
 		return err
 	}
+	slog.Info("Deleting nodes.", "numNodes", len(nodes.Items))
 	for _, node := range nodes.Items {
 		err = d.clientSet.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
 		if err != nil {
@@ -102,6 +105,7 @@ func (d *defaultReplayer) CleanCluster(ctx context.Context) error {
 		if strings.HasPrefix(pc.Name, "system-") {
 			continue
 		}
+		slog.Info("Deleting Priority Class", "priorityCLass", pc.Name)
 		err = d.clientSet.SchedulingV1().PriorityClasses().Delete(ctx, pc.Name, metav1.DeleteOptions{})
 		if err != nil {
 			slog.Error("cannot delete the priority class", "pc.Name", pc.Name, "error", err)
@@ -360,13 +364,15 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.Clu
 		delete(virtualPodsByName, podInfo.UID)
 		workDone = true
 	}
+	deployCount := 0
 	for _, podInfo := range clusterSnapshot.Pods {
 		_, ok := virtualPodsByName[podInfo.Name]
 		if ok {
 			continue
 		}
 		pod := getCorePodFromPodInfo(podInfo)
-		slog.Info("deploying pod", "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
+		deployCount++
+		slog.Info("deploying pod", "deployCount", deployCount, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
 		_, err = d.clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
 		if err != nil {
 			err = fmt.Errorf("cannot create the pod  %s: %w", pod.Name, err)
@@ -374,12 +380,11 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.Clu
 		}
 		workDone = true
 	}
-
-	//err = deleteNamespaces(ctx, d.clientSet, nsToDelete.UnsortedList()...)
-	//if err != nil {
-	//	return
-	//}
-	slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
+	if deployCount > 0 {
+		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
+	} else {
+		slog.Info("No work to apply, waiting for stabilizeInterval before trying again", "stabilizeInterval", d.params.StabilizeInterval)
+	}
 	return
 }
 
@@ -467,11 +472,11 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, node
 	virtualNodesMap := lo.KeyBy(virtualNodeList.Items, func(item corev1.Node) string {
 		return item.Name
 	})
-	nodeNameMap := lo.Associate(nodeInfos, func(item gst.NodeInfo) (string, struct{}) {
+	nodeInfosByName := lo.Associate(nodeInfos, func(item gst.NodeInfo) (string, struct{}) {
 		return item.Name, struct{}{}
 	})
 	for _, vnode := range virtualNodeList.Items {
-		_, ok := nodeNameMap[vnode.Name]
+		_, ok := nodeInfosByName[vnode.Name]
 		if ok {
 			continue
 		}
@@ -511,7 +516,15 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, node
 		nodeStatus := node.Status
 		if !exists {
 			_, err = clientSet.CoreV1().Nodes().Create(context.Background(), &node, metav1.CreateOptions{})
+			if errors.IsAlreadyExists(err) {
+				slog.Warn("node already exists. updating node", "nodeName", node.Name)
+				_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
+			}
+			if err == nil {
+				slog.Info("created node.", "nodeName", node.Name)
+			}
 		} else {
+			slog.Info("updating node", "nodeName", node.Name)
 			_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
 		}
 		if err != nil {
