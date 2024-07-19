@@ -7,6 +7,7 @@ import (
 	"github.com/elankath/gardener-scaling-history/replayer"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -53,6 +54,16 @@ func main() {
 	stabilizeInterval := GetDuration("STABILIZE_INTERVAL", replayer.DefaultStabilizeInterval)
 	totalReplayTime := GetDuration("TOTAL_REPLAY_TIME", replayer.DefaultTotalReplayTime)
 	replayInterval := GetDuration("REPLAY_INTERVAL", replayer.DefaultReplayInterval)
+	recurConfigUpdateBool := os.Getenv("RECUR_CONFIG_UPDATE")
+	var recurConfigUpdate bool
+	if recurConfigUpdateBool != "" {
+		var err error
+		recurConfigUpdate, err = strconv.ParseBool(recurConfigUpdateBool)
+		if err != nil {
+			slog.Error("RECUR_CONFIG_UPDATE must be a boolean")
+			os.Exit(1)
+		}
+	}
 
 	defaultReplayer, err := replayer.NewDefaultReplayer(gsh.ReplayerParams{
 		DBPath:                       dbPath,
@@ -62,6 +73,7 @@ func main() {
 		TotalReplayTime:              totalReplayTime,
 		StabilizeInterval:            stabilizeInterval,
 		ReplayInterval:               replayInterval,
+		RecurConfigUpdate:            recurConfigUpdate,
 	})
 	if err != nil {
 		slog.Error("cannot construct the default replayer", "error", err)
