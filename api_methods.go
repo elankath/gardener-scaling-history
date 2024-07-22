@@ -364,6 +364,15 @@ func (c ClusterSnapshot) GetPodNamspaces() sets.Set[string] {
 	return sets.New(namespaces...)
 }
 
+func (c ClusterSnapshot) HasSameUnscheduledPods(other ClusterSnapshot) bool {
+	pods1 := c.GetPodsWithScheduleStatus(gst.PodUnscheduled)
+	pods2 := other.GetPodsWithScheduleStatus(gst.PodUnscheduled)
+	// assumes that pods1 and pods2 are sorted according to same order.
+	return slices.EqualFunc(pods1, pods2, func(p gst.PodInfo, q gst.PodInfo) bool {
+		return p.UID == q.UID
+	})
+}
+
 //}
 
 //

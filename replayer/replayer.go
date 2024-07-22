@@ -157,7 +157,7 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 	if len(d.initNodes) == 0 {
 		return fmt.Errorf("no initial nodeinfos available before replay time %q", replayTime)
 	}
-	reportFileName := apputil.FilenameWithoutExtension(d.params.DBPath + "-report.json")
+	reportFileName := apputil.FilenameWithoutExtension(d.params.DBPath) + "-report.json"
 	d.reportPath = path.Join(d.params.ReportDir, reportFileName)
 	//clusterSnapshot, err := d.GetInitialClusterSnapshot()
 	//if err != nil {
@@ -380,11 +380,6 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.Clu
 		}
 		workDone = true
 	}
-	if deployCount > 0 {
-		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
-	} else {
-		slog.Info("No work to apply, waiting for stabilizeInterval before trying again", "stabilizeInterval", d.params.StabilizeInterval)
-	}
 	return
 }
 
@@ -549,6 +544,11 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, node
 	return
 }
 
+// construct replayer
+// replayer.Init() // initialize k8s client
+// THis mode needs to be configurd with SCE
+// replayer.PlayScenario() - returns error (there are no more scenarios false or error)
+// then recommender does its job and produce a report.
 func (d *defaultReplayer) doReplay(ctx context.Context) error {
 	d.replayLoop++
 	replayTime, err := d.getReplayTime()
@@ -588,8 +588,11 @@ func (d *defaultReplayer) doReplay(ctx context.Context) error {
 	}
 	if !workDone {
 		slog.Info("no work done", "replayLoop", d.replayLoop)
+		return nil
+	} else {
+		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
+		<-time.After(d.params.StabilizeInterval)
 	}
-	<-time.After(d.params.StabilizeInterval)
 	err = d.appendScenario(ctx, replayTime, clusterSnapshot)
 	if err != nil {
 		return err
@@ -633,6 +636,7 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 }
 
 func (d *defaultReplayer) Close() error {
+	// TODO: clean up cluster can be done here.
 	return d.dataAccess.Close()
 }
 
@@ -642,6 +646,7 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(startTime time.Time) (cs gs
 	if err != nil {
 		return
 	}
+
 	mcds, err := d.dataAccess.LoadMachineDeploymentInfosBefore(startTime)
 	if err != nil {
 		return
@@ -650,12 +655,15 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(startTime time.Time) (cs gs
 	if err != nil {
 		return
 	}
+	cs.WorkerPools = workerPools
+
 	var autoscalerConfig gst.AutoScalerConfig
 	autoscalerConfig.NodeTemplates, err = GetNodeTemplates(mccs, mcds)
 	if err != nil {
 		return
 	}
 	cs.PriorityClasses, err = d.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(startTime)
+
 	if err != nil {
 		return
 	}
@@ -671,6 +679,8 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(startTime time.Time) (cs gs
 	cs.AutoscalerConfig.InitNodes = d.initNodes
 	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Pods, err = d.dataAccess.GetLatestPodInfosBeforeSnapshotTime(startTime)
+	apputil.SortPodsForReadability(cs.Pods)
+
 	if err != nil {
 		return
 	}
@@ -720,16 +730,14 @@ func (d *defaultReplayer) appendScenario(ctx context.Context, replayTime time.Ti
 		scaledUpNodes = append(scaledUpNodes, gsh.NodeInfoFromNode(&node, 0))
 	}
 	if len(scaledUpNodes) == 0 {
-		slog.Warn("no scaled up nodes present, so skipping this scenario", "replayTime", replayTime)
+		slog.Warn("no scale-up in this replay interval, so skipping this scenario", "replayTime", replayTime)
 		return nil
 	}
 	var s gsh.Scenario
-	s.UnscheduledPods = clusterSnapshot.GetPodsWithScheduleStatus(gst.PodUnscheduled)
-	s.NominatedPods = clusterSnapshot.GetPodsWithScheduleStatus(gst.PodScheduleNominated)
-	s.ScheduledPods = clusterSnapshot.GetPodsWithScheduleStatus(gst.PodScheduleCommited)
-	s.ExistingNodes = clusterSnapshot.Nodes
-	s.ScaledUpNodes = scaledUpNodes
-	s.ScaledUpNodeGroups = make(map[string]int)
+	s.BeginTime = replayTime.UTC()
+	s.ClusterSnapshot = clusterSnapshot
+	s.ScalingResult.ScaledUpNodes = scaledUpNodes
+	s.ScalingResult.ScaledUpNodeGroups = make(map[string]int)
 	poolZoneMap := getNodeGroupsByPoolZone(clusterSnapshot.AutoscalerConfig.NodeGroups)
 	for _, node := range scaledUpNodes {
 		poolZone := gsh.PoolZone{
@@ -740,23 +748,31 @@ func (d *defaultReplayer) appendScenario(ctx context.Context, replayTime time.Ti
 		if !ok {
 			return fmt.Errorf("cannot find associated PoolZone %q for node %q", poolZone, node.Name)
 		}
-		s.ScaledUpNodeGroups[ng.Name]++
+		s.ScalingResult.ScaledUpNodeGroups[ng.Name]++
 	}
 	pods, err := d.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	for _, pod := range pods.Items {
 		podInfo := recorder.PodInfoFromPod(&pod)
 		if podInfo.PodScheduleStatus == gst.PodUnscheduled || podInfo.PodScheduleStatus == gst.PodSchedulePending {
-			s.PendingUnscheduledPods = append(s.PendingUnscheduledPods, podInfo)
+			s.ScalingResult.PendingUnscheduledPods = append(s.ScalingResult.PendingUnscheduledPods, podInfo)
 		}
 	}
+	var prevScenario *gsh.Scenario
 	if d.report == nil {
 		d.report = &gsh.ReplayReport{
 			StartTime: replayTime,
 			Scenarios: make([]gsh.Scenario, 0),
 		}
+	} else {
+		prevScenario = &d.report.Scenarios[len(d.report.Scenarios)-1]
+	}
+	if prevScenario != nil && prevScenario.ClusterSnapshot.HasSameUnscheduledPods(s.ClusterSnapshot) {
+		//TODO: make this more accurate.
+		slog.Info("skipping scenario as ClusterSnapshot UnscheduledPods are same")
+		return nil
 	}
 	d.report.Scenarios = append(d.report.Scenarios, s)
-	slog.Info("created scenario for", "replayTime", replayTime, "scaledupNodeGroups", s.ScaledUpNodeGroups)
+	slog.Info("created scenario for", "replayTime", replayTime, "scaledUpNodeGroups", s.ScalingResult.ScaledUpNodeGroups)
 	bytes, err := json.Marshal(d.report)
 	if err != nil {
 		return fmt.Errorf("cannot marshal the scenario report: %w", err)
@@ -834,13 +850,3 @@ func GetNodeGroups(mcds []gst.MachineDeploymentInfo, workerPools []gst.WorkerPoo
 	}
 	return
 }
-
-//func (d *defaultReplayer) GetInitialClusterSnapshot() (gsh.ClusterSnapshot, error) {
-//	startTime, err := d.dataAccess.GetInitialRecorderStartTime()
-//	if err != nil {
-//		return gsh.ClusterSnapshot{}, err
-//	}
-//	startTime = startTime.Add(1 * time.Minute)
-//
-//	return d.GetRecordedClusterSnapshot(startTime)
-//}
