@@ -36,6 +36,7 @@ type ReplayerParams struct {
 	StabilizeInterval            time.Duration
 	ReplayInterval               time.Duration
 	TotalReplayTime              time.Duration
+	RecurConfigUpdate            bool
 }
 
 type ClusterSnapshot struct {

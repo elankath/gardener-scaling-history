@@ -561,7 +561,7 @@ func (d *defaultReplayer) doReplay(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
+	if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash && d.params.RecurConfigUpdate {
 		slog.Info("wrote autoscaler config", "prevHash", d.lastClusterSnapshot.AutoscalerConfig.Hash, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
 		err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
 		if err != nil {
@@ -620,6 +620,16 @@ func deletePodsNotBelongingTo(ctx context.Context, clientSet *kubernetes.Clients
 }
 
 func (d *defaultReplayer) Replay(ctx context.Context) error {
+	replayTime, err := d.getReplayTime()
+	if err != nil {
+		return err
+	}
+	slog.Info("getting cluster snapshot at time", "replayLoop", d.replayLoop, "snapshotTime", replayTime)
+	clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayTime)
+	err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+	if err != nil {
+		return err
+	}
 	for {
 		select {
 		case <-ctx.Done():
