@@ -877,89 +877,143 @@ func (r *defaultRecorder) onDeleteMCC(obj interface{}) {
 	}
 }
 
-func getCACommand(deployment *unstructured.Unstructured) ([]string, error) {
-	parentMap := deployment.UnstructuredContent()
-	specMap, err := GetInnerMap(parentMap, "spec", "template", "spec")
-	if err != nil {
-		return []string{}, err
-	}
-	caContainer := (specMap["containers"].([]interface{})[0]).(map[string]interface{})
-	return lo.Map(caContainer["command"].([]interface{}), func(item interface{}, _ int) string {
-		return item.(string)
-	}), nil
-}
+//func getCACommand(deployment *unstructured.Unstructured) ([]string, error) {
+//	parentMap := deployment.UnstructuredContent()
+//	specMap, err := GetInnerMap(parentMap, "spec", "template", "spec")
+//	if err != nil {
+//		return []string{}, err
+//	}
+//	caContainer := (specMap["containers"].([]interface{})[0]).(map[string]interface{})
+//	return lo.Map(caContainer["command"].([]interface{}), func(item interface{}, _ int) string {
+//		return item.(string)
+//	}), nil
+//}
 
-func processCACommand(caCommand []string) (result map[string]string) {
-	//TODO get the priority expander for CA and record the priorities
-	result = make(map[string]string)
-	for _, command := range caCommand {
-		command = strings.TrimPrefix(command, "--")
-		commandParts := strings.Split(command, "=")
-		if len(commandParts) < 2 {
+//func processCACommand(caCommand []string) (result map[string]string) {
+//	//TODO get the priority expander for CA and record the priorities
+//	result = make(map[string]string)
+//	for _, command := range caCommand {
+//		command = strings.TrimPrefix(command, "--")
+//		commandParts := strings.Split(command, "=")
+//		if len(commandParts) < 2 {
+//			continue
+//		}
+//		key := commandParts[0]
+//		value := commandParts[1]
+//		if caOptions.Has(key) {
+//			result[key] = value
+//		}
+//	}
+//	return
+//}
+
+//func parseCACommand(caCommand map[string]string) (caSettings gsc.CASettingsInfo, err error) {
+//
+//	caSettings.Expander = caCommand["expander"]
+//	caSettings.MaxNodeProvisionTime, err = time.ParseDuration(caCommand["max-node-provision-time"])
+//	if err != nil {
+//		err = fmt.Errorf("cannot parse max-node-provision-time  to duration: %w", err)
+//		return
+//	}
+//	caSettings.ScanInterval, err = time.ParseDuration(caCommand["scan-interval"])
+//	if err != nil {
+//		err = fmt.Errorf("cannot parse scan-interval  to duration: %w", err)
+//		return
+//	}
+//	caSettings.MaxGracefulTerminationSeconds, err = strconv.Atoi(caCommand["max-graceful-termination-sec"])
+//	if err != nil {
+//		err = fmt.Errorf("cannot parse max-graceful-termination-sec  to int: %w", err)
+//		return
+//	}
+//	caSettings.NewPodScaleUpDelay, err = time.ParseDuration(caCommand["new-pod-scale-up-delay"])
+//	if err != nil {
+//		err = fmt.Errorf("cannot parse new-pod-scale-up-delay to duration: %w", err)
+//		return
+//	}
+//	caSettings.MaxEmptyBulkDelete, err = strconv.Atoi(caCommand["max-empty-bulk-delete"])
+//	if err != nil {
+//		err = fmt.Errorf("cannot parse max-empty-bulk-delete to int: %w", err)
+//		return
+//	}
+//	caSettings.IgnoreDaemonSetUtilization, err = strconv.ParseBool(caCommand["ignore-daemonsets-utilization"])
+//	if err != nil {
+//		err = fmt.Errorf("cannot parse ignore-daemonsets-utilization  to bool: %w", err)
+//		return
+//	}
+//	caSettings.MaxNodesTotal, err = strconv.Atoi(caCommand["max-nodes-total"])
+//	if err != nil {
+//		err = fmt.Errorf("cannot convert maxNodesTotal string to int: %w", err)
+//		return
+//	}
+//	return
+//}
+
+func parseCASettingsInfo(caDeploymentData map[string]any) (caSettings gsc.CASettingsInfo, err error) {
+	caSettings.NodeGroupsMinMax = make(map[string]gsc.MinMax)
+	containersVal, err := gsc.GetInnerMapValue(caDeploymentData, "spec", "template", "spec", "containers")
+	if err != nil {
+		return
+	}
+	containers := containersVal.([]any)
+	if len(containers) == 0 {
+		err = fmt.Errorf("len of containers is zero, no CA container found")
+		return
+	}
+	caContainer := containers[0].(map[string]any)
+	caCommands := caContainer["command"].([]any)
+	for _, commandVal := range caCommands {
+		command := commandVal.(string)
+		vals := strings.Split(command, "=")
+		if len(vals) <= 1 {
 			continue
 		}
-		key := commandParts[0]
-		value := commandParts[1]
-		if caOptions.Has(key) {
-			result[key] = value
+		key := vals[0]
+		val := vals[1]
+		switch key {
+		case "--max-graceful-termination-sec":
+			caSettings.MaxGracefulTerminationSeconds, err = strconv.Atoi(val)
+		case "--max-node-provision-time":
+			caSettings.MaxNodeProvisionTime, err = time.ParseDuration(val)
+		case "--scan-interval":
+			if val == "10s" {
+				caSettings.ScanInterval = 10 * time.Second // because otherwise some oauth2.defaultExpiryDelta constant is taken
+			} else {
+				caSettings.ScanInterval, err = time.ParseDuration(val)
+			}
+		case "--max-empty-bulk-delete":
+			caSettings.MaxEmptyBulkDelete, err = strconv.Atoi(val)
+		case "--new-pod-scale-up-delay":
+			caSettings.NewPodScaleUpDelay, err = time.ParseDuration(val)
+		case "--ignore-daemonsets-utilization":
+			caSettings.IgnoreDaemonSetUtilization, err = strconv.ParseBool(val)
+		case "--max-nodes-total":
+			caSettings.MaxNodesTotal, err = strconv.Atoi(val)
+		case "--nodes":
+			var ngMinMax gsc.MinMax
+			ngVals := strings.Split(val, ":")
+			ngMinMax.Min, err = strconv.Atoi(ngVals[0])
+			ngMinMax.Max, err = strconv.Atoi(ngVals[1])
+			caSettings.NodeGroupsMinMax[ngVals[2]] = ngMinMax
+		}
+		if err != nil {
+			return
 		}
 	}
 	return
 }
 
-func parseCACommand(caCommand map[string]string) (caSettings gsc.CASettingsInfo, err error) {
-
-	caSettings.Expander = caCommand["expander"]
-	caSettings.MaxNodeProvisionTime, err = time.ParseDuration(caCommand["max-node-provision-time"])
-	if err != nil {
-		err = fmt.Errorf("cannot parse max-node-provision-time  to duration: %w", err)
-		return
-	}
-	caSettings.ScanInterval, err = time.ParseDuration(caCommand["scan-interval"])
-	if err != nil {
-		err = fmt.Errorf("cannot parse scan-interval  to duration: %w", err)
-		return
-	}
-	caSettings.MaxGracefulTerminationSeconds, err = strconv.Atoi(caCommand["max-graceful-termination-sec"])
-	if err != nil {
-		err = fmt.Errorf("cannot parse max-graceful-termination-sec  to int: %w", err)
-		return
-	}
-	caSettings.NewPodScaleUpDelay, err = time.ParseDuration(caCommand["new-pod-scale-up-delay"])
-	if err != nil {
-		err = fmt.Errorf("cannot parse new-pod-scale-up-delay to duration: %w", err)
-		return
-	}
-	caSettings.MaxEmptyBulkDelete, err = strconv.Atoi(caCommand["max-empty-bulk-delete"])
-	if err != nil {
-		err = fmt.Errorf("cannot parse max-empty-bulk-delete to int: %w", err)
-		return
-	}
-	caSettings.IgnoreDaemonSetUtilization, err = strconv.ParseBool(caCommand["ignore-daemonsets-utilization"])
-	if err != nil {
-		err = fmt.Errorf("cannot parse ignore-daemonsets-utilization  to bool: %w", err)
-		return
-	}
-	caSettings.MaxNodesTotal, err = strconv.Atoi(caCommand["max-nodes-total"])
-	if err != nil {
-		err = fmt.Errorf("cannot convert maxNodesTotal string to int: %w", err)
-		return
-	}
-	return
-}
 func (r *defaultRecorder) onAddDeployment(obj interface{}) {
-	deployment := obj.(*unstructured.Unstructured)
+	if obj == nil {
+		return
+	}
+	deployment, ok := obj.(*unstructured.Unstructured)
+	if !ok {
+		return
+	}
 	if deployment.GetName() != "cluster-autoscaler" {
 		return
 	}
-	caCommands, err := getCACommand(deployment)
-	if err != nil {
-		slog.Error("cannot get the CA command from deployment", "error", err)
-		return
-	}
-	processedCACommand := processCACommand(caCommands)
-
-	caSettings, err := parseCACommand(processedCACommand)
+	caSettings, err := parseCASettingsInfo(deployment.UnstructuredContent())
 	if err != nil {
 		slog.Error("cannot parse the ca command from deployment", "error", err)
 		return

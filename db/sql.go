@@ -248,6 +248,7 @@ const CreateCASettingsInfoTable = `CREATE TABLE IF NOT EXISTS ca_settings_info(
     MaxEmptyBulkDelete            INT,
     IgnoreDaemonSetUtilization    BOOLEAN,
     MaxNodesTotal                 INT,
+	NodeGroupsMinMax TEXT,
 	Priorities TEXT,
 	Hash TEXT)`
 
@@ -265,9 +266,10 @@ const InsertCASettingsInfo = `INSERT INTO ca_settings_info (
     MaxEmptyBulkDelete, 
     IgnoreDaemonSetUtilization,
     MaxNodesTotal,
+    NodeGroupsMinMax,
 	Priorities,
     Hash
-) VALUES (? ,? , ? ,?, ?, ?, ? , ? , ? , ? , ?)`
+) VALUES (? ,? , ? ,?, ?, ?, ? , ? , ? , ? , ?, ?)`
 
 const SelectLatestCASettingsBefore = `SELECT * from ca_settings_info WHERE SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC LIMIT 1`
 const SelectLatestNodesBeforeAndNotDeleted = `SELECT * from (select * from node_info where node_info.CreationTimestamp <= ? and node_info.DeletionTimestamp = 0 order by RowID DESC) GROUP by Name`

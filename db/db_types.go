@@ -347,6 +347,8 @@ type caSettingsRow struct {
 	MaxEmptyBulkDelete            int   `db:"MaxEmptyBulkDelete"`
 	IgnoreDaemonSetUtilization    bool  `db:"IgnoreDaemonSetUtilization"`
 	MaxNodesTotal                 int   `db:"MaxNodesTotal"`
+	// NodeGroupsMinMax is the json of CASettingsInfo.NodeGroupsMinMax map
+	NodeGroupsMinMax string `db:"NodeGroupsMinMax"`
 	// Priorities is the value of the `priorities` key in the `cluster-autoscaler-priority-expander` config map.
 	// See https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/expander/priority/readme.md#configuration
 	Priorities string
@@ -357,10 +359,13 @@ func timeFromMillis(timestamp int64) time.Time {
 	return time.UnixMilli(timestamp).UTC()
 }
 func (r caSettingsRow) AsInfo() (caSettingsInfo gsc.CASettingsInfo, err error) {
+	minMaxMap, err := minMaxMapFromText(r.NodeGroupsMinMax)
+	if err != nil {
+		return
+	}
 	caSettingsInfo = gsc.CASettingsInfo{
 		SnapshotTimestamp:             timeFromMillis(r.SnapshotTimestamp),
 		Expander:                      r.Expander,
-		NodeGroupsMinMax:              nil,
 		MaxNodeProvisionTime:          time.Duration(r.MaxNodeProvisionTime),
 		ScanInterval:                  time.Duration(r.ScanInterval),
 		MaxGracefulTerminationSeconds: r.MaxGracefulTerminationSeconds,
@@ -368,6 +373,7 @@ func (r caSettingsRow) AsInfo() (caSettingsInfo gsc.CASettingsInfo, err error) {
 		MaxEmptyBulkDelete:            r.MaxEmptyBulkDelete,
 		IgnoreDaemonSetUtilization:    r.IgnoreDaemonSetUtilization,
 		MaxNodesTotal:                 r.MaxNodesTotal,
+		NodeGroupsMinMax:              minMaxMap,
 		Priorities:                    r.Priorities,
 		Hash:                          r.Hash,
 	}

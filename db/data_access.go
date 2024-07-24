@@ -56,7 +56,7 @@ type DataAccess struct {
 	selectNodeInfosBefore                                *sql.Stmt
 	selectNodeCountWithNameAndHash                       *sql.Stmt
 	selectLatestCASettingsInfo                           *sql.Stmt
-	insertCADeployment                                   *sql.Stmt
+	insertCASettingsInfo                                 *sql.Stmt
 	selectCADeploymentByHash                             *sql.Stmt
 	selectLatestNodesBeforeAndNotDeleted                 *sql.Stmt
 	selectLatestCASettingsInfoBefore                     *sql.Stmt
@@ -287,9 +287,9 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare selectLatestCASettingsInfoBefore")
 	}
 
-	d.insertCADeployment, err = db.Prepare(InsertCASettingsInfo)
+	d.insertCASettingsInfo, err = db.Prepare(InsertCASettingsInfo)
 	if err != nil {
-		return fmt.Errorf("cannot prepare insertCADeployment statement")
+		return fmt.Errorf("cannot prepare insertCASettingsInfo statement")
 	}
 
 	d.selectLatestNodesBeforeAndNotDeleted, err = db.Prepare(SelectLatestNodesBeforeAndNotDeleted)
@@ -864,7 +864,11 @@ func (d *DataAccess) LoadNodeInfosBefore(snapshotTimestamp time.Time) ([]gsc.Nod
 }
 
 func (d *DataAccess) StoreCASettingsInfo(caSettings gsc.CASettingsInfo) (int64, error) {
-	result, err := d.insertCADeployment.Exec(
+	minMaxMapText, err := minMaxMapToText(caSettings.NodeGroupsMinMax)
+	if err != nil {
+		return -1, fmt.Errorf("cannot create row for CASettings: %w", err)
+	}
+	result, err := d.insertCASettingsInfo.Exec(
 		caSettings.SnapshotTimestamp.UTC().UnixMilli(),
 		caSettings.Expander,
 		caSettings.MaxNodeProvisionTime.Milliseconds(),
@@ -874,6 +878,7 @@ func (d *DataAccess) StoreCASettingsInfo(caSettings gsc.CASettingsInfo) (int64, 
 		caSettings.MaxEmptyBulkDelete,
 		caSettings.IgnoreDaemonSetUtilization,
 		caSettings.MaxNodesTotal,
+		minMaxMapText,
 		caSettings.Priorities,
 		caSettings.Hash)
 	if err != nil {
@@ -957,6 +962,32 @@ func taintsToText(taints []corev1.Taint) (textVal string, err error) {
 	bytes, err := json.Marshal(taints)
 	if err != nil {
 		err = fmt.Errorf("cannot serialize taints %q due to: %w", taints, err)
+	} else {
+		textVal = string(bytes)
+	}
+	return
+}
+
+func minMaxMapFromText(textValue string) (minMaxMap map[string]gsc.MinMax, err error) {
+	if strings.TrimSpace(textValue) == "" {
+		err = fmt.Errorf("loaded NodeGroupsMinMax is empty")
+		return
+	}
+	err = json.Unmarshal([]byte(textValue), &minMaxMap)
+	if err != nil {
+		err = fmt.Errorf("cannot de-serialize MinMaxMap %q due to: %w", textValue, err)
+	}
+	return
+}
+
+func minMaxMapToText(minMaxMap map[string]gsc.MinMax) (textVal string, err error) {
+	if len(minMaxMap) == 0 {
+		err = fmt.Errorf("minMaxMap is empty which is an invalid state")
+		return
+	}
+	bytes, err := json.Marshal(minMaxMap)
+	if err != nil {
+		err = fmt.Errorf("cannot serialize minMaxMap %q due to: %w", minMaxMap, err)
 	} else {
 		textVal = string(bytes)
 	}

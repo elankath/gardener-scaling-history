@@ -66,7 +66,7 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 	}, nil
 }
 
-func WriteAutoScalerConfig(autoscalerConfig gsc.AutoscalerConfig, path string) error {
+func WriteAutoscalerConfig(autoscalerConfig gsc.AutoscalerConfig, path string) error {
 	bytes, err := json.Marshal(autoscalerConfig)
 	if err != nil {
 		return err
@@ -146,6 +146,11 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 		return err
 	}
 
+	//caSettings, err := d.dataAccess.LoadCASettingsBefore(time.Now().UTC())
+	//if err != nil {
+	//	return err
+	//}
+	//slog.Info("loaded casettings", "caSettings", caSettings)
 	d.scaleUpEvents, err = d.dataAccess.LoadTriggeredScaleUpEvents()
 	if err != nil {
 		return err
@@ -192,43 +197,6 @@ func GetPodsByUID(pods []gsc.PodInfo) (podsMap map[string]gsc.PodInfo) {
 	})
 }
 
-func computeWork(currentClusterSnapshot gsc.ClusterSnapshot) (dW deltaWork) {
-	//lastPods := lastClusterSnapshot.Pods
-	//currentPods := currentClusterSnapshot.Pods
-	//
-	//lastUIDs := lastClusterSnapshot.GetPodUIDs()
-	//currUIDs := currentClusterSnapshot.GetPodUIDs()
-	//
-	//podsToDeleteUIDs := lastUIDs.Difference(currUIDs)
-	//podsToDeployUIDs := currUIDs.Difference(lastUIDs)
-	//
-	//dW.podsToDelete = lo.Filter(lastPods, func(item gsc.PodInfo, index int) bool {
-	//	return podsToDeleteUIDs.Has(item.UID)
-	//})
-	//
-	//dW.podsToDeploy = lo.Filter(currentPods, func(item gsc.PodInfo, index int) bool {
-	//	return podsToDeployUIDs.Has(item.UID)
-	//})
-	//
-	//lastPCs := lastClusterSnapshot.PriorityClasses
-	//lastPCUIDs := lastClusterSnapshot.GetPriorityClassUIDs()
-	//currPCs := currentClusterSnapshot.PriorityClasses
-	//currPCUIDs := currentClusterSnapshot.GetPriorityClassUIDs()
-	//
-	//pcsToDeleteUIDs := lastPCUIDs.Difference(currPCUIDs)
-	//pcsToDeployUIDs := currPCUIDs.Difference(lastPCUIDs)
-	//
-	//dW.pcsToDelete = lo.Filter(lastPCs, func(item gsc.PriorityClassInfo, index int) bool {
-	//	return pcsToDeleteUIDs.Has(string(item.UID))
-	//})
-	//
-	//dW.pcsToDeploy = lo.Filter(currPCs, func(item gsc.PriorityClassInfo, index int) bool {
-	//	return pcsToDeployUIDs.Has(string(item.UID))
-	//})
-
-	return
-}
-
 func getCorePodFromPodInfo(podInfo gsc.PodInfo) corev1.Pod {
 	pod := corev1.Pod{
 		TypeMeta: metav1.TypeMeta{
@@ -243,7 +211,7 @@ func getCorePodFromPodInfo(podInfo gsc.PodInfo) corev1.Pod {
 		},
 		Spec: podInfo.Spec,
 	}
-	//pod.Spec.NodeName = ""
+	pod.Spec.NodeName = podInfo.NodeName
 	pod.Status.NominatedNodeName = podInfo.NominatedNodeName
 	return pod
 }
@@ -284,7 +252,7 @@ func deleteNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss 
 	return nil
 }
 
-func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
+func (d *defaultReplayer) applyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
 
 	virtualPCs, err := d.clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -357,6 +325,9 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsc.Clu
 		deployCount++
 		slog.Info("deploying pod", "deployCount", deployCount, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
 		_, err = d.clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
+		if podInfo.NodeName != "" {
+
+		}
 		if err != nil {
 			err = fmt.Errorf("cannot create the pod  %s: %w", pod.Name, err)
 			return
@@ -528,7 +499,7 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, snap
 func (d *defaultReplayer) doReplay(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) error {
 	if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
 		slog.Info("wrote autoscaler config", "replayLoop", d.replayLoop, "prevHash", d.lastClusterSnapshot.AutoscalerConfig.Hash, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
-		err := WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+		err := WriteAutoscalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
 		if err != nil {
 			return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
 		}
@@ -547,7 +518,7 @@ func (d *defaultReplayer) doReplay(ctx context.Context, clusterSnapshot gsc.Clus
 	if err != nil {
 		return err
 	}
-	workDone, err := d.applyWork(ctx, clusterSnapshot)
+	workDone, err := d.applyDeltaWork(ctx, clusterSnapshot)
 	if err != nil {
 		return err
 	}
