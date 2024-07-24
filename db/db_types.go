@@ -2,8 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"github.com/elankath/gardener-scaling-common"
 	"github.com/elankath/gardener-scaling-history"
-	"github.com/elankath/gardener-scaling-types"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,7 +41,7 @@ type workerPoolRow struct {
 	Hash              string
 }
 
-func (r workerPoolRow) AsInfo() (mcdInfo gst.WorkerPoolInfo, err error) {
+func (r workerPoolRow) AsInfo() (mcdInfo gsc.WorkerPoolInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
@@ -50,8 +50,8 @@ func (r workerPoolRow) AsInfo() (mcdInfo gst.WorkerPoolInfo, err error) {
 	if strings.TrimSpace(r.Zones) != "" {
 		zones = strings.Split(r.Zones, " ")
 	}
-	mcdInfo = gst.WorkerPoolInfo{
-		SnapshotMeta: gst.SnapshotMeta{
+	mcdInfo = gsc.WorkerPoolInfo{
+		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -89,7 +89,7 @@ type mcdRow struct {
 	Hash              string
 }
 
-func (r mcdRow) AsInfo() (mcdInfo gst.MachineDeploymentInfo, err error) {
+func (r mcdRow) AsInfo() (mcdInfo gsc.MachineDeploymentInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
@@ -102,8 +102,8 @@ func (r mcdRow) AsInfo() (mcdInfo gst.MachineDeploymentInfo, err error) {
 	if err != nil {
 		return
 	}
-	mcdInfo = gst.MachineDeploymentInfo{
-		SnapshotMeta: gst.SnapshotMeta{
+	mcdInfo = gsc.MachineDeploymentInfo{
+		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -154,7 +154,7 @@ func (r mccRow) AsInfo() (mccInfo gsh.MachineClassInfo, err error) {
 		return
 	}
 	mccInfo = gsh.MachineClassInfo{
-		SnapshotMeta: gst.SnapshotMeta{
+		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -189,7 +189,7 @@ type nodeRow struct {
 	Hash               string
 }
 
-func (r nodeRow) AsInfo() (nodeInfo gst.NodeInfo, err error) {
+func (r nodeRow) AsInfo() (nodeInfo gsc.NodeInfo, err error) {
 	labels, err := labelsFromText(r.Labels)
 	if err != nil {
 		return
@@ -210,8 +210,8 @@ func (r nodeRow) AsInfo() (nodeInfo gst.NodeInfo, err error) {
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
 	}
-	nodeInfo = gst.NodeInfo{
-		SnapshotMeta: gst.SnapshotMeta{
+	nodeInfo = gsc.NodeInfo{
+		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -247,7 +247,7 @@ type podRow struct {
 	Hash              string
 }
 
-func (r podRow) AsInfo() (podInfo gst.PodInfo, err error) {
+func (r podRow) AsInfo() (podInfo gsc.PodInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
@@ -264,8 +264,8 @@ func (r podRow) AsInfo() (podInfo gst.PodInfo, err error) {
 	if err != nil {
 		return
 	}
-	podInfo = gst.PodInfo{
-		SnapshotMeta: gst.SnapshotMeta{
+	podInfo = gsc.PodInfo{
+		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
 			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
@@ -278,7 +278,7 @@ func (r podRow) AsInfo() (podInfo gst.PodInfo, err error) {
 		Labels:            labels,
 		Requests:          requests,
 		Spec:              spec,
-		PodScheduleStatus: gst.PodScheduleStatus(r.ScheduleStatus),
+		PodScheduleStatus: gsc.PodScheduleStatus(r.ScheduleStatus),
 		DeletionTimestamp: delTimeStamp,
 		Hash:              r.Hash,
 	}
@@ -300,7 +300,7 @@ type priorityClassRow struct {
 	Hash              string
 }
 
-func (r priorityClassRow) AsInfo() (info gst.PriorityClassInfo, err error) {
+func (r priorityClassRow) AsInfo() (info gsc.PriorityClassInfo, err error) {
 	var delTimeStamp *metav1.Time
 	if r.DeletionTimeStamp.Valid {
 		delTimeStamp = &metav1.Time{Time: time.UnixMilli(r.DeletionTimeStamp.Int64)}
@@ -323,7 +323,7 @@ func (r priorityClassRow) AsInfo() (info gst.PriorityClassInfo, err error) {
 		Description:      r.Description,
 		PreemptionPolicy: &preemptionPolicy,
 	}
-	pcInfo := gst.PriorityClassInfo{
+	pcInfo := gsc.PriorityClassInfo{
 		RowID:             r.RowID,
 		SnapshotTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
 		PriorityClass:     priorityClass,
@@ -356,8 +356,8 @@ type caSettingsRow struct {
 func timeFromMillis(timestamp int64) time.Time {
 	return time.UnixMilli(timestamp).UTC()
 }
-func (r caSettingsRow) AsInfo() (caSettingsInfo gst.CASettingsInfo, err error) {
-	caSettingsInfo = gst.CASettingsInfo{
+func (r caSettingsRow) AsInfo() (caSettingsInfo gsc.CASettingsInfo, err error) {
+	caSettingsInfo = gsc.CASettingsInfo{
 		SnapshotTimestamp:             timeFromMillis(r.SnapshotTimestamp),
 		Expander:                      r.Expander,
 		NodeGroupsMinMax:              nil,

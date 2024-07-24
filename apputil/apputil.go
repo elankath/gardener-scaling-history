@@ -3,7 +3,7 @@ package apputil
 import (
 	"cmp"
 	"context"
-	gst "github.com/elankath/gardener-scaling-types"
+	"github.com/elankath/gardener-scaling-common"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -52,20 +52,21 @@ func DirExists(filepath string) bool {
 }
 
 // SortPodsForReadability sorts the given podInfos so that application unscheduled pods appear first in the slice.
-func SortPodsForReadability(podInfos []gst.PodInfo) {
-	slices.SortFunc(podInfos, func(a, b gst.PodInfo) int {
+func SortPodsForReadability(podInfos []gsc.PodInfo) {
+	slices.SortFunc(podInfos, func(a, b gsc.PodInfo) int {
 		s1 := a.PodScheduleStatus
 		s2 := b.PodScheduleStatus
 		if s1 == s2 {
 			return cmp.Compare(a.Name, b.Name)
 		}
-		if s1 == gst.PodUnscheduled {
+		if s1 == gsc.PodUnscheduled {
 			return -1
 		}
-		if s2 == gst.PodUnscheduled {
+		if s2 == gsc.PodUnscheduled {
 			return 1
 		}
 		return cmp.Compare(s1, s2)
 	})
-
 }
+
+//func ListAllNodes(ctx context.Context, clientSet *kubernetes.Clientset)

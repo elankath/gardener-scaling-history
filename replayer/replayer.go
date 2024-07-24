@@ -3,11 +3,12 @@ package replayer
 import (
 	"context"
 	"fmt"
-	gsh "github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-common"
+	"github.com/elankath/gardener-scaling-common/clientutil"
+	"github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/db"
 	"github.com/elankath/gardener-scaling-history/recorder"
-	gst "github.com/elankath/gardener-scaling-types"
 	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
@@ -37,12 +38,12 @@ type defaultReplayer struct {
 	clientSet           *kubernetes.Clientset
 	params              gsh.ReplayerParams
 	replayLoop          int
-	initNodes           []gst.NodeInfo
 	lastScenarios       []gsh.Scenario
-	lastClusterSnapshot gsh.ClusterSnapshot
-	lastReplayTime      time.Time
+	lastClusterSnapshot gsc.ClusterSnapshot
+	lastReplayMarkTime  time.Time
 	report              *gsh.ReplayReport
 	reportPath          string
+	scaleUpEvents       []gsc.EventInfo
 }
 
 var _ gsh.Replayer = (*defaultReplayer)(nil)
@@ -65,7 +66,7 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 	}, nil
 }
 
-func WriteAutoScalerConfig(autoscalerConfig gst.AutoScalerConfig, path string) error {
+func WriteAutoScalerConfig(autoscalerConfig gsc.AutoscalerConfig, path string) error {
 	bytes, err := json.Marshal(autoscalerConfig)
 	if err != nil {
 		return err
@@ -145,41 +146,23 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 		return err
 	}
 
-	replayTime, err := d.getReplayTime()
+	d.scaleUpEvents, err = d.dataAccess.LoadTriggeredScaleUpEvents()
 	if err != nil {
 		return err
 	}
-
-	d.initNodes, err = d.dataAccess.LoadNodeInfosBefore(replayTime)
-	if err != nil {
-		return fmt.Errorf("cannot get the initial node infos: %w", err)
-	}
-	if len(d.initNodes) == 0 {
-		return fmt.Errorf("no initial nodeinfos available before replay time %q", replayTime)
+	if len(d.scaleUpEvents) == 0 {
+		return fmt.Errorf("no TriggeredScaleUp events found in recorded data")
 	}
 	reportFileName := apputil.FilenameWithoutExtension(d.params.DBPath) + "-report.json"
 	d.reportPath = path.Join(d.params.ReportDir, reportFileName)
-	//clusterSnapshot, err := d.GetInitialClusterSnapshot()
-	//if err != nil {
-	//	return err
-	//}
-	//err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
-	//if err != nil {
-	//	return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
-	//}
-	//d.lastClusterSnapshot = clusterSnapshot
-	//d.lastReplayTime = clusterSnapshot.SnapshotTime
-	//slog.Info("wrote initial autoscaler config, waiting for stabilization", "config", d.params.VirtualAutoScalerConfigPath,
-	//	"stabilizeInterval", d.params.StabilizeInterval)
-	//<-time.After(d.params.StabilizeInterval)
 	return nil
 }
 
 type deltaWork struct {
-	podsToDeploy []gst.PodInfo
-	podsToDelete []gst.PodInfo
-	pcsToDelete  []gst.PriorityClassInfo
-	pcsToDeploy  []gst.PriorityClassInfo
+	podsToDeploy []gsc.PodInfo
+	podsToDelete []gsc.PodInfo
+	pcsToDelete  []gsc.PriorityClassInfo
+	pcsToDeploy  []gsc.PriorityClassInfo
 }
 
 func (d deltaWork) IsEmpty() bool {
@@ -189,13 +172,13 @@ func (d deltaWork) IsEmpty() bool {
 func (d deltaWork) String() string {
 	var sb strings.Builder
 	sb.WriteString("podsToDelete: (")
-	lo.Reduce(d.podsToDelete, func(agg *strings.Builder, item gst.PodInfo, index int) *strings.Builder {
+	lo.Reduce(d.podsToDelete, func(agg *strings.Builder, item gsc.PodInfo, index int) *strings.Builder {
 		agg.WriteString(item.Name + ",")
 		return agg
 	}, &sb)
 	sb.WriteString(")")
 	sb.WriteString("podsToDeploy: (")
-	lo.Reduce(d.podsToDeploy, func(agg *strings.Builder, item gst.PodInfo, index int) *strings.Builder {
+	lo.Reduce(d.podsToDeploy, func(agg *strings.Builder, item gsc.PodInfo, index int) *strings.Builder {
 		agg.WriteString(item.Name + ",")
 		return agg
 	}, &sb)
@@ -203,13 +186,13 @@ func (d deltaWork) String() string {
 	return sb.String()
 }
 
-func GetPodsByUID(pods []gst.PodInfo) (podsMap map[string]gst.PodInfo) {
-	return lo.KeyBy(pods, func(item gst.PodInfo) string {
+func GetPodsByUID(pods []gsc.PodInfo) (podsMap map[string]gsc.PodInfo) {
+	return lo.KeyBy(pods, func(item gsc.PodInfo) string {
 		return item.UID
 	})
 }
 
-func computeWork(currentClusterSnapshot gsh.ClusterSnapshot) (dW deltaWork) {
+func computeWork(currentClusterSnapshot gsc.ClusterSnapshot) (dW deltaWork) {
 	//lastPods := lastClusterSnapshot.Pods
 	//currentPods := currentClusterSnapshot.Pods
 	//
@@ -219,11 +202,11 @@ func computeWork(currentClusterSnapshot gsh.ClusterSnapshot) (dW deltaWork) {
 	//podsToDeleteUIDs := lastUIDs.Difference(currUIDs)
 	//podsToDeployUIDs := currUIDs.Difference(lastUIDs)
 	//
-	//dW.podsToDelete = lo.Filter(lastPods, func(item gst.PodInfo, index int) bool {
+	//dW.podsToDelete = lo.Filter(lastPods, func(item gsc.PodInfo, index int) bool {
 	//	return podsToDeleteUIDs.Has(item.UID)
 	//})
 	//
-	//dW.podsToDeploy = lo.Filter(currentPods, func(item gst.PodInfo, index int) bool {
+	//dW.podsToDeploy = lo.Filter(currentPods, func(item gsc.PodInfo, index int) bool {
 	//	return podsToDeployUIDs.Has(item.UID)
 	//})
 	//
@@ -235,18 +218,18 @@ func computeWork(currentClusterSnapshot gsh.ClusterSnapshot) (dW deltaWork) {
 	//pcsToDeleteUIDs := lastPCUIDs.Difference(currPCUIDs)
 	//pcsToDeployUIDs := currPCUIDs.Difference(lastPCUIDs)
 	//
-	//dW.pcsToDelete = lo.Filter(lastPCs, func(item gst.PriorityClassInfo, index int) bool {
+	//dW.pcsToDelete = lo.Filter(lastPCs, func(item gsc.PriorityClassInfo, index int) bool {
 	//	return pcsToDeleteUIDs.Has(string(item.UID))
 	//})
 	//
-	//dW.pcsToDeploy = lo.Filter(currPCs, func(item gst.PriorityClassInfo, index int) bool {
+	//dW.pcsToDeploy = lo.Filter(currPCs, func(item gsc.PriorityClassInfo, index int) bool {
 	//	return pcsToDeployUIDs.Has(string(item.UID))
 	//})
 
 	return
 }
 
-func getCorePodFromPodInfo(podInfo gst.PodInfo) corev1.Pod {
+func getCorePodFromPodInfo(podInfo gsc.PodInfo) corev1.Pod {
 	pod := corev1.Pod{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
@@ -301,7 +284,7 @@ func deleteNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss 
 	return nil
 }
 
-func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.ClusterSnapshot) (workDone bool, err error) {
+func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
 
 	virtualPCs, err := d.clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -343,10 +326,10 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.Clu
 		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
 		return
 	}
-	virtualPodsByName := lo.Associate(virtualPodsList.Items, func(item corev1.Pod) (string, gst.PodInfo) {
+	virtualPodsByName := lo.Associate(virtualPodsList.Items, func(item corev1.Pod) (string, gsc.PodInfo) {
 		return item.Name, recorder.PodInfoFromPod(&item)
 	})
-	clusterSnapshotPodsByName := lo.KeyBy(clusterSnapshot.Pods, func(item gst.PodInfo) string {
+	clusterSnapshotPodsByName := lo.KeyBy(clusterSnapshot.Pods, func(item gsc.PodInfo) string {
 		return item.Name
 	})
 	for _, podInfo := range virtualPodsByName {
@@ -383,20 +366,18 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsh.Clu
 	return
 }
 
-func (d *defaultReplayer) getReplayTime() (replayTime time.Time, err error) {
-	if d.lastReplayTime.IsZero() {
-		replayTime, err = d.dataAccess.GetInitialRecorderStartTime()
-		if err != nil {
-			return
-		}
-		replayTime = replayTime.Add(d.params.StabilizeInterval).UTC()
+func (d *defaultReplayer) getNextReplayTime() (replayTime time.Time, err error) {
+	if d.lastReplayMarkTime.IsZero() {
+		//recordStartTime, err := d.dataAccess.GetInitialRecorderStartTime()
+		//if err != nil {
+		//	return
+		//}
+		//recordStartTime = recordStartTime.Add(d.params.StabilizeInterval).UTC()
+		firstScaleUpEventTime := d.scaleUpEvents[0].EventTime
+		replayTime = firstScaleUpEventTime.Add(-d.params.StabilizeInterval).UTC()
 		return
 	}
-	replayTime = d.lastReplayTime.Add(d.params.ReplayInterval).UTC()
-	now := time.Now().UTC()
-	if replayTime.After(now) {
-		replayTime = now
-	}
+	replayTime = d.lastReplayMarkTime.Add(d.params.ReplayInterval).UTC()
 	return
 }
 
@@ -458,7 +439,7 @@ func adjustNode(clientSet *kubernetes.Clientset, nodeName string, nodeStatus cor
 	return nil
 }
 
-func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, nodeInfos []gst.NodeInfo) (clusterNodes []corev1.Node, err error) {
+func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, snapshotNodeInfos []gsc.NodeInfo) (clusterNodes []corev1.Node, err error) {
 	virtualNodeList, err := clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
@@ -467,11 +448,11 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, node
 	virtualNodesMap := lo.KeyBy(virtualNodeList.Items, func(item corev1.Node) string {
 		return item.Name
 	})
-	nodeInfosByName := lo.Associate(nodeInfos, func(item gst.NodeInfo) (string, struct{}) {
+	snapshotNodeInfosByName := lo.Associate(snapshotNodeInfos, func(item gsc.NodeInfo) (string, struct{}) {
 		return item.Name, struct{}{}
 	})
 	for _, vnode := range virtualNodeList.Items {
-		_, ok := nodeInfosByName[vnode.Name]
+		_, ok := snapshotNodeInfosByName[vnode.Name]
 		if ok {
 			continue
 		}
@@ -482,30 +463,29 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, node
 		}
 		delete(virtualNodesMap, vnode.Name)
 	}
-	for _, nodeInfo := range nodeInfos {
-		oldVNode, exists := virtualNodesMap[nodeInfo.Name]
+	for _, snapshotNodeInfo := range snapshotNodeInfos {
+		oldVNode, exists := virtualNodesMap[snapshotNodeInfo.Name]
 		var sameLabels, sameTaints bool
 		if exists {
-			sameLabels = maps.Equal(oldVNode.Labels, nodeInfo.Labels)
-			sameTaints = slices.EqualFunc(oldVNode.Spec.Taints, nodeInfo.Taints, gst.IsEqualTaint)
+			sameLabels = maps.Equal(oldVNode.Labels, snapshotNodeInfo.Labels)
+			sameTaints = slices.EqualFunc(oldVNode.Spec.Taints, snapshotNodeInfo.Taints, gsc.IsEqualTaint)
 		}
 		if exists && sameLabels && sameTaints {
 			continue
 		}
 		node := corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-
-				Name:      nodeInfo.Name,
-				Namespace: nodeInfo.Namespace,
-				Labels:    nodeInfo.Labels,
+				Name:      snapshotNodeInfo.Name,
+				Namespace: snapshotNodeInfo.Namespace,
+				Labels:    snapshotNodeInfo.Labels,
 			},
 			Spec: corev1.NodeSpec{
-				Taints:     nodeInfo.Taints,
-				ProviderID: nodeInfo.ProviderID,
+				Taints:     snapshotNodeInfo.Taints,
+				ProviderID: snapshotNodeInfo.ProviderID,
 			},
 			Status: corev1.NodeStatus{
-				Capacity:    nodeInfo.Capacity,
-				Allocatable: nodeInfo.Allocatable,
+				Capacity:    snapshotNodeInfo.Capacity,
+				Allocatable: snapshotNodeInfo.Allocatable,
 			},
 		}
 		nodeStatus := node.Status
@@ -544,36 +524,29 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, node
 	return
 }
 
-// construct replayer
-// replayer.Init() // initialize k8s client
-// THis mode needs to be configurd with SCE
-// replayer.PlayScenario() - returns error (there are no more scenarios false or error)
-// then recommender does its job and produce a report.
-func (d *defaultReplayer) doReplay(ctx context.Context) error {
-	d.replayLoop++
-	replayTime, err := d.getReplayTime()
+func (d *defaultReplayer) doReplay(ctx context.Context, replayMarkTime time.Time) error {
+	slog.Info("getting cluster snapshot at time", "replayLoop", d.replayLoop, "replayMarkTime", replayMarkTime)
+	clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayMarkTime)
 	if err != nil {
 		return err
 	}
-	defer func() { d.lastReplayTime = replayTime }()
-	slog.Info("getting cluster snapshot at time", "replayLoop", d.replayLoop, "snapshotTime", replayTime)
-	clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayTime)
-	if err != nil {
-		return err
+	if clusterSnapshot.HasSameUnscheduledPods(d.lastClusterSnapshot) {
+		slog.Info("skipping doReplay as ClusterSnapshot UnscheduledPods are same", "replayLoop", d.replayLoop)
+		return nil
 	}
 	if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash && d.params.RecurConfigUpdate {
-		slog.Info("wrote autoscaler config", "prevHash", d.lastClusterSnapshot.AutoscalerConfig.Hash, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
+		slog.Info("wrote autoscaler config", "replayLoop", d.replayLoop, "prevHash", d.lastClusterSnapshot.AutoscalerConfig.Hash, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
 		err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
 		if err != nil {
 			return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
 		}
-		slog.Info("waiting for stabilization", "config", d.params.VirtualAutoScalerConfigPath,
+		slog.Info("waiting for stabilization", "replayLoop", d.replayLoop, "config", d.params.VirtualAutoScalerConfigPath,
 			"stabilizeInterval", d.params.StabilizeInterval)
 		<-time.After(d.params.StabilizeInterval)
 	}
-	virtualNodes, err := synchronizeNodes(ctx, d.clientSet, clusterSnapshot.Nodes)
+	virtualNodes, err := clientutil.ListAllNodes(ctx, d.clientSet)
 	if err != nil {
-		return fmt.Errorf("cannot synchronize the nodes from actual cluster: %w", err)
+		return fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
 	}
 	virtualNodeNames := lo.Map(virtualNodes, func(item corev1.Node, index int) string {
 		return item.Name
@@ -593,7 +566,7 @@ func (d *defaultReplayer) doReplay(ctx context.Context) error {
 		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
 		<-time.After(d.params.StabilizeInterval)
 	}
-	err = d.appendScenario(ctx, replayTime, clusterSnapshot)
+	err = d.appendScenario(ctx, replayMarkTime, clusterSnapshot)
 	if err != nil {
 		return err
 	}
@@ -620,29 +593,28 @@ func deletePodsNotBelongingTo(ctx context.Context, clientSet *kubernetes.Clients
 }
 
 func (d *defaultReplayer) Replay(ctx context.Context) error {
-	replayTime, err := d.getReplayTime()
-	if err != nil {
-		return err
-	}
-	slog.Info("getting cluster snapshot at time", "replayLoop", d.replayLoop, "snapshotTime", replayTime)
-	clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayTime)
-	err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
-	if err != nil {
-		return err
-	}
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Info("context has expired, exiting replayer")
+			slog.Info("context is cancelled/done, exiting re-player")
 			return nil
 		default:
-			err := d.doReplay(ctx)
+			d.replayLoop++
+			replayMarkTime, err := d.getNextReplayTime()
 			if err != nil {
 				return err
 			}
+			if replayMarkTime.After(time.Now()) {
+				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime)
+				return nil
+			}
+			err = d.doReplay(ctx, replayMarkTime)
+			if err != nil {
+				return err
+			}
+			d.lastReplayMarkTime = replayMarkTime
 		}
 	}
-	return nil
 }
 
 func (d *defaultReplayer) Close() error {
@@ -650,29 +622,29 @@ func (d *defaultReplayer) Close() error {
 	return d.dataAccess.Close()
 }
 
-func (d *defaultReplayer) GetRecordedClusterSnapshot(startTime time.Time) (cs gsh.ClusterSnapshot, err error) {
+func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc.ClusterSnapshot, err error) {
 
-	mccs, err := d.dataAccess.LoadMachineClassInfosBefore(startTime)
+	mccs, err := d.dataAccess.LoadMachineClassInfosBefore(markTime)
 	if err != nil {
 		return
 	}
 
-	mcds, err := d.dataAccess.LoadMachineDeploymentInfosBefore(startTime)
+	mcds, err := d.dataAccess.LoadMachineDeploymentInfosBefore(markTime)
 	if err != nil {
 		return
 	}
-	workerPools, err := d.dataAccess.LoadWorkerPoolInfosBefore(startTime)
+	workerPools, err := d.dataAccess.LoadWorkerPoolInfosBefore(markTime)
 	if err != nil {
 		return
 	}
 	cs.WorkerPools = workerPools
 
-	var autoscalerConfig gst.AutoScalerConfig
+	var autoscalerConfig gsc.AutoscalerConfig
 	autoscalerConfig.NodeTemplates, err = GetNodeTemplates(mccs, mcds)
 	if err != nil {
 		return
 	}
-	cs.PriorityClasses, err = d.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(startTime)
+	cs.PriorityClasses, err = d.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(markTime)
 
 	if err != nil {
 		return
@@ -682,24 +654,27 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(startTime time.Time) (cs gs
 		return
 	}
 
-	autoscalerConfig.CASettings, err = d.dataAccess.LoadCASettingsBefore(startTime)
+	cs.Nodes, err = d.dataAccess.LoadNodeInfosBefore(markTime)
+	if err != nil {
+		err = fmt.Errorf("cannot get the node infos before markTime %q: %w", markTime, err)
+		return
+	}
+	if len(cs.Nodes) == 0 {
+		err = fmt.Errorf("no existingNodes available before markTime %q", markTime)
+		return
+	}
+
+	autoscalerConfig.CASettings, err = d.dataAccess.LoadCASettingsBefore(markTime)
 	cs.AutoscalerConfig = autoscalerConfig
-	cs.AutoscalerConfig.Mode = gst.AutoscalerReplayerMode
-	cs.SnapshotTime = startTime
-	cs.AutoscalerConfig.InitNodes = d.initNodes
+	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerMode
+	cs.SnapshotTime = markTime
+	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
 	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
-	cs.Pods, err = d.dataAccess.GetLatestPodInfosBeforeSnapshotTime(startTime)
+	cs.Pods, err = d.dataAccess.GetLatestPodInfosBeforeSnapshotTime(markTime)
 	apputil.SortPodsForReadability(cs.Pods)
-
 	if err != nil {
 		return
 	}
-
-	cs.Nodes, err = d.dataAccess.LoadNodeInfosBefore(startTime)
-	if err != nil {
-		return
-	}
-
 	return
 }
 
@@ -708,8 +683,8 @@ func (d *defaultReplayer) GetParams() gsh.ReplayerParams {
 	panic("implement me")
 }
 
-func getNodeGroupsByPoolZone(nodeGroupsByName map[string]gst.NodeGroupInfo) map[gsh.PoolZone]gst.NodeGroupInfo {
-	poolZoneMap := make(map[gsh.PoolZone]gst.NodeGroupInfo)
+func getNodeGroupsByPoolZone(nodeGroupsByName map[string]gsc.NodeGroupInfo) map[gsh.PoolZone]gsc.NodeGroupInfo {
+	poolZoneMap := make(map[gsh.PoolZone]gsc.NodeGroupInfo)
 	for _, ng := range nodeGroupsByName {
 		poolKey := gsh.PoolZone{
 			PoolName: ng.PoolName,
@@ -720,15 +695,15 @@ func getNodeGroupsByPoolZone(nodeGroupsByName map[string]gst.NodeGroupInfo) map[
 	return poolZoneMap
 }
 
-func (d *defaultReplayer) appendScenario(ctx context.Context, replayTime time.Time, clusterSnapshot gsh.ClusterSnapshot) error {
+func (d *defaultReplayer) appendScenario(ctx context.Context, replayTime time.Time, clusterSnapshot gsc.ClusterSnapshot) error {
 	postVirtualNodesList, err := d.clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
 	}
 
-	var scaledUpNodes []gst.NodeInfo
+	var scaledUpNodes []gsc.NodeInfo
 	postVirtualNodes := postVirtualNodesList.Items
-	preVirtualNodesMap := lo.KeyBy(clusterSnapshot.Nodes, func(item gst.NodeInfo) string {
+	preVirtualNodesMap := lo.KeyBy(clusterSnapshot.Nodes, func(item gsc.NodeInfo) string {
 		return item.Name
 	})
 	for _, node := range postVirtualNodes {
@@ -763,23 +738,15 @@ func (d *defaultReplayer) appendScenario(ctx context.Context, replayTime time.Ti
 	pods, err := d.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	for _, pod := range pods.Items {
 		podInfo := recorder.PodInfoFromPod(&pod)
-		if podInfo.PodScheduleStatus == gst.PodUnscheduled || podInfo.PodScheduleStatus == gst.PodSchedulePending {
+		if podInfo.PodScheduleStatus == gsc.PodUnscheduled || podInfo.PodScheduleStatus == gsc.PodSchedulePending {
 			s.ScalingResult.PendingUnscheduledPods = append(s.ScalingResult.PendingUnscheduledPods, podInfo)
 		}
 	}
-	var prevScenario *gsh.Scenario
 	if d.report == nil {
 		d.report = &gsh.ReplayReport{
 			StartTime: replayTime,
 			Scenarios: make([]gsh.Scenario, 0),
 		}
-	} else {
-		prevScenario = &d.report.Scenarios[len(d.report.Scenarios)-1]
-	}
-	if prevScenario != nil && prevScenario.ClusterSnapshot.HasSameUnscheduledPods(s.ClusterSnapshot) {
-		//TODO: make this more accurate.
-		slog.Info("skipping scenario as ClusterSnapshot UnscheduledPods are same")
-		return nil
 	}
 	d.report.Scenarios = append(d.report.Scenarios, s)
 	slog.Info("created scenario for", "replayTime", replayTime, "scaledUpNodeGroups", s.ScalingResult.ScaledUpNodeGroups)
@@ -803,8 +770,8 @@ func GetNodeGroupNameFromMCCName(namespace, mccName string) string {
 	return fmt.Sprintf("%s.%s", namespace, trimmedName)
 }
 
-func constructNodeTemplateFromMCC(mcc gsh.MachineClassInfo) gst.NodeTemplate {
-	return gst.NodeTemplate{
+func constructNodeTemplateFromMCC(mcc gsh.MachineClassInfo) gsc.NodeTemplate {
+	return gsc.NodeTemplate{
 		Name:         GetNodeGroupNameFromMCCName(mcc.Namespace, mcc.Name),
 		Capacity:     mcc.Capacity,
 		InstanceType: mcc.InstanceType,
@@ -815,8 +782,8 @@ func constructNodeTemplateFromMCC(mcc gsh.MachineClassInfo) gst.NodeTemplate {
 	}
 }
 
-func GetNodeTemplates(mccs []gsh.MachineClassInfo, mcds []gst.MachineDeploymentInfo) (nodeTemplates map[string]gst.NodeTemplate, err error) {
-	nodeTemplates = make(map[string]gst.NodeTemplate)
+func GetNodeTemplates(mccs []gsh.MachineClassInfo, mcds []gsc.MachineDeploymentInfo) (nodeTemplates map[string]gsc.NodeTemplate, err error) {
+	nodeTemplates = make(map[string]gsc.NodeTemplate)
 	for _, mcc := range mccs {
 		nodeTemplate := constructNodeTemplateFromMCC(mcc)
 		nodeTemplates[nodeTemplate.Name] = nodeTemplate
@@ -836,18 +803,18 @@ func GetNodeTemplates(mccs []gsh.MachineClassInfo, mcds []gst.MachineDeploymentI
 	return
 }
 
-func GetNodeGroups(mcds []gst.MachineDeploymentInfo, workerPools []gst.WorkerPoolInfo) (nodeGroups map[string]gst.NodeGroupInfo, err error) {
-	nodeGroups = make(map[string]gst.NodeGroupInfo)
-	workerPoolsByName := lo.KeyBy(workerPools, func(item gst.WorkerPoolInfo) string {
+func GetNodeGroups(mcds []gsc.MachineDeploymentInfo, workerPools []gsc.WorkerPoolInfo) (nodeGroups map[string]gsc.NodeGroupInfo, err error) {
+	nodeGroups = make(map[string]gsc.NodeGroupInfo)
+	workerPoolsByName := lo.KeyBy(workerPools, func(item gsc.WorkerPoolInfo) string {
 		return item.Name
 	})
 	for _, mcd := range mcds {
 		workerPool, ok := workerPoolsByName[mcd.PoolName]
 		if !ok {
-			err = fmt.Errorf("cannot find pool name with name %q: %w", mcd.PoolName, gst.ErrKeyNotFound)
+			err = fmt.Errorf("cannot find pool name with name %q: %w", mcd.PoolName, gsc.ErrKeyNotFound)
 			return
 		}
-		nodeGroup := gst.NodeGroupInfo{
+		nodeGroup := gsc.NodeGroupInfo{
 			Name:       fmt.Sprintf("%s.%s", mcd.Namespace, mcd.Name),
 			PoolName:   mcd.PoolName,
 			Zone:       mcd.Zone,

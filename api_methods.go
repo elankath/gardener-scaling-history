@@ -5,17 +5,15 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"github.com/elankath/gardener-scaling-types"
-	"github.com/samber/lo"
+	"github.com/elankath/gardener-scaling-common"
 	"golang.org/x/exp/maps"
 	"hash"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"slices"
 )
 
-func header(prefix string, meta gst.SnapshotMeta) string {
+func header(prefix string, meta gsc.SnapshotMeta) string {
 	return fmt.Sprintf("%s(RowID=%d, CreationTimestamp=%s, SnapshotTimestamp=%s, Name=%s, Namespace=%s",
 		prefix, meta.RowID, meta.CreationTimestamp, meta.SnapshotTimestamp, meta.Name, meta.Namespace)
 }
@@ -23,7 +21,7 @@ func header(prefix string, meta gst.SnapshotMeta) string {
 func (m MachineClassInfo) String() string {
 	metaStr := header("MachineClass", m.SnapshotMeta)
 	return fmt.Sprintf("%s, InstanceType=%s, PoolName=%s, Region=%s, Zone=%s, Labels=%s, Capacity=%s, Hash=%s)",
-		metaStr, m.InstanceType, m.PoolName, m.Region, m.Zone, m.Labels, gst.ResourcesAsString(m.Capacity), m.Hash)
+		metaStr, m.InstanceType, m.PoolName, m.Region, m.Zone, m.Labels, gsc.ResourcesAsString(m.Capacity), m.Hash)
 }
 func (m MachineClassInfo) GetHash() string {
 	int64buf := make([]byte, 8) // 8 bytes for int64
@@ -44,13 +42,6 @@ func (m MachineClassInfo) GetHash() string {
 	hashResources(hasher, m.Capacity)
 
 	return hex.EncodeToString(hasher.Sum(nil))
-}
-
-func (c ClusterSnapshot) GetPriorityClassUIDs() sets.Set[string] {
-	uids := lo.Map(c.PriorityClasses, func(item gst.PriorityClassInfo, index int) string {
-		return string(item.UID)
-	})
-	return sets.New(uids...)
 }
 
 func (pz PoolZone) String() string {
@@ -342,35 +333,6 @@ func hashResource(hasher hash.Hash, name corev1.ResourceName, quantity resource.
 	hasher.Write([]byte(name))
 	rvBytes, _ := quantity.AsCanonicalBytes(nil)
 	hasher.Write(rvBytes)
-}
-
-func (c ClusterSnapshot) GetPodUIDs() sets.Set[string] {
-	uids := lo.Map(c.Pods, func(item gst.PodInfo, index int) string {
-		return item.UID
-	})
-	return sets.New(uids...)
-}
-
-func (c ClusterSnapshot) GetPodsWithScheduleStatus(status gst.PodScheduleStatus) []gst.PodInfo {
-	return lo.Filter(c.Pods, func(item gst.PodInfo, _ int) bool {
-		return item.PodScheduleStatus == status
-	})
-}
-
-func (c ClusterSnapshot) GetPodNamspaces() sets.Set[string] {
-	namespaces := lo.Map(c.Pods, func(item gst.PodInfo, index int) string {
-		return item.Namespace
-	})
-	return sets.New(namespaces...)
-}
-
-func (c ClusterSnapshot) HasSameUnscheduledPods(other ClusterSnapshot) bool {
-	pods1 := c.GetPodsWithScheduleStatus(gst.PodUnscheduled)
-	pods2 := other.GetPodsWithScheduleStatus(gst.PodUnscheduled)
-	// assumes that pods1 and pods2 are sorted according to same order.
-	return slices.EqualFunc(pods1, pods2, func(p gst.PodInfo, q gst.PodInfo) bool {
-		return p.UID == q.UID
-	})
 }
 
 //}

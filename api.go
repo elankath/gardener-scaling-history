@@ -2,7 +2,7 @@ package gsh
 
 import (
 	"context"
-	"github.com/elankath/gardener-scaling-types"
+	"github.com/elankath/gardener-scaling-common"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	"time"
@@ -17,7 +17,7 @@ type Recorder interface {
 	//	GetRecordedClusterSnapshot(time time.Time) (ClusterSnapshot, error)
 }
 
-//Current ClusterInfo in gst -> ClusterAutoscalerConfig
+//Current ClusterInfo in gsc -> ClusterAutoscalerConfig
 
 type RecorderParams struct {
 	Landscape           string
@@ -39,51 +39,42 @@ type ReplayerParams struct {
 	RecurConfigUpdate            bool
 }
 
-type ClusterSnapshot struct {
-	SnapshotTime     time.Time
-	AutoscalerConfig gst.AutoScalerConfig
-	WorkerPools      []gst.WorkerPoolInfo
-	PriorityClasses  []gst.PriorityClassInfo
-	Pods             []gst.PodInfo
-	Nodes            []gst.NodeInfo
-}
-
 // TODO: OLD type commented, remove me later
 //type Scenario struct {
 //	BeginTime              time.Time
-//	ExistingNodes          []gst.NodeInfo
-//	PriorityClasses        []gst.PriorityClassInfo //TODO populate PC's
-//	UnscheduledPods        []gst.PodInfo
+//	ExistingNodes          []gsc.NodeInfo
+//	PriorityClasses        []gsc.PriorityClassInfo //TODO populate PC's
+//	UnscheduledPods        []gsc.PodInfo
 //	ScaledUpNodeGroups     map[string]int
-//	NominatedPods          []gst.PodInfo
-//	ScheduledPods          []gst.PodInfo //pods mapped to ExistingNodes
-//	ScaledUpNodes          []gst.NodeInfo
-//	PendingUnscheduledPods []gst.PodInfo
-//	WorkerPools            []gst.WorkerPoolInfo //TODO populate worker pools.
+//	NominatedPods          []gsc.PodInfo
+//	ScheduledPods          []gsc.PodInfo //pods mapped to ExistingNodes
+//	ScaledUpNodes          []gsc.NodeInfo
+//	PendingUnscheduledPods []gsc.PodInfo
+//	WorkerPools            []gsc.WorkerPoolInfo //TODO populate worker pools.
 //}
 
 type ScalingResult struct {
 	ScaledUpNodeGroups     map[string]int
-	ScaledUpNodes          []gst.NodeInfo
-	PendingUnscheduledPods []gst.PodInfo
+	ScaledUpNodes          []gsc.NodeInfo
+	PendingUnscheduledPods []gsc.PodInfo
 }
 
 type Scenario struct {
 	BeginTime       time.Time
-	ClusterSnapshot ClusterSnapshot
+	ClusterSnapshot gsc.ClusterSnapshot
 	ScalingResult   ScalingResult
 }
 
 type ReplayReport struct {
 	StartTime time.Time
 	Scenarios []Scenario
-	//	InitialClusterSnapshot gst.
+	//	InitialClusterSnapshot gsc.
 }
 
 type Replayer interface {
 	io.Closer
 	Start(context.Context) error
-	GetRecordedClusterSnapshot(time.Time) (ClusterSnapshot, error)
+	GetRecordedClusterSnapshot(time.Time) (gsc.ClusterSnapshot, error)
 	GetParams() ReplayerParams
 	Replay(context.Context) error
 	//input report - scenario report, output report-
@@ -98,7 +89,7 @@ type Replayer interface {
 }
 
 type MachineClassInfo struct {
-	gst.SnapshotMeta
+	gsc.SnapshotMeta
 
 	// Instance type of the node belonging to nodeGroup
 	InstanceType string

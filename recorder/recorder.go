@@ -5,9 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	gsc "github.com/elankath/gardener-scaling-common"
 	"github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/db"
-	"github.com/elankath/gardener-scaling-types"
 	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
@@ -327,7 +327,7 @@ func (r *defaultRecorder) onUpdateNode(old, new any) {
 	}
 	allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
 	nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, allocatableVolumes)
-	InvokeOrScheduleFunc("onUpdateNode", 10*time.Second, nodeNewInfo, func(_ gst.NodeInfo) error {
+	InvokeOrScheduleFunc("onUpdateNode", 10*time.Second, nodeNewInfo, func(_ gsc.NodeInfo) error {
 		allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
 		if allocatableVolumes == 0 {
 			slog.Warn("Allocatable Volumes key not found. Deferring insert", "node.Name", nodeNewInfo.Name)
@@ -431,7 +431,7 @@ func (r *defaultRecorder) onAddEvent(obj any) {
 		reportingController = event.Source.Component
 	}
 
-	eventInfo := gst.EventInfo{
+	eventInfo := gsc.EventInfo{
 		UID:                     string(event.UID),
 		EventTime:               eventTime,
 		ReportingController:     reportingController,
@@ -467,7 +467,7 @@ func (r *defaultRecorder) getAllWorkerPoolHashes(workerOld *unstructured.Unstruc
 		if err != nil {
 			return nil, fmt.Errorf("cannot parse worker pools for worker %q of generation %d: %w", workerOld.GetName(), workerOld.GetGeneration(), err)
 		}
-		oldPoolInfoHashes = lo.MapValues(oldPoolInfos, func(value gst.WorkerPoolInfo, key string) string {
+		oldPoolInfoHashes = lo.MapValues(oldPoolInfos, func(value gsc.WorkerPoolInfo, key string) string {
 			return value.Hash
 		})
 	}
@@ -510,7 +510,7 @@ func (r *defaultRecorder) processPod(podOld, podNew *corev1.Pod) error {
 		return nil
 	}
 	podInfo := PodInfoFromPod(podNew)
-	if podInfo.PodScheduleStatus == gst.PodSchedulePending {
+	if podInfo.PodScheduleStatus == gsc.PodSchedulePending {
 		slog.Debug("pod is in PodSchedulePending state, skipping persisting it", "pod.UID", podInfo.UID, "pod.Name", podInfo.Name)
 		return nil
 	}
@@ -907,7 +907,7 @@ func processCACommand(caCommand []string) (result map[string]string) {
 	return
 }
 
-func parseCACommand(caCommand map[string]string) (caSettings gst.CASettingsInfo, err error) {
+func parseCACommand(caCommand map[string]string) (caSettings gsc.CASettingsInfo, err error) {
 
 	caSettings.Expander = caCommand["expander"]
 	caSettings.MaxNodeProvisionTime, err = time.ParseDuration(caCommand["max-node-provision-time"])
@@ -1010,7 +1010,7 @@ func (r *defaultRecorder) onAddConfigMap(obj interface{}) {
 		slog.Error("cannot get the priorities from priority-expander config map", "error", err)
 	}
 	fmt.Printf("ConfigMap Priorities : %s\n", priorities)
-	caSettings := gst.CASettingsInfo{
+	caSettings := gsc.CASettingsInfo{
 		Priorities: priorities,
 	}
 	caSettings.Hash = caSettings.GetHash()
@@ -1098,7 +1098,7 @@ func (r *defaultRecorder) onAddControlEvent(obj interface{}) {
 		return
 	}
 	message := parentMap["message"].(string)
-	event := gst.EventInfo{
+	event := gsc.EventInfo{
 		UID:                     string(eventObj.GetUID()),
 		EventTime:               eventTime,
 		ReportingController:     sourceComponent.(string),
@@ -1174,7 +1174,7 @@ func (r *defaultRecorder) onDeleteCSINode(obj any) {
 
 func (r *defaultRecorder) processMCD(mcdOld, mcdNew *unstructured.Unstructured) error {
 	var err error
-	var mcdOldInfo, mcdNewInfo gst.MachineDeploymentInfo
+	var mcdOldInfo, mcdNewInfo gsc.MachineDeploymentInfo
 	var mcdOldHash string
 	var mcdName = mcdNew.GetName()
 	now := time.Now().UTC()
@@ -1245,8 +1245,8 @@ func getLastUpdateTimeForPod(p *corev1.Pod) (lastUpdateTime time.Time) {
 	return
 }
 
-func pcInfoFromPC(p *schedulingv1.PriorityClass) gst.PriorityClassInfo {
-	pc := gst.PriorityClassInfo{
+func pcInfoFromPC(p *schedulingv1.PriorityClass) gsc.PriorityClassInfo {
+	pc := gsc.PriorityClassInfo{
 		SnapshotTimestamp: time.Now().UTC(),
 		PriorityClass:     *p,
 	}
@@ -1254,8 +1254,8 @@ func pcInfoFromPC(p *schedulingv1.PriorityClass) gst.PriorityClassInfo {
 	return pc
 }
 
-func PodInfoFromPod(p *corev1.Pod) gst.PodInfo {
-	var pi gst.PodInfo
+func PodInfoFromPod(p *corev1.Pod) gsc.PodInfo {
+	var pi gsc.PodInfo
 	pi.UID = string(p.UID)
 	pi.Name = p.Name
 	pi.Namespace = p.Namespace
@@ -1263,7 +1263,7 @@ func PodInfoFromPod(p *corev1.Pod) gst.PodInfo {
 	pi.SnapshotTimestamp = getLastUpdateTimeForPod(p)
 	pi.NodeName = p.Spec.NodeName
 	pi.Labels = p.Labels
-	pi.Requests = gst.CumulatePodRequests(p)
+	pi.Requests = gsc.CumulatePodRequests(p)
 	pi.Spec = p.Spec
 	pi.PodScheduleStatus = ComputePodScheduleStatus(p)
 	pi.Hash = pi.GetHash()
@@ -1271,9 +1271,9 @@ func PodInfoFromPod(p *corev1.Pod) gst.PodInfo {
 }
 
 // ComputePodScheduleStatus -1 => NotDetermined, 0 => Scheduled, 1 => Unscheduled
-func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gst.PodScheduleStatus) {
+func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gsc.PodScheduleStatus) {
 
-	scheduleStatus = gst.PodSchedulePending
+	scheduleStatus = gsc.PodSchedulePending
 
 	if len(pod.Status.Conditions) == 0 && pod.Status.Phase == corev1.PodPending {
 		return scheduleStatus
@@ -1282,18 +1282,18 @@ func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gst.PodScheduleSt
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodScheduled && condition.Reason == corev1.PodReasonUnschedulable {
 			//Creation Time does not change for a unschedulable pod with single unschedulable condition.
-			scheduleStatus = gst.PodUnscheduled
+			scheduleStatus = gsc.PodUnscheduled
 			break
 		}
 	}
 
 	if pod.Spec.NodeName != "" {
-		scheduleStatus = gst.PodScheduleCommited
+		scheduleStatus = gsc.PodScheduleCommited
 		return
 	}
 
 	if pod.Status.NominatedNodeName != "" {
-		scheduleStatus = gst.PodScheduleNominated
+		scheduleStatus = gsc.PodScheduleNominated
 		return
 	}
 
@@ -1301,7 +1301,7 @@ func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gst.PodScheduleSt
 		{Group: "apps", Version: "v1", Kind: "DaemonSet"},
 		{Version: "v1", Kind: "Node"},
 	}) {
-		scheduleStatus = gst.PodScheduleCommited
+		scheduleStatus = gsc.PodScheduleCommited
 	}
 
 	return scheduleStatus

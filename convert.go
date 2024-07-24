@@ -2,7 +2,7 @@ package gsh
 
 import (
 	"fmt"
-	gst "github.com/elankath/gardener-scaling-types"
+	"github.com/elankath/gardener-scaling-common"
 	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -15,7 +15,7 @@ import (
 const PoolLabel = "worker.gardener.cloud/pool"
 const PoolLabelAlt = "worker_gardener_cloud_pool"
 
-func MachineDeploymentInfoFromUnstructured(mcd *unstructured.Unstructured, snapshotTime time.Time) (mcdInfo gst.MachineDeploymentInfo, err error) {
+func MachineDeploymentInfoFromUnstructured(mcd *unstructured.Unstructured, snapshotTime time.Time) (mcdInfo gsc.MachineDeploymentInfo, err error) {
 	mcdName := mcd.GetName()
 	replicasPath := []string{"spec", "replicas"}
 	replicasVal, found, err := unstructured.NestedInt64(mcd.UnstructuredContent(), replicasPath...)
@@ -116,8 +116,8 @@ func MachineDeploymentInfoFromUnstructured(mcd *unstructured.Unstructured, snaps
 		}
 	}
 
-	mcdInfo = gst.MachineDeploymentInfo{
-		SnapshotMeta: gst.SnapshotMeta{
+	mcdInfo = gsc.MachineDeploymentInfo{
+		SnapshotMeta: gsc.SnapshotMeta{
 			CreationTimestamp: mcd.GetCreationTimestamp().UTC(),
 			SnapshotTimestamp: snapshotTime,
 			Name:              mcdName,
@@ -195,7 +195,7 @@ func MachineClassInfoFromUnstructured(mcc *unstructured.Unstructured, snapshotTi
 	}
 
 	mccInfo = MachineClassInfo{
-		SnapshotMeta: gst.SnapshotMeta{
+		SnapshotMeta: gsc.SnapshotMeta{
 			CreationTimestamp: mcc.GetCreationTimestamp().UTC(),
 			SnapshotTimestamp: snapshotTime,
 			Name:              mccName,
@@ -226,8 +226,8 @@ func asIntOrString(val any) (target intstr.IntOrString, err error) {
 	return
 }
 
-func NodeInfoFromNode(n *corev1.Node, allocatableVolumes int) gst.NodeInfo {
-	var ni gst.NodeInfo
+func NodeInfoFromNode(n *corev1.Node, allocatableVolumes int) gsc.NodeInfo {
+	var ni gsc.NodeInfo
 	ni.Name = n.Name
 	ni.Namespace = n.Namespace
 	ni.CreationTimestamp = n.CreationTimestamp.UTC()
@@ -283,7 +283,7 @@ func ResourceListFromMap(input map[string]any) (corev1.ResourceList, error) {
 		if err != nil {
 			return nil, fmt.Errorf("error parsing quantity for key %s: %v", key, err)
 		}
-		quantity, err = gst.NormalizeQuantity(quantity)
+		quantity, err = gsc.NormalizeQuantity(quantity)
 		if err != nil {
 			return nil, fmt.Errorf("cannot normalize quantity %q: %w", quantity, err)
 		}
@@ -294,13 +294,13 @@ func ResourceListFromMap(input map[string]any) (corev1.ResourceList, error) {
 	return resourceList, nil
 }
 
-func WorkerPoolInfosFromUnstructured(worker *unstructured.Unstructured) (map[string]gst.WorkerPoolInfo, error) {
+func WorkerPoolInfosFromUnstructured(worker *unstructured.Unstructured) (map[string]gsc.WorkerPoolInfo, error) {
 	specMapObj, found, err := unstructured.NestedMap(worker.UnstructuredContent(), "spec")
 	if err != nil {
 		return nil, fmt.Errorf("error getting the '.spec' map for worker %q: %w", worker.GetName(), err)
 	}
 	if !found {
-		return nil, fmt.Errorf("cannot find '.spec' map in worker %q: %w", worker.GetName(), gst.ErrKeyNotFound)
+		return nil, fmt.Errorf("cannot find '.spec' map in worker %q: %w", worker.GetName(), gsc.ErrKeyNotFound)
 	}
 	poolsList := specMapObj["pools"].([]any)
 
@@ -308,7 +308,7 @@ func WorkerPoolInfosFromUnstructured(worker *unstructured.Unstructured) (map[str
 	if err != nil {
 		return nil, err
 	}
-	var poolInfosByName = make(map[string]gst.WorkerPoolInfo)
+	var poolInfosByName = make(map[string]gsc.WorkerPoolInfo)
 	for _, pool := range poolsList {
 		poolMap := pool.(map[string]any)
 		var zones []string
@@ -326,8 +326,8 @@ func WorkerPoolInfosFromUnstructured(worker *unstructured.Unstructured) (map[str
 			//TODO make better error message
 			return nil, err
 		}
-		wp := gst.WorkerPoolInfo{
-			SnapshotMeta: gst.SnapshotMeta{
+		wp := gsc.WorkerPoolInfo{
+			SnapshotMeta: gsc.SnapshotMeta{
 				CreationTimestamp: worker.GetCreationTimestamp().UTC(),
 				SnapshotTimestamp: gardenerTimestamp,
 				Name:              poolMap["name"].(string),
@@ -354,12 +354,12 @@ func GardenerTimestampFromUnstructured(worker *unstructured.Unstructured) (garde
 		return
 	}
 	if !found {
-		err = fmt.Errorf("cannot find metadata.annotations from worker %q: %w", worker.GetName(), gst.ErrKeyNotFound)
+		err = fmt.Errorf("cannot find metadata.annotations from worker %q: %w", worker.GetName(), gsc.ErrKeyNotFound)
 		return
 	}
 	timeStampVal, ok := annotationsMap["gardener.cloud/timestamp"]
 	if !ok {
-		err = fmt.Errorf("cannot find 'gardener.cloud/timestamp' in annotations of worker %q: %w", worker.GetName(), gst.ErrKeyNotFound)
+		err = fmt.Errorf("cannot find 'gardener.cloud/timestamp' in annotations of worker %q: %w", worker.GetName(), gsc.ErrKeyNotFound)
 		return
 	}
 	timeStampStr := timeStampVal.(string)

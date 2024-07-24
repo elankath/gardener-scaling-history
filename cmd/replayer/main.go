@@ -33,7 +33,7 @@ func main() {
 	}
 	virtualClusterKubeConfig := os.Getenv("KUBECONFIG")
 	if len(virtualClusterKubeConfig) == 0 {
-		virtualClusterKubeConfig = "/tmp/vck.yaml"
+		virtualClusterKubeConfig = "/tmp/kvcl.yaml"
 		slog.Warn("KUBECONFIG env must be set. Assuming path.", "virtualClusterKubeConfig", virtualClusterKubeConfig)
 		if !apputil.FileExists(virtualClusterKubeConfig) {
 			slog.Error("virtualClusterKubeConfig does not exist. Exiting")
@@ -92,7 +92,7 @@ func main() {
 
 	err = defaultReplayer.Replay(ctx)
 	if err != nil {
-		slog.Error("cannot replay on the replayer", "error", err)
+		slog.Error("Replay encountered an error", "error", err)
 		os.Exit(3)
 	}
 
