@@ -51,19 +51,64 @@ func DirExists(filepath string) bool {
 	return false
 }
 
-// SortPodsForReadability sorts the given podInfos so that application unscheduled pods appear first in the slice.
-func SortPodsForReadability(podInfos []gsc.PodInfo) {
+// SortPodInfosForReadability sorts the given podInfos so that application pods and unscheduled pods appear first in the slice.
+func SortPodInfosForReadability(podInfos []gsc.PodInfo) {
 	slices.SortFunc(podInfos, func(a, b gsc.PodInfo) int {
 		s1 := a.PodScheduleStatus
 		s2 := b.PodScheduleStatus
+
+		n1 := a.Name
+		n2 := b.Name
+		ns1 := a.Namespace
+		ns2 := b.Namespace
+
+		if ns1 == "kube-system" && ns1 != ns2 {
+			return 1
+		}
+		if ns2 == "kube-system" && ns2 != ns1 {
+			return -1
+		}
 		if s1 == gsc.PodUnscheduled {
 			return -1
 		}
 		if s2 == gsc.PodUnscheduled {
 			return 1
 		}
-		return cmp.Compare(s1, s2)
+		return cmp.Compare(n1, n2)
 	})
+}
+
+// SortPodInfoForDeployment sorts the given podInfos so that kube-system and higher priority pods are sorted first.
+func SortPodInfoForDeployment(a, b gsc.PodInfo) int {
+	n1 := a.Name
+	n2 := b.Name
+	ns1 := a.Namespace
+	ns2 := b.Namespace
+	s1 := a.PodScheduleStatus
+	s2 := b.PodScheduleStatus
+	p1 := a.Spec.Priority
+	p2 := b.Spec.Priority
+
+	if ns1 == "kube-system" && ns1 != ns2 {
+		return -1
+	}
+	if ns2 == "kube-system" && ns2 != ns1 {
+		return 1
+	}
+
+	if s1 == gsc.PodScheduleCommited && s1 != s2 {
+		return -1
+	}
+
+	if s2 == gsc.PodScheduleCommited && s2 != s1 {
+		return 1
+	}
+
+	if p1 != nil && p2 != nil {
+		// higher priority must come earlier
+		return cmp.Compare(*p2, *p1)
+	}
+	return cmp.Compare(n1, n2)
 }
 
 //func ListAllNodes(ctx context.Context, clientSet *kubernetes.Clientset)

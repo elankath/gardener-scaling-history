@@ -2,6 +2,7 @@ package replayer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/elankath/gardener-scaling-common"
 	"github.com/elankath/gardener-scaling-common/clientutil"
@@ -13,7 +14,6 @@ import (
 	"golang.org/x/exp/maps"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
@@ -25,19 +25,22 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const DefaultStabilizeInterval = time.Duration(30 * time.Second)
-const DefaultTotalReplayTime = time.Duration(1 * time.Hour)
 const DefaultReplayInterval = time.Duration(5 * time.Minute)
+
+var ErrNoScenario = errors.New("no-scenario")
 
 type defaultReplayer struct {
 	dataAccess          *db.DataAccess
 	clientSet           *kubernetes.Clientset
 	params              gsh.ReplayerParams
-	replayLoop          int
+	snapshotCount       int
+	workCount           int
 	lastScenarios       []gsh.Scenario
 	lastClusterSnapshot gsc.ClusterSnapshot
 	lastReplayMarkTime  time.Time
@@ -76,6 +79,72 @@ func WriteAutoscalerConfig(autoscalerConfig gsc.AutoscalerConfig, path string) e
 		return err
 	}
 	return nil
+}
+
+func (d *defaultReplayer) Replay(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Warn("context is cancelled/done, exiting re-player")
+			return ctx.Err()
+		default:
+			replayMarkTime, err := d.getNextReplayMarkTime()
+			if err != nil {
+				return err
+			}
+			if replayMarkTime.After(time.Now()) {
+				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime)
+				return nil
+			}
+			clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayMarkTime)
+			if err != nil {
+				return err
+			}
+			slog.Info("obtained recorded cluster snapshot for replay.", "snapshotCount", d.snapshotCount, "replayMarkTime", replayMarkTime)
+			if clusterSnapshot.HasSameUnscheduledPods(d.lastClusterSnapshot) {
+				slog.Info("skipping replay as ClusterSnapshot UnscheduledPods are same", "snapshotCount", d.snapshotCount)
+				continue
+			}
+			if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
+				slog.Info("wrote autoscaler config", "snapshotCount", d.snapshotCount, "prevHash", d.lastClusterSnapshot.AutoscalerConfig.Hash, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
+				err = WriteAutoscalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+				if err != nil {
+					err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+					return err
+				}
+				slog.Info("waiting for stabilization", "snapshotCount", d.snapshotCount, "config", d.params.VirtualAutoScalerConfigPath,
+					"stabilizeInterval", d.params.StabilizeInterval)
+				select {
+				case <-time.After(d.params.StabilizeInterval):
+					slog.Info("stabilization wait complete.", "snapshotCount", d.snapshotCount, "config", d.params.VirtualAutoScalerConfigPath,
+						"stabilizeInterval", d.params.StabilizeInterval)
+				case <-ctx.Done():
+					slog.Warn("Context cancelled or timed out:", ctx.Err())
+					return ctx.Err()
+				}
+			}
+			_, err = d.computeAndApplyDeltaWork(ctx, clusterSnapshot)
+			if err != nil {
+				return err
+			}
+			d.lastReplayMarkTime = replayMarkTime
+			slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval, "workCount", d.workCount)
+			<-time.After(d.params.StabilizeInterval)
+
+			scenario, err := d.createScenario(ctx, clusterSnapshot)
+			if err != nil {
+				if errors.Is(err, ErrNoScenario) {
+					continue
+				} else {
+					return err
+				}
+			}
+			err = d.appendScenario(scenario, clusterSnapshot)
+			if err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (d *defaultReplayer) CleanCluster(ctx context.Context) error {
@@ -163,27 +232,45 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 	return nil
 }
 
-type deltaWork struct {
-	podsToDeploy []gsc.PodInfo
-	podsToDelete []gsc.PodInfo
-	pcsToDelete  []gsc.PriorityClassInfo
-	pcsToDeploy  []gsc.PriorityClassInfo
+type PodWork struct {
+	// ToDelete has the Pod names to delete
+	ToDelete sets.Set[types.NamespacedName]
+	ToDeploy []gsc.PodInfo
 }
 
-func (d deltaWork) IsEmpty() bool {
-	return len(d.podsToDelete) == 0 && len(d.podsToDeploy) == 0
+type PriorityClassWork struct {
+	ToDeploy []gsc.PriorityClassInfo
+	// TODO: consider introducing ToDelete sets.Set[string] here too
+}
+type NamespaceWork struct {
+	ToCreate sets.Set[string]
+	ToDelete sets.Set[string]
+	// TODO: consider introducing ToDelete here too
 }
 
-func (d deltaWork) String() string {
+type DeltaWork struct {
+	Number            int
+	PriorityClassWork PriorityClassWork
+	NamespaceWork     NamespaceWork
+	PodWork           PodWork
+}
+
+func (d DeltaWork) IsEmpty() bool {
+	return len(d.PodWork.ToDeploy) == 0 &&
+		len(d.PodWork.ToDelete) == 0 &&
+		len(d.NamespaceWork.ToCreate) == 0 &&
+		len(d.NamespaceWork.ToDelete) == 0 &&
+		len(d.PriorityClassWork.ToDeploy) == 0
+}
+
+func (d DeltaWork) String() string {
 	var sb strings.Builder
-	sb.WriteString("podsToDelete: (")
-	lo.Reduce(d.podsToDelete, func(agg *strings.Builder, item gsc.PodInfo, index int) *strings.Builder {
-		agg.WriteString(item.Name + ",")
-		return agg
-	}, &sb)
-	sb.WriteString(")")
+	sb.WriteString("#")
+	sb.WriteString(strconv.Itoa(d.Number))
+	sb.WriteString("| ")
+	sb.WriteString(fmt.Sprintf("podsToDelete: (%s)", d.PodWork.ToDelete))
 	sb.WriteString("podsToDeploy: (")
-	lo.Reduce(d.podsToDeploy, func(agg *strings.Builder, item gsc.PodInfo, index int) *strings.Builder {
+	lo.Reduce(d.PodWork.ToDeploy, func(agg *strings.Builder, item gsc.PodInfo, index int) *strings.Builder {
 		agg.WriteString(item.Name + ",")
 		return agg
 	}, &sb)
@@ -227,7 +314,7 @@ func getNamespaces(ctx context.Context, clientSet *kubernetes.Clientset) (sets.S
 	})...), nil
 }
 
-func deployNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss ...string) error {
+func createNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss ...string) error {
 	for _, ns := range nss {
 		namespace := corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
@@ -252,7 +339,57 @@ func deleteNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss 
 	return nil
 }
 
-func (d *defaultReplayer) applyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
+func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaWork DeltaWork) error {
+	var err error
+	for _, pcInfo := range deltaWork.PriorityClassWork.ToDeploy {
+		_, err = clientSet.SchedulingV1().PriorityClasses().Create(ctx, &pcInfo.PriorityClass, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("applyDeltaWork cannot create the priority class %s: %w", pcInfo.Name, err)
+		}
+		slog.Info("applyDeltaWork successfully created the priority class", "pc.Name", pcInfo.Name)
+	}
+	err = createNamespaces(ctx, clientSet, deltaWork.NamespaceWork.ToCreate.UnsortedList()...)
+	if err != nil {
+		return fmt.Errorf("applyDeltaWork cannot create namespaces: %w", err)
+	}
+
+	for nn, ok := deltaWork.PodWork.ToDelete.PopAny(); ok; {
+		err = clientSet.CoreV1().Pods(nn.Namespace).Delete(ctx, nn.Name, metav1.DeleteOptions{
+			GracePeriodSeconds: pointer.Int64(0),
+		})
+	}
+
+	podsToDeploy := deltaWork.PodWork.ToDeploy
+
+	// deploy kube-system pods and pods that have assigned Node names first.
+	slices.SortFunc(podsToDeploy, apputil.SortPodInfoForDeployment)
+
+	for i, podInfo := range podsToDeploy {
+		pod := getCorePodFromPodInfo(podInfo)
+		slog.Info("applyDeltaWork is deploying pod", "deployCount", i+1, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
+		podNew, err := clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("applyDeltaWork cannot create the pod  %s: %w", pod.Name, err)
+		}
+		if podNew.Spec.NodeName != "" {
+			podNew.Status.Phase = corev1.PodRunning
+			_, err = clientSet.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, podNew, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("applyDeltaWork cannot change the pod Phase to Running for %s: %w", pod.Name, err)
+			}
+		}
+	}
+
+	err = deleteNamespaces(ctx, clientSet, deltaWork.NamespaceWork.ToDelete.UnsortedList()...)
+	if err != nil {
+		return fmt.Errorf("applyDeltaWork cannot delete un-used namespaces: %w", err)
+	}
+	slog.Info("applyDeltaWork success", "workCount", deltaWork.Number, "deltaWork", deltaWork)
+	return nil
+}
+
+// applyDeltaWorkOld is dead code and can be removed later
+func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
 
 	virtualPCs, err := d.clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -284,7 +421,7 @@ func (d *defaultReplayer) applyDeltaWork(ctx context.Context, clusterSnapshot gs
 	//nsToDelete := virtualNamespaces.Difference(podNamespaces)
 	nsToDeploy := podNamespaces.Difference(virtualNamespaces)
 
-	err = deployNamespaces(ctx, d.clientSet, nsToDeploy.UnsortedList()...)
+	err = createNamespaces(ctx, d.clientSet, nsToDeploy.UnsortedList()...)
 	if err != nil {
 		return
 	}
@@ -353,187 +490,138 @@ func (d *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err err
 	return
 }
 
-func BuildReadyConditions() []corev1.NodeCondition {
-	lastTransition := time.Now().Add(-time.Minute)
-	return []corev1.NodeCondition{
-		{
-			Type:               corev1.NodeReady,
-			Status:             corev1.ConditionTrue,
-			LastTransitionTime: metav1.Time{Time: lastTransition},
-		},
-		{
-			Type:               corev1.NodeNetworkUnavailable,
-			Status:             corev1.ConditionFalse,
-			LastTransitionTime: metav1.Time{Time: lastTransition},
-		},
-		{
-			Type:               corev1.NodeDiskPressure,
-			Status:             corev1.ConditionFalse,
-			LastTransitionTime: metav1.Time{Time: lastTransition},
-		},
-		{
-			Type:               corev1.NodeMemoryPressure,
-			Status:             corev1.ConditionFalse,
-			LastTransitionTime: metav1.Time{Time: lastTransition},
-		},
-		/* This has been recently renamed. For compatibility with 1.6 lets don't populate it at all.
-		{
-			Type:               apiv1.NodeInodePressure,
-			Status:             apiv1.ConditionFalse,
-			LastTransitionTime: metav1.Time{Time: lastTransition},
-		},
-		*/
-	}
-}
-
-func adjustNode(clientSet *kubernetes.Clientset, nodeName string, nodeStatus corev1.NodeStatus) error {
-
-	nd, err := clientSet.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+func (d *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
+	deltaWork, err := computeDeltaWork(ctx, d.clientSet, clusterSnapshot)
 	if err != nil {
-		return fmt.Errorf("cannot get node with name %q: %w", nd.Name, err)
-	}
-	nd.Spec.Taints = lo.Filter(nd.Spec.Taints, func(item corev1.Taint, index int) bool {
-		return item.Key != "node.kubernetes.io/not-ready" && item.Key != "node.gardener.cloud/critical-components-not-ready" && item.Key != "node.cloudprovider.kubernetes.io/uninitialized"
-	})
-	nd, err = clientSet.CoreV1().Nodes().Update(context.Background(), nd, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("cannot update node with name %q: %w", nd.Name, err)
-	}
-	//nd.Status.Conditions = cloudprovider.BuildReadyConditions()
-	//nd.Status.Phase = corev1.NodeRunning
-	//TODO set the nodeInfo in node status
-	nd.Status = nodeStatus
-	nd.Status.Phase = corev1.NodeRunning
-	nd, err = clientSet.CoreV1().Nodes().UpdateStatus(context.Background(), nd, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("cannot update the status of node with name %q: %w", nd.Name, err)
-	}
-	return nil
-}
-
-func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, snapshotNodeInfos []gsc.NodeInfo) (clusterNodes []corev1.Node, err error) {
-	virtualNodeList, err := clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
 		return
 	}
-	virtualNodesMap := lo.KeyBy(virtualNodeList.Items, func(item corev1.Node) string {
-		return item.Name
-	})
-	snapshotNodeInfosByName := lo.Associate(snapshotNodeInfos, func(item gsc.NodeInfo) (string, struct{}) {
-		return item.Name, struct{}{}
-	})
-	for _, vnode := range virtualNodeList.Items {
-		_, ok := snapshotNodeInfosByName[vnode.Name]
-		if ok {
-			continue
-		}
-		err = clientSet.CoreV1().Nodes().Delete(ctx, vnode.Name, metav1.DeleteOptions{})
-		if err != nil {
-			err = fmt.Errorf("cannot delete the virtual node %q: %w", vnode.Name, err)
-			return
-		}
-		delete(virtualNodesMap, vnode.Name)
-	}
-	for _, snapshotNodeInfo := range snapshotNodeInfos {
-		oldVNode, exists := virtualNodesMap[snapshotNodeInfo.Name]
-		var sameLabels, sameTaints bool
-		if exists {
-			sameLabels = maps.Equal(oldVNode.Labels, snapshotNodeInfo.Labels)
-			sameTaints = slices.EqualFunc(oldVNode.Spec.Taints, snapshotNodeInfo.Taints, gsc.IsEqualTaint)
-		}
-		if exists && sameLabels && sameTaints {
-			continue
-		}
-		node := corev1.Node{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      snapshotNodeInfo.Name,
-				Namespace: snapshotNodeInfo.Namespace,
-				Labels:    snapshotNodeInfo.Labels,
-			},
-			Spec: corev1.NodeSpec{
-				Taints:     snapshotNodeInfo.Taints,
-				ProviderID: snapshotNodeInfo.ProviderID,
-			},
-			Status: corev1.NodeStatus{
-				Capacity:    snapshotNodeInfo.Capacity,
-				Allocatable: snapshotNodeInfo.Allocatable,
-			},
-		}
-		nodeStatus := node.Status
-		if !exists {
-			_, err = clientSet.CoreV1().Nodes().Create(context.Background(), &node, metav1.CreateOptions{})
-			if errors.IsAlreadyExists(err) {
-				slog.Warn("node already exists. updating node", "nodeName", node.Name)
-				_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
-			}
-			if err == nil {
-				slog.Info("created node.", "nodeName", node.Name)
-			}
-		} else {
-			slog.Info("updating node", "nodeName", node.Name)
-			_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
-		}
-		if err != nil {
-			err = fmt.Errorf("cannot create/update node with name %q: %w", node.Name, err)
-			return
-		}
-		node.Status = nodeStatus
-		// fixme : use buildCoreNodefromTemplate to construct node object
-		node.Status.Conditions = BuildReadyConditions()
-		err = adjustNode(clientSet, node.Name, node.Status)
-		if err != nil {
-			err = fmt.Errorf("cannot adjust the node with name %q: %w", node.Name, err)
-			return
-		}
-	}
-	virtualNodeList, err = clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
+	if deltaWork.IsEmpty() {
+		slog.Info("delaWork is empty. Skipping applying work")
 		return
 	}
-	clusterNodes = virtualNodeList.Items
+	d.workCount++
+	deltaWork.Number = d.workCount
+	err = applyDeltaWork(ctx, d.clientSet, deltaWork)
+	if err != nil {
+		return
+	}
+	workDone = true
 	return
 }
 
-func (d *defaultReplayer) doReplay(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) error {
-	if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
-		slog.Info("wrote autoscaler config", "replayLoop", d.replayLoop, "prevHash", d.lastClusterSnapshot.AutoscalerConfig.Hash, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
-		err := WriteAutoscalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
-		if err != nil {
-			return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
-		}
-		slog.Info("waiting for stabilization", "replayLoop", d.replayLoop, "config", d.params.VirtualAutoScalerConfigPath,
-			"stabilizeInterval", d.params.StabilizeInterval)
-		<-time.After(d.params.StabilizeInterval)
-	}
-	virtualNodes, err := clientutil.ListAllNodes(ctx, d.clientSet)
+func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clusterSnapshot gsc.ClusterSnapshot) (deltaWork DeltaWork, err error) {
+	slog.Info("computeDeltaWork for clusterSnapshot.", "clusterSnapshot.Number", clusterSnapshot.Number)
+	pcWork, err := computePriorityClassWork(ctx, clientSet, clusterSnapshot.PriorityClasses)
 	if err != nil {
-		return fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
+		return
+	}
+
+	nsWork, err := computeNamespaceWork(ctx, clientSet, clusterSnapshot.GetPodNamspaces())
+	if err != nil {
+		return
+	}
+
+	podWork, err := computePodWork(ctx, clientSet, clusterSnapshot.Pods)
+	if err != nil {
+		return
+	}
+
+	deltaWork.Number = clusterSnapshot.Number
+	deltaWork.PodWork = podWork
+	deltaWork.PriorityClassWork = pcWork
+	deltaWork.NamespaceWork = nsWork
+	return
+}
+
+func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapshotPods []gsc.PodInfo) (podWork PodWork, err error) {
+	virtualNodes, err := clientutil.ListAllNodes(ctx, clientSet)
+	if err != nil {
+		err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
+		return
 	}
 	virtualNodeNames := lo.Map(virtualNodes, func(item corev1.Node, index int) string {
 		return item.Name
 	})
-	err = deletePodsNotBelongingTo(ctx, d.clientSet, virtualNodeNames)
+	podWork.ToDelete, err = getPodNamesNotAssignedToNodes(ctx, clientSet, virtualNodeNames)
+	virtualPods, err := clientutil.ListAllPods(ctx, clientSet)
 	if err != nil {
-		return err
+		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
+		return
 	}
-	workDone, err := d.applyDeltaWork(ctx, clusterSnapshot)
+	virtualPodsByName := lo.Associate(virtualPods, func(item corev1.Pod) (string, gsc.PodInfo) {
+		return item.Name, recorder.PodInfoFromPod(&item)
+	})
+	clusterSnapshotPodsByName := lo.KeyBy(snapshotPods, func(item gsc.PodInfo) string {
+		return item.Name
+	})
+
+	for _, podInfo := range virtualPodsByName {
+		snapshotPodInfo, ok := clusterSnapshotPodsByName[podInfo.Name]
+		if ok && (snapshotPodInfo.NominatedNodeName == podInfo.NominatedNodeName || snapshotPodInfo.NodeName == podInfo.NodeName) {
+			continue
+		}
+		podWork.ToDelete.Insert(types.NamespacedName{Namespace: podInfo.Namespace, Name: podInfo.Name})
+		delete(virtualPodsByName, podInfo.Name)
+	}
+
+	for _, podInfo := range snapshotPods {
+		_, ok := virtualPodsByName[podInfo.Name]
+		if ok {
+			continue
+		}
+		podWork.ToDeploy = append(podWork.ToDeploy, podInfo)
+	}
+	return
+}
+
+func computePriorityClassWork(ctx context.Context, clientSet *kubernetes.Clientset, snapshotPCs []gsc.PriorityClassInfo) (pcWork PriorityClassWork, err error) {
+	virtualPCs, err := clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return err
+		err = fmt.Errorf("cannot list the priority classes in virtual cluster: %w", err)
+		return
 	}
-	if !workDone {
-		slog.Info("no work done", "replayLoop", d.replayLoop)
-		return nil
-	} else {
-		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
-		<-time.After(d.params.StabilizeInterval)
+	virtualPCsMap := lo.KeyBy(virtualPCs.Items, func(item schedulingv1.PriorityClass) string {
+		return item.Name
+	})
+	for _, pcInfo := range snapshotPCs {
+		_, ok := virtualPCsMap[pcInfo.Name]
+		if ok {
+			continue
+		}
+		pcWork.ToDeploy = append(pcWork.ToDeploy, pcInfo)
 	}
-	err = d.appendScenario(ctx, clusterSnapshot)
+	return
+}
+
+func computeNamespaceWork(ctx context.Context, clientSet *kubernetes.Clientset, snapshotPodNamespaces sets.Set[string]) (nsWork NamespaceWork, err error) {
+	virtualNamespaces, err := getNamespaces(ctx, clientSet)
 	if err != nil {
-		return err
+		return
 	}
-	return nil
+	nsWork.ToCreate.Union(snapshotPodNamespaces.Difference(virtualNamespaces))
+	// FIXME: uncomment me after recording all namespaces
+	//nsWork.ToDelete.Union(virtualNamespaces.Difference(snapshotPodNamespaces))
+	return
+}
+
+func getPodNamesNotAssignedToNodes(ctx context.Context, clientSet *kubernetes.Clientset, nodeNames []string) (podNames sets.Set[types.NamespacedName], err error) {
+	nodeNameSet := sets.New[string](nodeNames...)
+	podsList, err := clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
+		return
+	}
+	podNames = make(sets.Set[types.NamespacedName])
+	for _, pod := range podsList.Items {
+		if nodeNameSet.Has(pod.Spec.NodeName) {
+			continue
+		}
+		podNames.Insert(types.NamespacedName{
+			Namespace: pod.Namespace,
+			Name:      pod.Name,
+		})
+	}
+	return
 }
 
 func deletePodsNotBelongingTo(ctx context.Context, clientSet *kubernetes.Clientset, nodes []string) error {
@@ -554,46 +642,15 @@ func deletePodsNotBelongingTo(ctx context.Context, clientSet *kubernetes.Clients
 	return nil
 }
 
-func (d *defaultReplayer) Replay(ctx context.Context) error {
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("context is cancelled/done, exiting re-player")
-			return nil
-		default:
-			d.replayLoop++
-			replayMarkTime, err := d.getNextReplayMarkTime()
-			if err != nil {
-				return err
-			}
-			if replayMarkTime.After(time.Now()) {
-				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime)
-				return nil
-			}
-			slog.Info("getting cluster snapshot at time", "replayLoop", d.replayLoop, "replayMarkTime", replayMarkTime)
-			clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayMarkTime)
-			if err != nil {
-				return err
-			}
-			if clusterSnapshot.HasSameUnscheduledPods(d.lastClusterSnapshot) {
-				slog.Info("skipping doReplay as ClusterSnapshot UnscheduledPods are same", "replayLoop", d.replayLoop)
-				continue
-			}
-			err = d.doReplay(ctx, clusterSnapshot)
-			if err != nil {
-				return err
-			}
-			d.lastReplayMarkTime = replayMarkTime
-		}
-	}
-}
-
 func (d *defaultReplayer) Close() error {
 	// TODO: clean up cluster can be done here.
 	return d.dataAccess.Close()
 }
 
 func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+	d.snapshotCount++
+	cs.Number = d.snapshotCount
+	cs.SnapshotTime = markTime
 
 	mccs, err := d.dataAccess.LoadMachineClassInfosBefore(markTime)
 	if err != nil {
@@ -610,17 +667,12 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc
 	}
 	cs.WorkerPools = workerPools
 
-	var autoscalerConfig gsc.AutoscalerConfig
-	autoscalerConfig.NodeTemplates, err = GetNodeTemplates(mccs, mcds)
+	cs.AutoscalerConfig.NodeTemplates, err = GetNodeTemplates(mccs, mcds)
 	if err != nil {
 		return
 	}
-	cs.PriorityClasses, err = d.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(markTime)
 
-	if err != nil {
-		return
-	}
-	autoscalerConfig.NodeGroups, err = GetNodeGroups(mcds, workerPools)
+	cs.PriorityClasses, err = d.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(markTime)
 	if err != nil {
 		return
 	}
@@ -635,17 +687,22 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc
 		return
 	}
 
-	autoscalerConfig.CASettings, err = d.dataAccess.LoadCASettingsBefore(markTime)
-	cs.AutoscalerConfig = autoscalerConfig
-	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerMode
-	cs.SnapshotTime = markTime
-	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
-	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Pods, err = d.dataAccess.GetLatestPodInfosBeforeSnapshotTime(markTime)
-	apputil.SortPodsForReadability(cs.Pods)
+	apputil.SortPodInfosForReadability(cs.Pods)
+
+	cs.AutoscalerConfig.CASettings, err = d.dataAccess.LoadCASettingsBefore(markTime)
 	if err != nil {
 		return
 	}
+	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerMode
+	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
+	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
+
+	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
+	if err != nil {
+		return
+	}
+
 	return
 }
 
@@ -666,10 +723,32 @@ func getNodeGroupsByPoolZone(nodeGroupsByName map[string]gsc.NodeGroupInfo) map[
 	return poolZoneMap
 }
 
-func (d *defaultReplayer) appendScenario(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) error {
+func (d *defaultReplayer) appendScenario(scenario gsh.Scenario, clusterSnapshot gsc.ClusterSnapshot) error {
+	if d.report == nil {
+		d.report = &gsh.ReplayReport{
+			StartTime: clusterSnapshot.SnapshotTime,
+			Scenarios: make([]gsh.Scenario, 0),
+		}
+	}
+	d.report.Scenarios = append(d.report.Scenarios, scenario)
+	slog.Info("appended scenario for", "snapshotTime", clusterSnapshot.SnapshotTime, "scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
+	bytes, err := json.Marshal(d.report)
+	if err != nil {
+		return fmt.Errorf("cannot marshal the scenario report: %w", err)
+	}
+
+	err = os.WriteFile(d.reportPath, bytes, 0666)
+	if err != nil {
+		return fmt.Errorf("cannot write to report to file %q: %w", d.reportPath, err)
+	}
+	return nil
+}
+
+func (d *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (scenario gsh.Scenario, err error) {
 	postVirtualNodesList, err := d.clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
+		err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
+		return
 	}
 
 	var scaledUpNodes []gsc.NodeInfo
@@ -687,13 +766,13 @@ func (d *defaultReplayer) appendScenario(ctx context.Context, clusterSnapshot gs
 	}
 	if len(scaledUpNodes) == 0 {
 		slog.Warn("no scale-up in this replay interval, so skipping this scenario", "snapshotTime", clusterSnapshot.SnapshotTime)
-		return nil
+		err = ErrNoScenario
+		return
 	}
-	var s gsh.Scenario
-	s.BeginTime = clusterSnapshot.SnapshotTime.UTC()
-	s.ClusterSnapshot = clusterSnapshot
-	s.ScalingResult.ScaledUpNodes = scaledUpNodes
-	s.ScalingResult.ScaledUpNodeGroups = make(map[string]int)
+	scenario.BeginTime = clusterSnapshot.SnapshotTime.UTC()
+	scenario.ClusterSnapshot = clusterSnapshot
+	scenario.ScalingResult.ScaledUpNodes = scaledUpNodes
+	scenario.ScalingResult.ScaledUpNodeGroups = make(map[string]int)
 	poolZoneMap := getNodeGroupsByPoolZone(clusterSnapshot.AutoscalerConfig.NodeGroups)
 	for _, node := range scaledUpNodes {
 		poolZone := gsh.PoolZone{
@@ -702,36 +781,21 @@ func (d *defaultReplayer) appendScenario(ctx context.Context, clusterSnapshot gs
 		}
 		ng, ok := poolZoneMap[poolZone]
 		if !ok {
-			return fmt.Errorf("cannot find associated PoolZone %q for node %q", poolZone, node.Name)
+			err = fmt.Errorf("cannot find associated PoolZone %q for node %q", poolZone, node.Name)
+			return
 		}
-		s.ScalingResult.ScaledUpNodeGroups[ng.Name]++
+		scenario.ScalingResult.ScaledUpNodeGroups[ng.Name]++
 	}
-	pods, err := d.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	for _, pod := range pods.Items {
+	pods, err := clientutil.ListAllPods(ctx, d.clientSet)
+	for _, pod := range pods {
 		podInfo := recorder.PodInfoFromPod(&pod)
+		// FIXME: BUGGY
 		if podInfo.PodScheduleStatus == gsc.PodUnscheduled || podInfo.PodScheduleStatus == gsc.PodSchedulePending {
-			s.ScalingResult.PendingUnscheduledPods = append(s.ScalingResult.PendingUnscheduledPods, podInfo)
+			scenario.ScalingResult.PendingUnscheduledPods = append(scenario.ScalingResult.PendingUnscheduledPods, podInfo)
 		}
 	}
-	if d.report == nil {
-		d.report = &gsh.ReplayReport{
-			StartTime: clusterSnapshot.SnapshotTime,
-			Scenarios: make([]gsh.Scenario, 0),
-		}
-	}
-	d.report.Scenarios = append(d.report.Scenarios, s)
-	slog.Info("created scenario for", "snapshotTime", clusterSnapshot.SnapshotTime, "scaledUpNodeGroups", s.ScalingResult.ScaledUpNodeGroups)
-	bytes, err := json.Marshal(d.report)
-	if err != nil {
-		return fmt.Errorf("cannot marshal the scenario report: %w", err)
-	}
 
-	err = os.WriteFile(d.reportPath, bytes, 0666)
-	if err != nil {
-		return fmt.Errorf("cannot write to report to file %q: %w", d.reportPath, err)
-	}
-	return nil
-
+	return
 }
 
 func GetNodeGroupNameFromMCCName(namespace, mccName string) string {
@@ -774,24 +838,21 @@ func GetNodeTemplates(mccs []gsh.MachineClassInfo, mcds []gsc.MachineDeploymentI
 	return
 }
 
-func GetNodeGroups(mcds []gsc.MachineDeploymentInfo, workerPools []gsc.WorkerPoolInfo) (nodeGroups map[string]gsc.NodeGroupInfo, err error) {
+func deriveNodeGroups(mcds []gsc.MachineDeploymentInfo, ngMinMaxMap map[string]gsc.MinMax) (nodeGroups map[string]gsc.NodeGroupInfo, err error) {
 	nodeGroups = make(map[string]gsc.NodeGroupInfo)
-	workerPoolsByName := lo.KeyBy(workerPools, func(item gsc.WorkerPoolInfo) string {
-		return item.Name
-	})
 	for _, mcd := range mcds {
-		workerPool, ok := workerPoolsByName[mcd.PoolName]
+		ngName := fmt.Sprintf("%s.%s", mcd.Namespace, mcd.Name)
+		minMax, ok := ngMinMaxMap[ngName]
 		if !ok {
-			err = fmt.Errorf("cannot find pool name with name %q: %w", mcd.PoolName, gsc.ErrKeyNotFound)
-			return
+			err = fmt.Errorf("cannot find NodeGroup with name %q in ngMinMaxMap map %q", ngName, ngMinMaxMap)
 		}
 		nodeGroup := gsc.NodeGroupInfo{
-			Name:       fmt.Sprintf("%s.%s", mcd.Namespace, mcd.Name),
+			Name:       ngName,
 			PoolName:   mcd.PoolName,
 			Zone:       mcd.Zone,
 			TargetSize: mcd.Replicas,
-			MinSize:    workerPool.Minimum,
-			MaxSize:    workerPool.Maximum,
+			MinSize:    minMax.Min,
+			MaxSize:    minMax.Max,
 		}
 		nodeGroup.Hash = nodeGroup.GetHash()
 		nodeGroups[nodeGroup.Name] = nodeGroup

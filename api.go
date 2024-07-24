@@ -35,7 +35,6 @@ type ReplayerParams struct {
 	VirtualClusterKubeConfigPath string
 	StabilizeInterval            time.Duration
 	ReplayInterval               time.Duration
-	TotalReplayTime              time.Duration
 	//RecurConfigUpdate            bool
 }
 

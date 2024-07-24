@@ -51,7 +51,6 @@ func main() {
 	}
 
 	stabilizeInterval := GetDuration("STABILIZE_INTERVAL", replayer.DefaultStabilizeInterval)
-	totalReplayTime := GetDuration("TOTAL_REPLAY_TIME", replayer.DefaultTotalReplayTime)
 	replayInterval := GetDuration("REPLAY_INTERVAL", replayer.DefaultReplayInterval)
 	//recurConfigUpdateBool := os.Getenv("RECUR_CONFIG_UPDATE")
 	//var recurConfigUpdate bool
@@ -69,7 +68,6 @@ func main() {
 		ReportDir:                    reportDir,
 		VirtualAutoScalerConfigPath:  virtualAutoscalerConfig,
 		VirtualClusterKubeConfigPath: virtualClusterKubeConfig,
-		TotalReplayTime:              totalReplayTime,
 		StabilizeInterval:            stabilizeInterval,
 		ReplayInterval:               replayInterval,
 		//RecurConfigUpdate:            recurConfigUpdate,
@@ -80,7 +78,7 @@ func main() {
 	}
 
 	//TODO listen for shutdown and call cancel Fn
-	ctx, cancelFn := context.WithTimeout(context.Background(), totalReplayTime)
+	ctx, cancelFn := context.WithCancel(context.Background())
 	err = defaultReplayer.Start(ctx)
 	if err != nil {
 		slog.Error("cannot start the replayer", "error", err)
