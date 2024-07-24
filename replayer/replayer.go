@@ -366,7 +366,7 @@ func (d *defaultReplayer) applyWork(ctx context.Context, clusterSnapshot gsc.Clu
 	return
 }
 
-func (d *defaultReplayer) getNextReplayTime() (replayTime time.Time, err error) {
+func (d *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err error) {
 	if d.lastReplayMarkTime.IsZero() {
 		//recordStartTime, err := d.dataAccess.GetInitialRecorderStartTime()
 		//if err != nil {
@@ -374,7 +374,8 @@ func (d *defaultReplayer) getNextReplayTime() (replayTime time.Time, err error) 
 		//}
 		//recordStartTime = recordStartTime.Add(d.params.StabilizeInterval).UTC()
 		firstScaleUpEventTime := d.scaleUpEvents[0].EventTime
-		replayTime = firstScaleUpEventTime.Add(-d.params.StabilizeInterval).UTC()
+		//replayTime = firstScaleUpEventTime.Add(-d.params.StabilizeInterval).UTC()
+		replayTime = firstScaleUpEventTime.UTC()
 		return
 	}
 	replayTime = d.lastReplayMarkTime.Add(d.params.ReplayInterval).UTC()
@@ -524,19 +525,10 @@ func synchronizeNodes(ctx context.Context, clientSet *kubernetes.Clientset, snap
 	return
 }
 
-func (d *defaultReplayer) doReplay(ctx context.Context, replayMarkTime time.Time) error {
-	slog.Info("getting cluster snapshot at time", "replayLoop", d.replayLoop, "replayMarkTime", replayMarkTime)
-	clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayMarkTime)
-	if err != nil {
-		return err
-	}
-	if clusterSnapshot.HasSameUnscheduledPods(d.lastClusterSnapshot) {
-		slog.Info("skipping doReplay as ClusterSnapshot UnscheduledPods are same", "replayLoop", d.replayLoop)
-		return nil
-	}
-	if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash && d.params.RecurConfigUpdate {
+func (d *defaultReplayer) doReplay(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) error {
+	if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
 		slog.Info("wrote autoscaler config", "replayLoop", d.replayLoop, "prevHash", d.lastClusterSnapshot.AutoscalerConfig.Hash, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
-		err = WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+		err := WriteAutoScalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
 		if err != nil {
 			return fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
 		}
@@ -566,11 +558,10 @@ func (d *defaultReplayer) doReplay(ctx context.Context, replayMarkTime time.Time
 		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval)
 		<-time.After(d.params.StabilizeInterval)
 	}
-	err = d.appendScenario(ctx, replayMarkTime, clusterSnapshot)
+	err = d.appendScenario(ctx, clusterSnapshot)
 	if err != nil {
 		return err
 	}
-	d.lastClusterSnapshot = clusterSnapshot
 	return nil
 }
 
@@ -600,7 +591,7 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 			return nil
 		default:
 			d.replayLoop++
-			replayMarkTime, err := d.getNextReplayTime()
+			replayMarkTime, err := d.getNextReplayMarkTime()
 			if err != nil {
 				return err
 			}
@@ -608,7 +599,16 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime)
 				return nil
 			}
-			err = d.doReplay(ctx, replayMarkTime)
+			slog.Info("getting cluster snapshot at time", "replayLoop", d.replayLoop, "replayMarkTime", replayMarkTime)
+			clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayMarkTime)
+			if err != nil {
+				return err
+			}
+			if clusterSnapshot.HasSameUnscheduledPods(d.lastClusterSnapshot) {
+				slog.Info("skipping doReplay as ClusterSnapshot UnscheduledPods are same", "replayLoop", d.replayLoop)
+				continue
+			}
+			err = d.doReplay(ctx, clusterSnapshot)
 			if err != nil {
 				return err
 			}
@@ -695,7 +695,7 @@ func getNodeGroupsByPoolZone(nodeGroupsByName map[string]gsc.NodeGroupInfo) map[
 	return poolZoneMap
 }
 
-func (d *defaultReplayer) appendScenario(ctx context.Context, replayTime time.Time, clusterSnapshot gsc.ClusterSnapshot) error {
+func (d *defaultReplayer) appendScenario(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) error {
 	postVirtualNodesList, err := d.clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
@@ -715,11 +715,11 @@ func (d *defaultReplayer) appendScenario(ctx context.Context, replayTime time.Ti
 		scaledUpNodes = append(scaledUpNodes, gsh.NodeInfoFromNode(&node, 0))
 	}
 	if len(scaledUpNodes) == 0 {
-		slog.Warn("no scale-up in this replay interval, so skipping this scenario", "replayTime", replayTime)
+		slog.Warn("no scale-up in this replay interval, so skipping this scenario", "snapshotTime", clusterSnapshot.SnapshotTime)
 		return nil
 	}
 	var s gsh.Scenario
-	s.BeginTime = replayTime.UTC()
+	s.BeginTime = clusterSnapshot.SnapshotTime.UTC()
 	s.ClusterSnapshot = clusterSnapshot
 	s.ScalingResult.ScaledUpNodes = scaledUpNodes
 	s.ScalingResult.ScaledUpNodeGroups = make(map[string]int)
@@ -744,12 +744,12 @@ func (d *defaultReplayer) appendScenario(ctx context.Context, replayTime time.Ti
 	}
 	if d.report == nil {
 		d.report = &gsh.ReplayReport{
-			StartTime: replayTime,
+			StartTime: clusterSnapshot.SnapshotTime,
 			Scenarios: make([]gsh.Scenario, 0),
 		}
 	}
 	d.report.Scenarios = append(d.report.Scenarios, s)
-	slog.Info("created scenario for", "replayTime", replayTime, "scaledUpNodeGroups", s.ScalingResult.ScaledUpNodeGroups)
+	slog.Info("created scenario for", "snapshotTime", clusterSnapshot.SnapshotTime, "scaledUpNodeGroups", s.ScalingResult.ScaledUpNodeGroups)
 	bytes, err := json.Marshal(d.report)
 	if err != nil {
 		return fmt.Errorf("cannot marshal the scenario report: %w", err)

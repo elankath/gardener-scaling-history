@@ -56,9 +56,6 @@ func SortPodsForReadability(podInfos []gsc.PodInfo) {
 	slices.SortFunc(podInfos, func(a, b gsc.PodInfo) int {
 		s1 := a.PodScheduleStatus
 		s2 := b.PodScheduleStatus
-		if s1 == s2 {
-			return cmp.Compare(a.Name, b.Name)
-		}
 		if s1 == gsc.PodUnscheduled {
 			return -1
 		}
