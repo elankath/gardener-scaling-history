@@ -116,12 +116,12 @@ const CreateNodeInfoTable = `CREATE TABLE IF NOT EXISTS node_info (
 	Name TEXT, 
 	Namespace TEXT, 
 	ProviderID TEXT, 
-	AllocatableVolumes INTEGER,
+	AllocatableVolumes INT,
 	Labels TEXT, 
 	Taints TEXT, 
 	Allocatable TEXT, 
 	Capacity TEXT, 
-	DeletionTimestamp DATETIME,
+	DeletionTimestamp INT,
 	Hash TEXT)`
 
 const InsertNodeInfo = `INSERT INTO node_info(
@@ -139,8 +139,11 @@ const InsertNodeInfo = `INSERT INTO node_info(
 	VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 // `SELECT * FROM node_info WHERE CreationTimestamp < ? ORDER BY CreationTimestamp DESC`
-const SelectNodeInfoBefore = `SELECT * FROM node_info WHERE
-SnapshotTimestamp < ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY node_info.Name HAVING max(SnapshotTimestamp)`
+const SelectNodeInfoBefore = `SELECT * FROM node_info 
+	WHERE SnapshotTimestamp <= ?
+	AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)
+	GROUP BY node_info.Name HAVING max(SnapshotTimestamp)`
+
 const SelectNodeCountWithNameAndHash = "SELECT COUNT(*) from node_info where Name=? and Hash=?"
 const UpdateNodeInfoDeletionTimestamp = `UPDATE node_info SET DeletionTimestamp = ? where Name = ?`
 

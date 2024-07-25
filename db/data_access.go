@@ -835,7 +835,7 @@ func (d *DataAccess) StoreNodeInfo(n gsc.NodeInfo) (rowID int64, err error) {
 	if err != nil {
 		return
 	}
-	_, err = d.insertNodeInfo.Exec(
+	result, err := d.insertNodeInfo.Exec(
 		n.CreationTimestamp.UTC().UnixMilli(),
 		n.SnapshotTimestamp.UTC().UnixMilli(),
 		n.Name,
@@ -849,14 +849,14 @@ func (d *DataAccess) StoreNodeInfo(n gsc.NodeInfo) (rowID int64, err error) {
 		n.Hash)
 	if err != nil {
 		slog.Error("cannot insert node_info in the node_info table", "error", err, "node", n)
-		return
+		return -1, err
 	}
 	slog.Info("inserted new row into the node_info table", "node.Name", n.Name)
-	return
+	return result.LastInsertId()
 }
 
 func (d *DataAccess) LoadNodeInfosBefore(snapshotTimestamp time.Time) ([]gsc.NodeInfo, error) {
-	nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp, snapshotTimestamp)
+	nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp.UTC().UnixMilli(), snapshotTimestamp.UTC().UnixMilli())
 	if err != nil {
 		return nil, fmt.Errorf("LoadNodeInfosBefore could not scan rows: %w", err)
 	}
@@ -1126,6 +1126,9 @@ func queryRows[T any](stmt *sql.Stmt, params ...any) (rowObjs []T, err error) {
 func queryAndMapToInfos[I any, T row[I]](stmt *sql.Stmt, params ...any) (infoObjs []I, err error) {
 	rowObjs, err := queryRows[T](stmt, params...)
 	if err != nil {
+		//if errors.Is(err, sql.ErrNoRows) {
+		//	return nil, nil //empty result is not an error
+		//}
 		return nil, err
 	}
 	for _, r := range rowObjs {

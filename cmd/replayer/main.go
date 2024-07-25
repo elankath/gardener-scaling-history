@@ -93,4 +93,5 @@ func main() {
 		os.Exit(3)
 	}
 
+	slog.Info("Replay Successfully Finished")
 }

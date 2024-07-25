@@ -4,7 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	gsh "github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-common"
+	"github.com/elankath/gardener-scaling-history"
 	assert "github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -24,8 +25,6 @@ import (
 
 func TestStoreLoadPodInfo(t *testing.T) {
 	dataAccess, err := initDataAccess()
-	assert.Nil(t, err)
-
 	assert.Nil(t, err)
 
 	container := corev1.Container{
@@ -283,53 +282,53 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 		Effect:    "Custom",
 		TimeAdded: &metav1.Time{today},
 	}
-	na1 := gsc.NodeInfo{
+	a1 := gsc.NodeInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			CreationTimestamp: dayBeforeYesterday,
 			SnapshotTimestamp: dayBeforeYesterday,
-			Name:              "A",
+			Name:              "A1",
 			Namespace:         "nsA",
 		},
-		ProviderID:  "pA",
+		ProviderID:  "a1",
 		Labels:      map[string]string{"snapshot": "a1"},
 		Taints:      []corev1.Taint{k1Taint},
 		Allocatable: createResourceList("1", "3Gi", "19Gi"),
 		Capacity:    createResourceList("2", "4Gi", "20Gi"),
 	}
-	na2 := gsc.NodeInfo{
+	a2 := gsc.NodeInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			CreationTimestamp: yesterday,
 			SnapshotTimestamp: yesterday,
-			Name:              "A",
+			Name:              "A2",
 			Namespace:         "nsA",
 		},
-		ProviderID:  "pA",
+		ProviderID:  "a2",
 		Labels:      map[string]string{"snapshot": "a2", "weapon": "sword"},
 		Taints:      []corev1.Taint{k2Taint},
 		Allocatable: createResourceList("1", "3Gi", "19Gi"),
 		Capacity:    createResourceList("2", "4Gi", "20Gi"),
 	}
-	nb1 := gsc.NodeInfo{
+	b1 := gsc.NodeInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			CreationTimestamp: yesterday,
 			SnapshotTimestamp: yesterday,
-			Name:              "B",
+			Name:              "B1",
 			Namespace:         "nsB",
 		},
-		ProviderID:  "pB",
+		ProviderID:  "b1",
 		Labels:      map[string]string{"snapshot": "b1", "weapon": "saber"},
 		Taints:      []corev1.Taint{k3Taint},
 		Allocatable: createResourceList("2", "6Gi", "20Gi"),
 		Capacity:    createResourceList("4", "8Gi", "22Gi"),
 	}
-	nb2 := gsc.NodeInfo{
+	b2 := gsc.NodeInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			CreationTimestamp: today,
 			SnapshotTimestamp: today,
-			Name:              "B",
+			Name:              "B2",
 			Namespace:         "nsB",
 		},
-		ProviderID:  "pnB",
+		ProviderID:  "b2",
 		Labels:      map[string]string{"snapshot": "b2", "weapon": "lightsaber"},
 		Taints:      []corev1.Taint{k3Taint},
 		Allocatable: createResourceList("6", "14Gi", "20Gi"),
@@ -337,30 +336,33 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 	}
 
 	now := time.Now().UTC()
-	nc1 := gsc.NodeInfo{
+	c1 := gsc.NodeInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			CreationTimestamp: now,
 			SnapshotTimestamp: now,
-			Name:              "C",
+			Name:              "C1",
 			Namespace:         "nsC",
 		},
-		ProviderID:         "pnC",
+		ProviderID:         "c1",
 		AllocatableVolumes: 45,
 		Labels:             nil,
 		Taints:             nil,
 		Allocatable:        createResourceList("2", "8Gi", "12Gi"),
 		Capacity:           createResourceList("3", "9Gi", "13Gi"),
 	}
-	storeNodeInfos := []gsc.NodeInfo{na1, na2, nb1, nb2, nc1}
+	storeNodeInfos := []gsc.NodeInfo{a1, a2, b1, b2, c1}
 	for i, n := range storeNodeInfos {
 		storeNodeInfos[i].Hash = n.GetHash()
-		_, err := dataAccess.StoreNodeInfo(n)
+		rowID, err := dataAccess.StoreNodeInfo(n)
+		storeNodeInfos[i].RowID = rowID
+		t.Logf("storedNode %q with RodID: %d", n.Name, rowID)
 		assert.Nil(t, err)
 	}
 	slices.SortFunc(storeNodeInfos, gsc.CmpNodeInfoDescending)
 	t.Run("loadNodeInfos equals storeNodeInfos", func(t *testing.T) {
-		loadNodeInfos, err := dataAccess.LoadNodeInfosBefore(time.Now())
+		loadNodeInfos, err := dataAccess.LoadNodeInfosBefore(now)
 		assert.Nil(t, err)
+		slices.SortFunc(loadNodeInfos, gsc.CmpNodeInfoDescending)
 		isEqual := slices.EqualFunc(storeNodeInfos, loadNodeInfos, gsc.IsEqualNodeInfo)
 		assert.True(t, isEqual)
 	})
@@ -577,27 +579,6 @@ func TestStoreLoadMachineClassInfos(t *testing.T) {
 	})
 }
 
-func TestQuantityNormalization(t *testing.T) {
-	//q1 := resource.MustParseQuantity("20.2")
-	//q1 := resource.MustParseQuantity("20.24")
-	//q1 := resource.MustParseQuantity("20.245")
-	q1 := resource.MustParse("20.2456")
-
-	q1Str := q1.String()
-	q1FromStr, err := resource.ParseQuantity(q1Str)
-	assert.Nil(t, err)
-	t.Logf("q1=%s, q1FromStr=%s", q1.String(), q1FromStr.String())
-	assert.Equal(t, q1, q1FromStr)
-
-	q1Bytes, err := json.Marshal(q1)
-	assert.Nil(t, err)
-	var q1FromJson resource.Quantity
-	err = json.Unmarshal(q1Bytes, &q1FromJson)
-	assert.Nil(t, err)
-	t.Logf("q1=%s, q1FromJson=%s", q1.String(), q1FromJson.String())
-	assert.Equal(t, q1, q1FromJson)
-}
-
 func TestLoadStorePriorityClassInfo(t *testing.T) {
 	dataAccess, err := initDataAccess()
 	assert.Nil(t, err)
@@ -643,4 +624,14 @@ func TestLoadStorePriorityClassInfo(t *testing.T) {
 		assert.Equal(t, 1, count)
 	})
 
+}
+
+func TestStoreLoadEmptyNodeInfos(t *testing.T) {
+	dataAccess, err := initDataAccess()
+	assert.Nil(t, err)
+
+	nodeInfos, err := dataAccess.LoadNodeInfosBefore(time.Now().UTC())
+	assert.Nil(t, nodeInfos)
+	assert.NotNil(t, err)
+	assert.True(t, errors.Is(err, sql.ErrNoRows))
 }
