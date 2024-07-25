@@ -29,7 +29,7 @@ type RecorderParams struct {
 }
 
 type ReplayerParams struct {
-	DBPath                       string
+	InputDataPath                string
 	ReportDir                    string
 	VirtualAutoScalerConfigPath  string
 	VirtualClusterKubeConfigPath string

@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 	"log/slog"
 	"os"
@@ -37,18 +38,24 @@ const DefaultReplayInterval = time.Duration(5 * time.Minute)
 
 var ErrNoScenario = errors.New("no-scenario")
 
+type ReplayMode int
+
+const ReplayFromDBMode ReplayMode = 0
+const ReplayFromReportMode ReplayMode = 1
+
 type defaultReplayer struct {
+	replayMode          ReplayMode
 	dataAccess          *db.DataAccess
 	clientSet           *kubernetes.Clientset
 	params              gsh.ReplayerParams
 	snapshotCount       int
 	workCount           int
-	lastScenarios       []gsh.Scenario
 	lastClusterSnapshot gsc.ClusterSnapshot
 	report              *gsh.ReplayReport
 	reportPath          string
 	scaleUpEventCounter int
 	scaleUpEvents       []gsc.EventInfo
+	inputScenarios      []gsh.Scenario
 }
 
 var _ gsh.Replayer = (*defaultReplayer)(nil)
@@ -64,8 +71,19 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot create clientset: %w", err)
 	}
+	var replayMode ReplayMode
+	var dataAccess *db.DataAccess
+	if strings.HasSuffix(params.InputDataPath, ".db") {
+		replayMode = ReplayFromDBMode
+		dataAccess = db.NewDataAccess(params.InputDataPath)
+	} else if strings.HasSuffix(params.InputDataPath, ".json") {
+		replayMode = ReplayFromReportMode
+	} else {
+		return nil, fmt.Errorf("invalid DB path for DB-report %q", params.InputDataPath)
+	}
 	return &defaultReplayer{
-		dataAccess: db.NewDataAccess(params.DBPath),
+		dataAccess: dataAccess,
+		replayMode: replayMode,
 		clientSet:  clientset,
 		params:     params,
 	}, nil
@@ -84,6 +102,182 @@ func WriteAutoscalerConfig(autoscalerConfig gsc.AutoscalerConfig, path string) e
 }
 
 func (d *defaultReplayer) Replay(ctx context.Context) error {
+	if d.replayMode == ReplayFromDBMode {
+		return d.ReplayFromDB(ctx)
+	} else {
+		return d.ReplayFromReport(ctx)
+	}
+}
+
+func (d *defaultReplayer) ReplayFromReport(ctx context.Context) error {
+	for _, s := range d.inputScenarios {
+		err := WriteAutoscalerConfig(s.ClusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+		if err != nil {
+			err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", s.ClusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+			return err
+		}
+		err = syncNodes(ctx, d.clientSet, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
+		if err != nil {
+			return err
+		}
+		_, err = d.computeAndApplyDeltaWork(ctx, s.ClusterSnapshot, nil)
+		if err != nil {
+			return err
+		}
+		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval, "workCount", d.workCount)
+		select {
+		case <-time.After(d.params.StabilizeInterval):
+		case <-ctx.Done():
+			slog.Warn("Context cancelled or timed out:", ctx.Err())
+			return ctx.Err()
+		}
+
+		d.lastClusterSnapshot = s.ClusterSnapshot
+		scenario, err := d.createScenario(ctx, s.ClusterSnapshot)
+		if err != nil {
+			if errors.Is(err, ErrNoScenario) {
+				continue
+			} else {
+				return err
+			}
+		}
+		err = d.appendScenario(scenario, s.ClusterSnapshot)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, nodeInfos []gsc.NodeInfo) error {
+	nodeInfosByName := lo.Associate(nodeInfos, func(item gsc.NodeInfo) (string, struct{}) {
+		return item.Name, struct{}{}
+	})
+	virtualNodes, err := clientutil.ListAllNodes(ctx, clientSet)
+	if err != nil {
+		return fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
+	}
+	virtualNodesMap := lo.KeyBy(virtualNodes, func(item corev1.Node) string {
+		return item.Name
+	})
+
+	for _, vn := range virtualNodes {
+		_, ok := nodeInfosByName[vn.Name]
+		if ok {
+			continue
+		}
+		err := clientSet.CoreV1().Nodes().Delete(ctx, vn.Name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("cannot delete the virtual node %q: %w", vn.Name, err)
+		}
+		//delete(virtualNodesMap, vn.Name)
+		klog.V(3).Infof("synchronizeNodes deleted the virtual node %q", vn.Name)
+	}
+
+	for _, nodeInfo := range nodeInfos {
+		oldVNode, exists := virtualNodesMap[nodeInfo.Name]
+		var sameLabels, sameTaints bool
+		if exists {
+			sameLabels = maps.Equal(oldVNode.Labels, nodeInfo.Labels)
+			sameTaints = slices.EqualFunc(oldVNode.Spec.Taints, nodeInfo.Taints, gsc.IsEqualTaint)
+		}
+		if exists && sameLabels && sameTaints {
+			continue
+		}
+		node := corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      nodeInfo.Name,
+				Namespace: nodeInfo.Namespace,
+				Labels:    nodeInfo.Labels,
+			},
+			Spec: corev1.NodeSpec{
+				Taints:     nodeInfo.Taints,
+				ProviderID: nodeInfo.ProviderID,
+			},
+			Status: corev1.NodeStatus{
+				Capacity:    nodeInfo.Capacity,
+				Allocatable: nodeInfo.Allocatable,
+			},
+		}
+		nodeStatus := node.Status
+		if !exists {
+			_, err = clientSet.CoreV1().Nodes().Create(context.Background(), &node, metav1.CreateOptions{})
+			if apierrors.IsAlreadyExists(err) {
+				klog.Warningf("synchronizeNodes: node already exists. updating node %q", node.Name)
+				_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
+			}
+			if err == nil {
+				klog.V(3).Infof("synchronizeNodes created node %q", node.Name)
+			}
+		} else {
+			_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
+			klog.V(3).Infof("synchronizeNodes updated node %q", node.Name)
+		}
+		if err != nil {
+			return fmt.Errorf("synchronizeNodes cannot create/update node with name %q: %w", node.Name, err)
+		}
+		node.Status = nodeStatus
+		node.Status.Conditions = buildReadyConditions()
+		err = adjustNode(clientSet, node.Name, node.Status)
+		if err != nil {
+			return fmt.Errorf("synchronizeNodes cannot adjust the node with name %q: %w", node.Name, err)
+		}
+	}
+	return nil
+}
+
+func adjustNode(clientSet *kubernetes.Clientset, nodeName string, nodeStatus corev1.NodeStatus) error {
+
+	nd, err := clientSet.CoreV1().Nodes().Get(context.Background(), nodeName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("cannot get node with name %q: %w", nd.Name, err)
+	}
+	nd.Spec.Taints = lo.Filter(nd.Spec.Taints, func(item corev1.Taint, index int) bool {
+		return item.Key != "node.kubernetes.io/not-ready"
+	})
+	nd, err = clientSet.CoreV1().Nodes().Update(context.Background(), nd, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("cannot update node with name %q: %w", nd.Name, err)
+	}
+	//nd.Status.Conditions = cloudprovider.BuildReadyConditions()
+	//nd.Status.Phase = corev1.NodeRunning
+	//TODO set the nodeInfo in node status
+	nd.Status = nodeStatus
+	nd.Status.Phase = corev1.NodeRunning
+	nd, err = clientSet.CoreV1().Nodes().UpdateStatus(context.Background(), nd, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("cannot update the status of node with name %q: %w", nd.Name, err)
+	}
+	return nil
+}
+
+func buildReadyConditions() []corev1.NodeCondition {
+	lastTransition := time.Now().Add(-time.Minute)
+	return []corev1.NodeCondition{
+		{
+			Type:               corev1.NodeReady,
+			Status:             corev1.ConditionTrue,
+			LastTransitionTime: metav1.Time{Time: lastTransition},
+		},
+		{
+			Type:               corev1.NodeNetworkUnavailable,
+			Status:             corev1.ConditionFalse,
+			LastTransitionTime: metav1.Time{Time: lastTransition},
+		},
+		{
+			Type:               corev1.NodeDiskPressure,
+			Status:             corev1.ConditionFalse,
+			LastTransitionTime: metav1.Time{Time: lastTransition},
+		},
+		{
+			Type:               corev1.NodeMemoryPressure,
+			Status:             corev1.ConditionFalse,
+			LastTransitionTime: metav1.Time{Time: lastTransition},
+		},
+	}
+}
+
+func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
@@ -240,25 +434,40 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = d.dataAccess.Init()
-	if err != nil {
-		return err
-	}
+	if d.replayMode == ReplayFromDBMode {
+		err = d.dataAccess.Init()
+		if err != nil {
+			return err
+		}
+		d.scaleUpEvents, err = d.dataAccess.LoadTriggeredScaleUpEvents()
+		if err != nil {
+			return err
+		}
+		if len(d.scaleUpEvents) == 0 {
+			return fmt.Errorf("no TriggeredScaleUp events found in recorded data")
+		}
+		slog.Info("Replayer started in replayFromDB mode")
+		reportFileName := apputil.FilenameWithoutExtension(d.params.InputDataPath) + "-db-replay.json"
+		d.reportPath = path.Join(d.params.ReportDir, reportFileName)
 
-	//caSettings, err := d.dataAccess.LoadCASettingsBefore(time.Now().UTC())
-	//if err != nil {
-	//	return err
-	//}
-	//slog.Info("loaded casettings", "caSettings", caSettings)
-	d.scaleUpEvents, err = d.dataAccess.LoadTriggeredScaleUpEvents()
-	if err != nil {
-		return err
+	} else {
+		bytes, err := os.ReadFile(d.params.InputDataPath)
+		if err != nil {
+			return err
+		}
+		var inputReport gsh.ReplayReport
+		err = json.Unmarshal(bytes, &inputReport)
+		if err != nil {
+			return err
+		}
+		d.inputScenarios = inputReport.Scenarios
+		if len(d.inputScenarios) == 0 {
+			return fmt.Errorf("no scenarios found in the report")
+		}
+		slog.Info("Replayer started in replayFromReport mode")
+		reportFileName := apputil.FilenameWithoutExtension(d.params.InputDataPath) + "-report-replay.json"
+		d.reportPath = path.Join(d.params.ReportDir, reportFileName)
 	}
-	if len(d.scaleUpEvents) == 0 {
-		return fmt.Errorf("no TriggeredScaleUp events found in recorded data")
-	}
-	reportFileName := apputil.FilenameWithoutExtension(d.params.DBPath) + "-report.json"
-	d.reportPath = path.Join(d.params.ReportDir, reportFileName)
 	return nil
 }
 

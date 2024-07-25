@@ -25,8 +25,8 @@ func GetDuration(name string, defVal time.Duration) time.Duration {
 }
 
 func main() {
-	dbPath := os.Getenv("DB_PATH")
-	if len(dbPath) == 0 {
+	inputDataPath := os.Getenv("INPUT_DATA_PATH")
+	if len(inputDataPath) == 0 {
 		slog.Error("DB_PATH env MUST be set")
 		os.Exit(1)
 	}
@@ -65,7 +65,7 @@ func main() {
 	//}
 
 	defaultReplayer, err := replayer.NewDefaultReplayer(gsh.ReplayerParams{
-		DBPath:                       dbPath,
+		InputDataPath:                inputDataPath,
 		ReportDir:                    reportDir,
 		VirtualAutoScalerConfigPath:  virtualAutoscalerConfig,
 		VirtualClusterKubeConfigPath: virtualClusterKubeConfig,

@@ -371,7 +371,7 @@ func hashResource(hasher hash.Hash, name corev1.ResourceName, quantity resource.
 //
 //func (rp RecorderParams) String() string {
 //	return fmt.Sprintf("RecorderParams(ShootKubeConfigPath:%s,ShootNamespace:%s, SeedKubeConfigPath:%s, DataDBPath:%s, ScheduelerName:%s",
-//		rp.ShootKubeConfigPath, rp.ShootNameSpace, rp.SeedKubeConfigPath, rp.DBPath, rp.SchedulerName)
+//		rp.ShootKubeConfigPath, rp.ShootNameSpace, rp.SeedKubeConfigPath, rp.InputDataPath, rp.SchedulerName)
 //}
 //
 //func (ca CASettingsInfo) GetHash() string {
