@@ -47,6 +47,7 @@ type defaultReplayer struct {
 	lastClusterSnapshot gsc.ClusterSnapshot
 	report              *gsh.ReplayReport
 	reportPath          string
+	scaleUpEventCounter int
 	scaleUpEvents       []gsc.EventInfo
 }
 
@@ -93,6 +94,10 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+			if replayMarkTime.IsZero() {
+				slog.Info("no more scale ups to be replayed. Exiting")
+				return nil
+			}
 			if replayMarkTime.After(time.Now()) {
 				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime)
 				return nil
@@ -105,6 +110,13 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 				}
 				return err
 			}
+			bytes, err := json.Marshal(clusterSnapshot)
+			if err != nil {
+				return err
+			}
+			snapShotPath := fmt.Sprintf("/tmp/clusterSnapshot-%d.json", clusterSnapshot.Number)
+			_ = os.WriteFile(snapShotPath, bytes, 0644)
+
 			slog.Info("obtained recorded cluster snapshot for replay.",
 				"Number", clusterSnapshot.Number,
 				"SnapshotTime", clusterSnapshot.SnapshotTime,
@@ -116,12 +128,13 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 				d.lastClusterSnapshot = clusterSnapshot
 				continue
 			}
+			var deletedPendingPods []corev1.Pod
 			if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
 				slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
 				// Before writing autoscaler config, I must delete any unscheduled Pods .
 				// Other-wise CA will call VirtualNodeGroup.IncreaseSize just after AutoScalerConfig is written
 				// which isn't good since we want VirtualNodeGroup.IncreaseSize to be called only AFTER computeAndApplyDeltaWork
-				err = deletePendingUnscheduledPods(ctx, d.clientSet)
+				deletedPendingPods, err = deletePendingUnscheduledPods(ctx, d.clientSet)
 				if err != nil {
 					err = fmt.Errorf("cannot delete pendign unscheduled pods: %w", err)
 					return err
@@ -136,7 +149,7 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 					return err
 				}
 			}
-			_, err = d.computeAndApplyDeltaWork(ctx, clusterSnapshot)
+			_, err = d.computeAndApplyDeltaWork(ctx, clusterSnapshot, deletedPendingPods)
 			if err != nil {
 				return err
 			}
@@ -342,6 +355,7 @@ func createNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss 
 		if err != nil {
 			return fmt.Errorf("cannot create the namespace %q in virtual cluster: %w", ns, err)
 		}
+		slog.Info("created namespace", "namespace", ns)
 	}
 	return nil
 }
@@ -389,6 +403,12 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 
 	for i, podInfo := range podsToDeploy {
 		pod := getCorePodFromPodInfo(podInfo)
+		//if pod.Namespace != "default" {
+		//	err = createNamespaces(ctx, clientSet, pod.Namespace)
+		//	if err != nil && !apierrors.IsAlreadyExists(err) {
+		//		return err
+		//	}
+		//}
 		slog.Info("applyDeltaWork is deploying pod", "deployCount", i+1, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
 		podNew, err := clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
 		if err != nil {
@@ -498,23 +518,28 @@ func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 }
 
 func (d *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err error) {
-	if d.lastClusterSnapshot.SnapshotTime.IsZero() {
-		//recordStartTime, err := d.dataAccess.GetInitialRecorderStartTime()
-		//if err != nil {
-		//	return
-		//}
-		//recordStartTime = recordStartTime.Add(d.params.StabilizeInterval).UTC()
-		firstScaleUpEventTime := d.scaleUpEvents[0].EventTime
-		//replayTime = firstScaleUpEventTime.Add(-d.params.StabilizeInterval).UTC()
-		replayTime = firstScaleUpEventTime.UTC()
+	if d.scaleUpEventCounter >= len(d.scaleUpEvents) {
 		return
 	}
-	replayTime = d.lastClusterSnapshot.SnapshotTime.UTC().Add(d.params.ReplayInterval).UTC()
+	replayTime = d.scaleUpEvents[d.scaleUpEventCounter].EventTime
+	d.scaleUpEventCounter++
+	//if d.lastClusterSnapshot.SnapshotTime.IsZero() {
+	//	//recordStartTime, err := d.dataAccess.GetInitialRecorderStartTime()
+	//	//if err != nil {
+	//	//	return
+	//	//}
+	//	//recordStartTime = recordStartTime.Add(d.params.StabilizeInterval).UTC()
+	//	firstScaleUpEventTime := d.scaleUpEvents[0].EventTime
+	//	//replayTime = firstScaleUpEventTime.Add(-d.params.StabilizeInterval).UTC()
+	//	replayTime = firstScaleUpEventTime.UTC()
+	//	return
+	//}
+	//replayTime = d.lastClusterSnapshot.SnapshotTime.UTC().Add(d.params.ReplayInterval).UTC()
 	return
 }
 
-func (d *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
-	deltaWork, err := computeDeltaWork(ctx, d.clientSet, clusterSnapshot)
+func (d *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot, pendingPods []corev1.Pod) (workDone bool, err error) {
+	deltaWork, err := computeDeltaWork(ctx, d.clientSet, clusterSnapshot, pendingPods)
 	if err != nil {
 		return
 	}
@@ -532,7 +557,7 @@ func (d *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterS
 	return
 }
 
-func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clusterSnapshot gsc.ClusterSnapshot) (deltaWork DeltaWork, err error) {
+func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clusterSnapshot gsc.ClusterSnapshot, pendingPods []corev1.Pod) (deltaWork DeltaWork, err error) {
 	slog.Info("computeDeltaWork for clusterSnapshot.", "clusterSnapshot.Number", clusterSnapshot.Number)
 	pcWork, err := computePriorityClassWork(ctx, clientSet, clusterSnapshot.PriorityClasses)
 	if err != nil {
@@ -544,11 +569,10 @@ func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clus
 		return
 	}
 
-	podWork, err := computePodWork(ctx, clientSet, clusterSnapshot.Pods)
+	podWork, err := computePodWork(ctx, clientSet, clusterSnapshot.Pods, pendingPods)
 	if err != nil {
 		return
 	}
-
 	deltaWork.Number = clusterSnapshot.Number
 	deltaWork.PodWork = podWork
 	deltaWork.PriorityClassWork = pcWork
@@ -556,7 +580,7 @@ func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clus
 	return
 }
 
-func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapshotPods []gsc.PodInfo) (podWork PodWork, err error) {
+func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapshotPods []gsc.PodInfo, pendingPods []corev1.Pod) (podWork PodWork, err error) {
 	virtualNodes, err := clientutil.ListAllNodes(ctx, clientSet)
 	if err != nil {
 		err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
@@ -571,6 +595,7 @@ func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapsh
 		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
 		return
 	}
+	virtualPods = append(virtualPods, pendingPods...)
 	virtualPodsByName := lo.Associate(virtualPods, func(item corev1.Pod) (string, gsc.PodInfo) {
 		return item.Name, recorder.PodInfoFromPod(&item)
 	})
@@ -621,7 +646,7 @@ func computeNamespaceWork(ctx context.Context, clientSet *kubernetes.Clientset, 
 	if err != nil {
 		return
 	}
-	nsWork.ToCreate.Union(snapshotPodNamespaces.Difference(virtualNamespaces))
+	nsWork.ToCreate = nsWork.ToCreate.Union(snapshotPodNamespaces.Difference(virtualNamespaces))
 	// FIXME: uncomment me after recording all namespaces
 	//nsWork.ToDelete.Union(virtualNamespaces.Difference(snapshotPodNamespaces))
 	return
@@ -719,12 +744,12 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc
 	}
 	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerMode
 	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
-	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
-
 	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
 	if err != nil {
 		return
 	}
+
+	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Hash = cs.GetHash()
 	return
 }
@@ -883,10 +908,10 @@ func deriveNodeGroups(mcds []gsc.MachineDeploymentInfo, ngMinMaxMap map[string]g
 	return
 }
 
-func deletePendingUnscheduledPods(ctx context.Context, clientSet *kubernetes.Clientset) error {
+func deletePendingUnscheduledPods(ctx context.Context, clientSet *kubernetes.Clientset) (deletedPods []corev1.Pod, err error) {
 	pods, err := clientutil.ListAllPods(ctx, clientSet)
 	if err != nil {
-		return err
+		return
 	}
 	for _, p := range pods {
 		ss := recorder.ComputePodScheduleStatus(&p)
@@ -895,12 +920,13 @@ func deletePendingUnscheduledPods(ctx context.Context, clientSet *kubernetes.Cli
 				GracePeriodSeconds: pointer.Int64(0),
 			})
 			if err != nil && !apierrors.IsNotFound(err) {
-				return err
+				return
 			}
+			deletedPods = append(deletedPods, p)
 			slog.Info("Deleted pending unscheduled pod before resetting autoscaler config", "pod.Name", p.Name)
 		}
 	}
-	return nil
+	return
 }
 
 func waitTillNodesStarted(ctx context.Context, clientSet *kubernetes.Clientset, snapshotNumber int, numWaitNodes int) error {

@@ -80,14 +80,14 @@ func SortPodInfosForReadability(podInfos []gsc.PodInfo) {
 
 // SortPodInfoForDeployment sorts the given podInfos so that kube-system and higher priority pods are sorted first.
 func SortPodInfoForDeployment(a, b gsc.PodInfo) int {
-	n1 := a.Name
-	n2 := b.Name
 	ns1 := a.Namespace
 	ns2 := b.Namespace
 	s1 := a.PodScheduleStatus
 	s2 := b.PodScheduleStatus
 	p1 := a.Spec.Priority
 	p2 := b.Spec.Priority
+	c1 := a.CreationTimestamp
+	c2 := b.CreationTimestamp
 
 	if ns1 == "kube-system" && ns1 != ns2 {
 		return -1
@@ -108,7 +108,7 @@ func SortPodInfoForDeployment(a, b gsc.PodInfo) int {
 		// higher priority must come earlier
 		return cmp.Compare(*p2, *p1)
 	}
-	return cmp.Compare(n1, n2)
+	return cmp.Compare(c1.UnixMilli(), c2.UnixMilli())
 }
 
 //func ListAllNodes(ctx context.Context, clientSet *kubernetes.Clientset)

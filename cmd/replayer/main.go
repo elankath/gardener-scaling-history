@@ -52,6 +52,7 @@ func main() {
 
 	stabilizeInterval := GetDuration("STABILIZE_INTERVAL", replayer.DefaultStabilizeInterval)
 	replayInterval := GetDuration("REPLAY_INTERVAL", replayer.DefaultReplayInterval)
+
 	//recurConfigUpdateBool := os.Getenv("RECUR_CONFIG_UPDATE")
 	//var recurConfigUpdate bool
 	//if recurConfigUpdateBool != "" {
