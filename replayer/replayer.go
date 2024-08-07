@@ -1063,13 +1063,15 @@ func GetNodeGroupNameFromMCCName(namespace, mccName string) string {
 }
 
 func constructNodeTemplateFromMCC(mcc gsh.MachineClassInfo) gsc.NodeTemplate {
+	mccLabels := maps.Clone(mcc.Labels)
+	mccLabels["node.kubernetes.io/instance-type"] = mcc.InstanceType
 	return gsc.NodeTemplate{
 		Name:         GetNodeGroupNameFromMCCName(mcc.Namespace, mcc.Name),
 		Capacity:     mcc.Capacity,
 		InstanceType: mcc.InstanceType,
 		Region:       mcc.Region,
 		Zone:         mcc.Zone,
-		Labels:       mcc.Labels,
+		Labels:       mccLabels,
 		Taints:       nil,
 	}
 }
