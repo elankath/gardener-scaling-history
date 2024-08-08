@@ -8,7 +8,7 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o /bin/recorder cmd/recorder/main.go
+RUN GOOS=linux GOARCH=amd64 go build -o /bin/conntest cmd/conntest/main.go
 
 #############      base                                     #############
 #FROM gcr.io/distroless/static-debian11:nonroot as base
@@ -16,12 +16,10 @@ FROM ubuntu:latest
 
 WORKDIR /
 
-#############      recorder               #############
+#############      conntest               #############
 #FROM base AS scalehist
 
-COPY --from=builder /bin/recorder /recorder
-COPY --from=builder /src/gen /gen
-ENV CONFIG_DIR=/gen
-ENV DB_DIR=/gen
-ENTRYPOINT ["/recorder"]
-#CMD ["/bin/bash", "-c", "/recorder || true; while true; do sleep 1000; done"]
+COPY --from=builder /bin/conntest /conntest
+RUN chmod +x /conntest
+ENTRYPOINT ["/conntest"]
+#CMD ["/bin/bash", "-c", "/conntest || true; while true; do sleep 1000; done"]

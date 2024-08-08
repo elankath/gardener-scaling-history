@@ -36,7 +36,7 @@ function main() {
   fi
 
   local genPath
-  genPath="$(pwd)/gen"
+  genPath="gen"
 
   gardenctl target --garden "sap-landscape-${LANDSCAPE}"
   eval "$(gardenctl kubectl-env bash)"

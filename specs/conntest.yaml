@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: conntest
+  namespace: robot
+  labels:
+    app.kubernetes.io/name: "conntest"
+    app.kubernetes.io/component: "gardener-scaling-history"
+spec:
+  terminationGracePeriodSeconds: 30
+  containers:
+    - name: conntest
+      image: aaronfernandes/conntest:latest
+      imagePullPolicy: Always
+  serviceAccountName: robot
