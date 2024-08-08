@@ -10,6 +10,7 @@ spec:
   terminationGracePeriodSeconds: 30
   containers:
     - name: conntest
-      image: aaronfernandes/conntest:latest
+      #image: aaronfernandes/conntest:latest
+      image: lenkite/conntest:latest
       imagePullPolicy: Always
   serviceAccountName: robot

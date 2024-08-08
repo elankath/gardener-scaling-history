@@ -1,0 +1,6 @@
+FROM ubuntu:latest
+WORKDIR /
+COPY bin/conntest /conntest
+RUN chmod +x conntest
+ENTRYPOINT ["/conntest"]
+#CMD ["/bin/bash", "-c", "/conntest || true; while true; do sleep 1000; done"]

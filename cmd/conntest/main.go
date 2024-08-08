@@ -1,4 +1,4 @@
-package conntest
+package main
 
 import (
 	"context"
@@ -29,7 +29,7 @@ func main() {
 	result := restClient.Post().AbsPath(url).Body([]byte(payload)).Do(ctx)
 
 	if result.Error() != nil {
-		slog.Error("Could not create viewerkubeconfig request", "err", err)
+		slog.Error("Could not create viewerkubeconfig request", "err", result.Error())
 		os.Exit(2)
 	}
 
