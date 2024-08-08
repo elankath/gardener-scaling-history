@@ -6,10 +6,10 @@ import (
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/recorder"
+	"github.com/elankath/gardener-scaling-history/server"
 	"log/slog"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -17,6 +17,12 @@ import (
 const CLUSTERS_CFG_FILE = "clusters.csv"
 
 func main() {
+	pwd, err := os.Getwd()
+	if err != nil {
+		slog.Error("error fetching current working directory", "err", err)
+		os.Exit(1)
+	}
+	slog.Info("Current working directory", "pwd", pwd)
 	configDir := os.Getenv("CONFIG_DIR")
 	if len(configDir) == 0 {
 		slog.Error("CONFIG_DIR env must be set")
@@ -47,13 +53,13 @@ func main() {
 			os.Exit(5)
 		}
 		shootKubeConfigPath := row[2]
-		if !filepath.IsAbs(shootKubeConfigPath) {
-			shootKubeConfigPath = filepath.Join(configDir, shootKubeConfigPath)
-		}
+		//if !filepath.IsAbs(shootKubeConfigPath) {
+		//	shootKubeConfigPath = filepath.Join(configDir, shootKubeConfigPath)
+		//}
 		seedKubeConfigPath := row[3]
-		if !filepath.IsAbs(seedKubeConfigPath) {
-			seedKubeConfigPath = filepath.Join(configDir, seedKubeConfigPath)
-		}
+		//if !filepath.IsAbs(seedKubeConfigPath) {
+		//	seedKubeConfigPath = filepath.Join(configDir, seedKubeConfigPath)
+		//}
 		if _, err := os.Stat(shootKubeConfigPath); os.IsNotExist(err) {
 			slog.Error("Shoot kubeconfig does not exist", "path", shootKubeConfigPath)
 			os.Exit(6)
@@ -97,6 +103,16 @@ func main() {
 			os.Exit(4)
 		}
 	}
-	apputil.WaitForSignalAndShutdown(cancelFunc)
+
+	//launch engine in a goroutine
+	go func() {
+		err := server.Launch(ctx)
+		if err != nil {
+			slog.Error("cannot launch server", "error", err)
+			os.Exit(5)
+		}
+	}()
+
+	apputil.WaitForSignalAndShutdown(cancelFunc) //blocking call
 
 }

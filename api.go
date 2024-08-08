@@ -15,6 +15,8 @@ type Recorder interface {
 	io.Closer
 	Start(ctx context.Context) error
 	//	GetRecordedClusterSnapshot(time time.Time) (ClusterSnapshot, error)
+
+	// GetParams
 }
 
 //Current ClusterInfo in gsc -> ClusterAutoscalerConfig

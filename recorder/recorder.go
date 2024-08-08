@@ -56,6 +56,16 @@ const machineSetScaleUpPattern = `Scaled up.*? to (\d+)`
 var podTriggeredScaleUpRegex = regexp.MustCompile(podTriggerScaleUpPattern)
 var machineSetScaleUpRegex = regexp.MustCompile(machineSetScaleUpPattern)
 
+var recordersByNamespace = make(map[string]*defaultRecorder)
+
+func GetRecorders(shootNs string) *defaultRecorder {
+	return recordersByNamespace[shootNs]
+}
+
+func PutRecorder(shootNs string, recorder *defaultRecorder) {
+	recordersByNamespace[shootNs] = recorder
+}
+
 func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Recorder, error) {
 	// Load kubeconfig file
 	config, err := clientcmd.BuildConfigFromFlags("", params.ShootKubeConfigPath)
@@ -721,6 +731,10 @@ func (r *defaultRecorder) Start(ctx context.Context) error {
 	context.AfterFunc(ctx, func() {
 		_ = r.Close()
 	})
+
+	//TODO: check if recorder already exits. If yes, shut down
+	PutRecorder(r.params.ShootNameSpace, r)
+
 	return nil
 }
 
