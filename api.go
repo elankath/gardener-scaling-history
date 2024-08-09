@@ -8,6 +8,14 @@ import (
 	"time"
 )
 
+type RecorderMode string
+
+var (
+	InControlPlaneMode   RecorderMode = "in-control-plane"
+	InUtilityClusterMode RecorderMode = "in-utility-cluster"
+	LocalModeMode        RecorderMode = "local"
+)
+
 var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone"}
 
 // Recorder monitors the cluster denoted by given kubeconfig and records events and cluster data into cluster database

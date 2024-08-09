@@ -83,11 +83,11 @@ func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Rec
 		return nil, fmt.Errorf("cannot create clientset for control plane: %w", err)
 	}
 
-	connChecker, err := NewConnChecker(config, controlConfig)
-	if err != nil {
-		slog.Error("cannot create the conn checker", "error", err)
-		return nil, err
-	}
+	//connChecker, err := NewConnChecker(config, controlConfig)
+	//if err != nil {
+	//	slog.Error("cannot create the conn checker", "error", err)
+	//	return nil, err
+	//}
 
 	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
 	slog.Info("Building recorder", "recorder-params", params)
@@ -96,8 +96,8 @@ func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Rec
 	dataDBPath := path.Join(params.DBDir, dataDBName)
 	slog.Info("data db path.", "dataDBPath", dataDBPath)
 	return &defaultRecorder{params: &params,
-		startTime:              startTime,
-		connChecker:            connChecker,
+		startTime: startTime,
+		//connChecker:            connChecker,
 		informerFactory:        informerFactory,
 		eventsInformer:         informerFactory.Core().V1().Events(),
 		controlEventsInformer:  controlInformerFactory.ForResource(eventGVR),
@@ -606,12 +606,12 @@ func (r *defaultRecorder) onDeletePDB(pdbObj any) {
 }
 
 func (r *defaultRecorder) Start(ctx context.Context) error {
-	err := r.connChecker.TestConnection(ctx)
-	if err != nil {
-		slog.Error("connection check failed", "error", err)
-		return err
-	}
-	err = r.dataAccess.Init()
+	//err := r.connChecker.TestConnection(ctx)
+	//if err != nil {
+	//	slog.Error("connection check failed", "error", err)
+	//	return err
+	//}
+	err := r.dataAccess.Init()
 	if err != nil {
 		return err
 	}

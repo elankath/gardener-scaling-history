@@ -17,6 +17,11 @@ import (
 const CLUSTERS_CFG_FILE = "clusters.csv"
 
 func main() {
+	mode := os.Getenv("MODE")
+	if mode == string(gsh.InControlPlaneMode) {
+		deployInControlPlaneMode()
+		return
+	}
 	configDir := os.Getenv("CONFIG_DIR")
 	if len(configDir) == 0 {
 		slog.Error("CONFIG_DIR env must be set")
@@ -97,6 +102,47 @@ func main() {
 			os.Exit(4)
 		}
 	}
+	apputil.WaitForSignalAndShutdown(cancelFunc)
+
+}
+
+func deployInControlPlaneMode() {
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	dbDir := os.Getenv("DB_DIR")
+	if len(dbDir) == 0 {
+		slog.Error("DB_DIR must be set")
+		os.Exit(1)
+	}
+
+	controlNamespace := os.Getenv("CONTROL_NAMESPACE")
+	if len(controlNamespace) == 0 {
+		slog.Error("CONTROL_NAMESPACE must be set")
+		os.Exit(1)
+	}
+
+	recorderParams := gsh.RecorderParams{
+		Landscape:           "live", //TODO: do not hardcode
+		ShootNameSpace:      controlNamespace,
+		ShootKubeConfigPath: "/var/run/secrets/gardener.cloud/shoot/generic-kubeconfig/kubeconfig",
+		SeedKubeConfigPath:  "",
+		DBDir:               dbDir,
+	}
+
+	startTime := time.Now()
+	defaultRecorder, err := recorder.NewDefaultRecorder(recorderParams, startTime)
+	if err != nil {
+		slog.Error("cannot create recorder", "error", err, "mode", gsh.InControlPlaneMode)
+		time.Sleep(4 * time.Minute)
+		os.Exit(3)
+	}
+	err = defaultRecorder.Start(ctx)
+	slog.Info("STARTED recorder", "startTime", startTime, "params", recorderParams)
+	if err != nil {
+		slog.Error("cannot start recorder", "error", err, "mode", gsh.InControlPlaneMode)
+		time.Sleep(4 * time.Minute)
+		os.Exit(4)
+	}
+
 	apputil.WaitForSignalAndShutdown(cancelFunc)
 
 }
