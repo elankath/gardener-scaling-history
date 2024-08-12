@@ -65,7 +65,7 @@ func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Rec
 	// Create clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		return nil, fmt.Errorf("cannot create clientset: %w", err)
+		return nil, fmt.Errorf("cannot create shoot clientset: %w", err)
 	}
 
 	if params.SchedulerName == "" {
@@ -198,7 +198,7 @@ func (r *defaultRecorder) onAddPod(obj any) {
 		return
 	}
 	podNew := obj.(*corev1.Pod)
-	slog.Info("onAddPod.", "podName", podNew.Name, "podNew.UID", podNew.UID, "podNew.UID", podNew.UID)
+	slog.Debug("onAddPod.", "podName", podNew.Name, "podNew.UID", podNew.UID, "podNew.UID", podNew.UID)
 	err := r.processPod(nil, podNew)
 	if err != nil {
 		slog.Error("onAddPod failed", "error", err)
@@ -274,7 +274,7 @@ func (r *defaultRecorder) onUpdatePod(old, new any) {
 		return
 	}
 	podNew := new.(*corev1.Pod)
-	slog.Info("Pod obj changed.", "podNew", podNew.GetName(), "podNew.ResourceVersion", podNew.GetResourceVersion())
+	slog.Debug("Pod obj changed.", "podNew", podNew.GetName(), "podNew.ResourceVersion", podNew.GetResourceVersion())
 	podOld := old.(*corev1.Pod)
 	slog.Debug("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID)
 	err := r.processPod(podOld, podNew)
@@ -304,7 +304,7 @@ func (r *defaultRecorder) onDeletePod(obj any) {
 		return //sometimes this handler is invoked with null deletiontimestamp!
 	}
 	rowsUpdated, err := r.dataAccess.UpdatePodDeletionTimestamp(pod.UID, pod.DeletionTimestamp.Time.UTC())
-	slog.Info("updated deletionTimestamp of pod", "pod.name", pod.Name, "pod.uid", pod.UID, "pod.deletionTimestamp", pod.DeletionTimestamp, "rows.updated", rowsUpdated)
+	slog.Debug("updated deletionTimestamp of pod", "pod.name", pod.Name, "pod.uid", pod.UID, "pod.deletionTimestamp", pod.DeletionTimestamp, "rows.updated", rowsUpdated)
 	if err != nil {
 		slog.Error("could not execute pod deletion timestamp update", "error", err)
 	}
@@ -393,7 +393,7 @@ func (r *defaultRecorder) onDeleteNode(obj any) {
 		delTimeStamp = node.DeletionTimestamp.UTC()
 	}
 	rowsUpdated, err := r.dataAccess.UpdateNodeInfoDeletionTimestamp(node.Name, delTimeStamp)
-	slog.Info("updated DeletionTimestamp of Node.", "node.Name", node.Name, "node.DeletionTimestamp", delTimeStamp, "rows.updated", rowsUpdated)
+	slog.Debug("updated DeletionTimestamp of Node.", "node.Name", node.Name, "node.DeletionTimestamp", delTimeStamp, "rows.updated", rowsUpdated)
 	if err != nil {
 		slog.Error("could not execute UpdateNodeInfoDeletionTimestamp ", "error", err, "node.Name", node.Name, "node.DeletionTimestamp", delTimeStamp)
 	}

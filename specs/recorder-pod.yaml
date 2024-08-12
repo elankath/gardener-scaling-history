@@ -4,7 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: "scaling-history-recorder"
   name: recorder-pvc
-  namespace: shoot--hc-canary--prod-hna0
+  namespace: robot
 spec:
   accessModes:
     - ReadWriteOnce
@@ -28,7 +28,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: scaling-history-recorder
-  namespace: shoot--hc-canary--prod-hna0 #TODO
+  namespace: robot #TODO
   labels:
     app.kubernetes.io/name: "scaling-history-recorder"
     networking.gardener.cloud/to-dns: allowed
@@ -39,7 +39,7 @@ metadata:
     gardener.cloud/role: controlplane
 spec:
   terminationGracePeriodSeconds: 30
-  serviceAccount: "scaling-history-recorder-sa"
+  serviceAccount: "robot"
   containers:
     - name: recorder
       image: aaronfernandes/recorder:latest
@@ -47,39 +47,42 @@ spec:
         limits:
           memory: 4Gi
       env:
-        - name: CONTROL_NAMESPACE
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: metadata.namespace
+        - name: SHOOT_NAMESPACE
+          value: shoot--hc-canary--prod-hna0 #TODO
         - name: MODE
-          value: in-control-plane
+          value: in-utility-cluster
         - name: DB_DIR
           value: /var/data/db-dir
       volumeMounts:
-        - mountPath: /var/run/secrets/gardener.cloud/shoot/generic-kubeconfig
-          name: kubeconfig
-          readOnly: true
+#        - mountPath: /var/run/secrets/gardener.cloud/shoot/generic-kubeconfig
+#          name: kubeconfig
+#          readOnly: true
         - mountPath: /var/data/db-dir
           name: db-dir
+        - mountPath: /app/secrets/gardens
+          name: robot-gardens
   volumes:
     - name: db-dir
       persistentVolumeClaim:
         claimName: recorder-pvc
-    - name: kubeconfig
-      projected:
+#    - name: kubeconfig
+#      projected:
+#        defaultMode: 420
+#        sources:
+#          - secret:
+#              items:
+#                - key: kubeconfig
+#                  path: kubeconfig
+#              name: generic-token-kubeconfig-dec7d246
+#              optional: false
+#          - secret:
+#              items:
+#                - key: token
+#                  path: token
+#              name: shoot-access-cluster-autoscaler
+#              optional: false
+    - name: robot-gardens
+      secret:
         defaultMode: 420
-        sources:
-          - secret:
-              items:
-                - key: kubeconfig
-                  path: kubeconfig
-              name: generic-token-kubeconfig-dec7d246
-              optional: false
-          - secret:
-              items:
-                - key: token
-                  path: token
-              name: shoot-access-cluster-autoscaler
-              optional: false
+        secretName: robot-gardens
 

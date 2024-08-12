@@ -781,7 +781,7 @@ func (d *DataAccess) StorePodInfo(podInfo gsc.PodInfo) (int64, error) {
 	if err != nil {
 		return -1, fmt.Errorf("could not persist podinfo %s: %w", podInfo, err)
 	}
-	slog.Info("stored row into pod_info.", "pod.Name", podInfo.Name, "pod.Namespace", podInfo.Namespace,
+	slog.Debug("stored row into pod_info.", "pod.Name", podInfo.Name, "pod.Namespace", podInfo.Namespace,
 		"pod.CreationTimestamp", podInfo.CreationTimestamp, "pod.Hash", podInfo.Hash)
 	return result.LastInsertId()
 }
@@ -851,7 +851,7 @@ func (d *DataAccess) StoreNodeInfo(n gsc.NodeInfo) (rowID int64, err error) {
 		slog.Error("cannot insert node_info in the node_info table", "error", err, "node", n)
 		return -1, err
 	}
-	slog.Info("inserted new row into the node_info table", "node.Name", n.Name)
+	slog.Debug("inserted new row into the node_info table", "node.Name", n.Name)
 	return result.LastInsertId()
 }
 
