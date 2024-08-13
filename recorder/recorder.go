@@ -3,10 +3,12 @@ package recorder
 import (
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	gsc "github.com/elankath/gardener-scaling-common"
 	"github.com/elankath/gardener-scaling-history"
+	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/db"
 	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
@@ -28,6 +30,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"log/slog"
+	"os"
 	"path"
 	"regexp"
 	"strconv"
@@ -37,6 +40,8 @@ import (
 )
 
 const PoolLabel = "worker.gardener.cloud/pool"
+
+const CLUSTERS_CFG_FILE = "clusters.csv"
 
 var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone"}
 
@@ -110,7 +115,7 @@ func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Rec
 		mcdInformer:            controlInformerFactory.ForResource(machineDeploymentGVR),
 		mccInformer:            controlInformerFactory.ForResource(machineClassGVR),
 		deploymentInformer:     controlInformerFactory.ForResource(deploymentGVR),
-		configmapInformer:      controlInformerFactory.ForResource(configmapGVR),
+		configmapInformer:      informerFactory.Core().V1().ConfigMaps(),
 		workerInformer:         controlInformerFactory.ForResource(workerGVR),
 		dataAccess:             db.NewDataAccess(dataDBPath),
 	}, nil
@@ -135,7 +140,7 @@ type defaultRecorder struct {
 	mccInformer            informers.GenericInformer
 	workerInformer         informers.GenericInformer
 	deploymentInformer     informers.GenericInformer
-	configmapInformer      informers.GenericInformer
+	configmapInformer      corev1informers.ConfigMapInformer
 	dataAccess             *db.DataAccess
 	nodeAllocatableVolumes sync.Map
 	stopCh                 <-chan struct{}
@@ -1045,26 +1050,28 @@ func (r *defaultRecorder) onUpdateDeployment(_, newObj interface{}) {
 	r.onAddDeployment(newObj)
 }
 
-func getPrirotiesFromCAConfig(obj *unstructured.Unstructured) (string, error) {
-	caConfig := obj.UnstructuredContent()
-	dataMap, err := GetInnerMap(caConfig, "data")
-	if err != nil {
-		return "", err
-	}
-	return dataMap["priorities"].(string), nil
+func getPrirotiesFromCAConfig(obj *corev1.ConfigMap) string {
+	return obj.Data["priorities"]
 }
 
-func (r *defaultRecorder) onAddConfigMap(obj interface{}) {
-	configMap := obj.(*unstructured.Unstructured)
+func (r *defaultRecorder) onAddConfigMap(obj any) {
+	if obj == nil {
+		return
+	}
+	configMap, ok := obj.(*corev1.ConfigMap)
+	if !ok {
+		slog.Error("onAddConfigMap not invoked with corev1.configMap", "obj", obj)
+	}
 	if configMap.GetName() != "cluster-autoscaler-priority-expander" {
 		return
 	}
-	priorities, err := getPrirotiesFromCAConfig(configMap)
-	if err != nil {
-		slog.Error("cannot get the priorities from priority-expander config map", "error", err)
+	priorities := getPrirotiesFromCAConfig(configMap)
+	if priorities == "" {
+		slog.Info("No priorities defined in configmap", "configMap", configMap)
+	} else {
+		slog.Info("Found priorities defined in configmap", "configMap", configMap, "priorities", priorities)
 	}
-	fmt.Printf("ConfigMap Priorities : %s\n", priorities)
-	caSettings := gsc.CASettingsInfo{
+	var caSettings = gsc.CASettingsInfo{
 		Priorities: priorities,
 	}
 	caSettings.Hash = caSettings.GetHash()
@@ -1376,3 +1383,71 @@ func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gsc.PodScheduleSt
 //	}
 //	return &timestamp, err
 //}
+
+func CreateRecorderParams(ctx context.Context, mode gsh.RecorderMode, configDir string, dbDir string) ([]gsh.RecorderParams, error) {
+	clusterConfigPath := path.Join(configDir, CLUSTERS_CFG_FILE)
+
+	landscapeKubeconfigs, err := apputil.GetLandscapeKubeconfigs(mode)
+	if err != nil {
+		return nil, err
+	}
+
+	result, err := os.ReadFile(clusterConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot load clusters config %q %w", clusterConfigPath, err)
+	}
+	reader := csv.NewReader(strings.NewReader(string(result)))
+	reader.Comment = '#'
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("cannot parse clusters config: %w", err)
+	}
+	var recorderParams = make([]gsh.RecorderParams, len(records))
+	for rowIndex, row := range records {
+		if len(row) != 3 {
+			return nil, fmt.Errorf("invalid row in cluster config %q, should be 3 colums", clusterConfigPath)
+		}
+		landscapeName := row[0]
+		projectName := row[1]
+		shootName := row[2]
+
+		slog.Info("Reading config row", "landscapeName", landscapeName, "projectName", projectName, "shootName", shootName)
+		landscapeKubeconfig, ok := landscapeKubeconfigs[landscapeName]
+		if !ok {
+			return nil, fmt.Errorf("cannot find kubeconfig for landscape %q", landscapeName)
+		}
+		landscapeClient, err := apputil.CreateLandscapeClient(landscapeKubeconfig, mode)
+		if err != nil {
+			return nil, fmt.Errorf("cannot create landscape client for landscape %q: %w", landscapeName, err)
+		}
+
+		seedName, err := apputil.GetSeedName(ctx, landscapeClient, projectName, shootName)
+		if err != nil {
+			return nil, fmt.Errorf("cannot get seed for landscape %q: %w", landscapeName, err)
+		}
+
+		shootNamespace := fmt.Sprintf("shoot--%s--%s", projectName, shootName)
+
+		shootKubeconfigPath, err := apputil.GetViewerKubeconfig(ctx, landscapeClient, landscapeName, projectName, shootName)
+		if err != nil {
+			return nil, fmt.Errorf("cannot get viewer kubeconfig for shoot %q: %w", shootName, err)
+		}
+
+		seedKubeconfigPath, err := apputil.GetViewerKubeconfig(ctx, landscapeClient, landscapeName, "garden", seedName)
+		if err != nil {
+			return nil, fmt.Errorf("cannot get viewer kubeconfig for seed %q: %w", seedName, err)
+		}
+
+		rp := gsh.RecorderParams{
+			Landscape:           landscapeName,
+			ShootNameSpace:      shootNamespace,
+			ShootKubeConfigPath: shootKubeconfigPath,
+			SeedKubeConfigPath:  seedKubeconfigPath,
+			DBDir:               dbDir,
+		}
+
+		slog.Info("Created recorder params", "landscape", landscapeName, "shootNamespace", shootNamespace, "shootKubeConfigPath", shootKubeconfigPath, "seedKubeConfigPath", seedKubeconfigPath, "dbDir", dbDir)
+		recorderParams[rowIndex] = rp
+	}
+	return recorderParams, nil
+}

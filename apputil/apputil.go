@@ -3,7 +3,13 @@ package apputil
 import (
 	"cmp"
 	"context"
+	"encoding/base64"
+	"fmt"
 	"github.com/elankath/gardener-scaling-common"
+	gsh "github.com/elankath/gardener-scaling-history"
+	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -112,3 +118,154 @@ func SortPodInfoForDeployment(a, b gsc.PodInfo) int {
 }
 
 //func ListAllNodes(ctx context.Context, clientSet *kubernetes.Clientset)
+
+func CreateLandscapeClient(kubeconfigPath string, mode gsh.RecorderMode) (*kubernetes.Clientset, error) {
+	landscapeConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create client config: %w", err)
+	}
+	if mode == gsh.InUtilityClusterMode {
+		landscapeConfig.Insecure = true
+	}
+
+	landscapeClientset, err := kubernetes.NewForConfig(landscapeConfig)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create clientset: %w", err)
+	}
+
+	return landscapeClientset, nil
+}
+
+func GetViewerKubeconfig(ctx context.Context, landscapeClient *kubernetes.Clientset, landscapeName, projectName, shootName string) (string, error) {
+	var projectNS string
+
+	if projectName == "garden" {
+		projectNS = projectName
+	} else {
+		projectNS = "garden-" + projectName
+	}
+	url := "/apis/core.gardener.cloud/v1beta1/namespaces/" + projectNS + "/shoots/" + shootName + "/viewerkubeconfig"
+
+	restClient := landscapeClient.CoreV1().RESTClient()
+
+	payload := `{
+      "apiVersion": "authentication.gardener.cloud/v1alpha1",
+      "kind": "ViewerKubeconfigRequest",
+      "spec": {"expirationSeconds": 86400}}`
+
+	result := restClient.Post().AbsPath(url).Body([]byte(payload)).Do(ctx)
+
+	if result.Error() != nil {
+		slog.Error("Could not create viewerkubeconfig request", "err", result.Error())
+		return "", result.Error()
+	}
+
+	responsePayload, err := result.Raw()
+	if err != nil {
+		slog.Error("Could not read result viewerconfig payload", "err", err)
+		return "", err
+	}
+
+	payloadMap := make(map[string]any)
+
+	err = json.Unmarshal(responsePayload, &payloadMap)
+	if err != nil {
+		slog.Error("cannot unmarshal viewerkubeconfig payload", "err", err)
+		return "", err
+	}
+
+	statusMap, ok := payloadMap["status"].(map[string]any)
+	if !ok {
+		slog.Error("can't find status field in response payload", "payload", string(responsePayload))
+		return "", fmt.Errorf("can't find status field in response payload")
+	}
+	encodedKubeconfig, ok := statusMap["kubeconfig"].(string)
+	if !ok {
+		slog.Error("Can't find kubeconfig in status map", "payload", string(responsePayload))
+		return "", fmt.Errorf("can't find kubeconfig in status map")
+	}
+	kubeconfigBytes, err := base64.StdEncoding.DecodeString(encodedKubeconfig)
+	if err != nil {
+		slog.Error("error decoding kubeconfig", "error", err)
+		return "", err
+	}
+
+	kubeconfigPath := "/tmp/" + landscapeName + "_" + projectName + "_" + shootName + ".yaml"
+	err = os.WriteFile(kubeconfigPath, kubeconfigBytes, 0644)
+	if err != nil {
+		return "", err
+	}
+
+	slog.Info("Generated kubeconfig", "kubeconfigPath", kubeconfigPath, "shootname", shootName, "projectNamespace", projectNS)
+
+	return kubeconfigPath, nil
+}
+
+func GetSeedName(ctx context.Context, landscapeClient *kubernetes.Clientset, projectName string, shootName string) (seedName string, err error) {
+	url := "/apis/core.gardener.cloud/v1beta1/namespaces/garden-" + projectName + "/shoots/" + shootName
+
+	restClient := landscapeClient.CoreV1().RESTClient()
+
+	result := restClient.Get().AbsPath(url).Do(ctx)
+	if result.Error() != nil {
+		slog.Error("Could not fetch shoot object", "err", result.Error(), "projectName", projectName, "shootName", shootName, "URL", url)
+		err = result.Error()
+		return
+	}
+
+	responsePayload, err := result.Raw()
+	if err != nil {
+		slog.Error("Could not read result shoot payload", "err", err)
+		return
+	}
+
+	payloadMap := make(map[string]any)
+
+	err = json.Unmarshal(responsePayload, &payloadMap)
+	if err != nil {
+		slog.Error("cannot unmarshal shoot payload", "err", err)
+		return
+	}
+
+	shootSpecMap, ok := payloadMap["spec"].(map[string]any)
+	if !ok {
+		err = fmt.Errorf("cannot find spec in shoot object %q", shootName)
+		return
+	}
+
+	seedName, ok = shootSpecMap["seedName"].(string)
+	if !ok {
+		err = fmt.Errorf("cannot find seedName in spec for shoot %q", shootName)
+		return
+	}
+
+	slog.Info("Obtained seedName", "seedName", seedName, "shootName", shootName)
+	return
+
+}
+
+func GetLandscapeKubeconfigs(mode gsh.RecorderMode) (map[string]string, error) {
+	landscapeKubeconfigs := make(map[string]string)
+	if mode == gsh.InUtilityClusterMode {
+		landscapeKubeconfigs["live"] = "/app/secrets/gardens/garden-live"
+		landscapeKubeconfigs["canary"] = "/app/secrets/gardens/garden-canary"
+		landscapeKubeconfigs["staging"] = "/app/secrets/gardens/garden-staging"
+		landscapeKubeconfigs["dev"] = "/app/secrets/gardens/garden-dev"
+	} else if mode == gsh.LocalModeMode {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		for _, landscape := range []string{"dev", "staging", "canary", "live"} {
+			kubeconfigPath := path.Join(home, ".garden", "landscapes", landscape, "oidc-kubeconfig.yaml")
+			_, err = os.Stat(kubeconfigPath)
+			if err != nil {
+				return nil, fmt.Errorf("cannot find kubeconfig for landscape %q: %w", landscape, err)
+			}
+			landscapeKubeconfigs[landscape] = kubeconfigPath
+		}
+	} else {
+		return nil, fmt.Errorf("unsupported mode %q", mode)
+	}
+	return landscapeKubeconfigs, nil
+}

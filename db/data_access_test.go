@@ -369,7 +369,7 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 }
 
 func initDataAccess() (dataAccess *DataAccess, err error) {
-	dbPath := path.Join(os.TempDir(), "test.db")
+	dbPath := path.Join("/tmp", "test.db")
 	slog.Info("TestLoadLatestNodeGroup creating db", "db.path", dbPath)
 	_ = os.Remove(dbPath)
 	dataAccess = NewDataAccess(dbPath)
@@ -634,4 +634,40 @@ func TestStoreLoadEmptyNodeInfos(t *testing.T) {
 	assert.Nil(t, nodeInfos)
 	assert.NotNil(t, err)
 	assert.True(t, errors.Is(err, sql.ErrNoRows))
+}
+
+func TestStoreLoadCASettingInfos(t *testing.T) {
+	dataAccess, err := initDataAccess()
+	assert.Nil(t, err)
+
+	ngMinMax := make(map[string]gsc.MinMax)
+	ngMinMax["P1"] = gsc.MinMax{
+		Min: 1,
+		Max: 3,
+	}
+
+	storeInfo := gsc.CASettingsInfo{
+		SnapshotTimestamp:             time.Now().UTC(),
+		Expander:                      "priority",
+		NodeGroupsMinMax:              ngMinMax,
+		MaxNodeProvisionTime:          time.Minute,
+		ScanInterval:                  10 * time.Second,
+		MaxGracefulTerminationSeconds: 30,
+		NewPodScaleUpDelay:            20 * time.Second,
+		MaxEmptyBulkDelete:            10,
+		IgnoreDaemonSetUtilization:    false,
+		MaxNodesTotal:                 100,
+		Priorities:                    "priorities:test",
+	}
+	storeInfo.Hash = storeInfo.GetHash()
+
+	_, err = dataAccess.StoreCASettingsInfo(storeInfo)
+	assert.Nil(t, err)
+	t.Logf("StoreCASettingsInfo is  %s", storeInfo)
+
+	loadInfo, err := dataAccess.GetLatestCASettingsInfo()
+	assert.Nil(t, err)
+	t.Logf("LoadInfo is %s", loadInfo)
+
+	assert.Equal(t, storeInfo, loadInfo)
 }
