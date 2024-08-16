@@ -124,7 +124,7 @@ func CreateLandscapeClient(kubeconfigPath string, mode gsh.RecorderMode) (*kuber
 	if err != nil {
 		return nil, fmt.Errorf("cannot create client config: %w", err)
 	}
-	if mode == gsh.InUtilityClusterMode {
+	if mode == gsh.InUtilityClusterRecorderMode {
 		landscapeConfig.Insecure = true
 	}
 
@@ -246,12 +246,12 @@ func GetSeedName(ctx context.Context, landscapeClient *kubernetes.Clientset, pro
 
 func GetLandscapeKubeconfigs(mode gsh.RecorderMode) (map[string]string, error) {
 	landscapeKubeconfigs := make(map[string]string)
-	if mode == gsh.InUtilityClusterMode {
+	if mode == gsh.InUtilityClusterRecorderMode {
 		landscapeKubeconfigs["live"] = "/app/secrets/gardens/garden-live"
 		landscapeKubeconfigs["canary"] = "/app/secrets/gardens/garden-canary"
 		landscapeKubeconfigs["staging"] = "/app/secrets/gardens/garden-staging"
 		landscapeKubeconfigs["dev"] = "/app/secrets/gardens/garden-dev"
-	} else if mode == gsh.LocalModeMode {
+	} else if mode == gsh.LocalRecorderMode {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, err

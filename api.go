@@ -11,9 +11,9 @@ import (
 type RecorderMode string
 
 var (
-	InControlPlaneMode   RecorderMode = "in-control-plane"
-	InUtilityClusterMode RecorderMode = "in-utility-cluster"
-	LocalModeMode        RecorderMode = "local"
+	InControlPlaneMode           RecorderMode = "in-control-plane"
+	InUtilityClusterRecorderMode RecorderMode = "in-utility-cluster"
+	LocalRecorderMode            RecorderMode = "local"
 )
 
 var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone"}

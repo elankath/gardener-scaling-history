@@ -679,4 +679,9 @@ func TestStoreLoadCASettingInfos(t *testing.T) {
 	t.Logf("LoadInfo is %s", loadInfo)
 
 	assert.Equal(t, storeInfo, loadInfo)
+
+	loadInfo, err = dataAccess.LoadLatestCASettingsInfo()
+	assert.Nil(t, err)
+	t.Logf("Latest LoadInfo is %s", loadInfo)
+	assert.Equal(t, storeInfo, loadInfo)
 }

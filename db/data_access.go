@@ -713,6 +713,10 @@ func (d *DataAccess) LoadCASettingsBefore(timestamp time.Time) (caSettings gsc.C
 	return queryAndMapToInfo[gsc.CASettingsInfo, caSettingsRow](d.selectLatestCASettingsInfoBefore, timestamp)
 }
 
+func (d *DataAccess) LoadLatestCASettingsInfo() (gsc.CASettingsInfo, error) {
+	return queryAndMapToInfo[gsc.CASettingsInfo, caSettingsRow](d.selectLatestCASettingsInfo)
+}
+
 // GetCADeploymentWithHash has a  TODO: move me to generics
 func (d *DataAccess) GetCADeploymentWithHash(Hash string) (caDeployment *gsc.CASettingsInfo, err error) {
 	rows, err := d.selectLatestCASettingsInfo.Query(Hash)

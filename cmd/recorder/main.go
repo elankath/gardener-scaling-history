@@ -13,7 +13,7 @@ import (
 func main() {
 	mode := os.Getenv("MODE")
 	var exitCode int
-	//if mode == string(gsh.InUtilityClusterMode) {
+	//if mode == string(gsh.InUtilityClusterRecorderMode) {
 	//	exitCode = launchInUtilityClusterMode()
 	//} else {
 	//	exitCode = launchInLocalMode()
@@ -40,7 +40,12 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Recorde
 	}
 	dbDir := os.Getenv("DB_DIR")
 	if len(dbDir) == 0 {
-		slog.Error("DB_DIR env must be set")
+		if mode == gsh.LocalRecorderMode {
+			dbDir = configDir
+			slog.Warn("DB_DIR not set for local mode. Assuming same value as CONFIG_DIR", "dbDir", configDir)
+		} else {
+			slog.Error("DB_DIR env must be set for non-local mode")
+		}
 		return 2
 	}
 

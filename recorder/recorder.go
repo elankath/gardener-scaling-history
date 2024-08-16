@@ -1024,7 +1024,7 @@ func (r *defaultRecorder) onAddDeployment(obj interface{}) {
 		return
 	}
 	caSettings.SnapshotTimestamp = time.Now().UTC()
-	storedCASettingsInfo, err := r.dataAccess.GetLatestCASettingsInfo()
+	storedCASettingsInfo, err := r.dataAccess.LoadLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Error("cannot get the latest ca deployment stored in db", "error", err)
@@ -1075,18 +1075,18 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 		Priorities: priorities,
 	}
 	caSettings.Hash = caSettings.GetHash()
-	latestCaDeployment, err := r.dataAccess.GetLatestCASettingsInfo()
+	latestCADeployment, err := r.dataAccess.LoadLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Error("cannot get the latest ca deployment stored in db", "error", err)
 			return
 		}
 	}
-	if latestCaDeployment != nil {
-		caSettings.MaxNodesTotal = latestCaDeployment.MaxNodesTotal
-		caSettings.Expander = latestCaDeployment.Expander
+	if latestCADeployment != nil {
+		caSettings.MaxNodesTotal = latestCADeployment.MaxNodesTotal
+		caSettings.Expander = latestCADeployment.Expander
 	}
-	if latestCaDeployment == nil || latestCaDeployment.Hash != caSettings.Hash {
+	if latestCADeployment == nil || latestCADeployment.Hash != caSettings.Hash {
 		_, err = r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
 			slog.Error("cannot store ca settings in ca_settings_info", "error", err)
