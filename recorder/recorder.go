@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	storagev1 "k8s.io/api/storage/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -61,8 +62,99 @@ const machineSetScaleUpPattern = `Scaled up.*? to (\d+)`
 var podTriggeredScaleUpRegex = regexp.MustCompile(podTriggerScaleUpPattern)
 var machineSetScaleUpRegex = regexp.MustCompile(machineSetScaleUpPattern)
 
-func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Recorder, error) {
+type recorderKey struct {
+	Landscape   string
+	ProjectName string
+	ShootName   string
+}
+
+var recordersMap = make(map[recorderKey]*defaultRecorder)
+var recorderCheckStarted bool
+var checkNum = 0
+
+func startRecorderCheck(ctx context.Context) {
+	if recorderCheckStarted {
+		return
+	}
+	recorderCheckStarted = true
+	for {
+		checkNum++
+		select {
+		case <-ctx.Done():
+			slog.Info("startRecorderCheck exiting since ctx is done")
+			break
+		case <-time.After(30 * time.Second):
+			slog.Info("startRecorderCheck commencing", "checkNum", checkNum)
+			for _, recorder := range recordersMap {
+				err := recorder.connChecker.TestConnection(recorder.ctx)
+				if err == nil {
+					slog.Info("startRecorderCheck PASSED connection test for recorder", "checkNum", checkNum, "recorderParams", recorder.params)
+					continue
+				}
+				slog.Error("startRecorderCheck FAILED connection test for recorder", "checkNum", checkNum, "error", err, "recorderParams", recorder.params)
+				if !apierrors.IsUnauthorized(err) {
+					continue
+				}
+				slog.Warn("startRecorderCheck is STOPPING old recorder and RECREATING fresh recorder after unauthorized error", "checkNum", checkNum, "recorderParams", recorder.params)
+				//			slog.Warn("startRecorderCheck determined Unauthorized error for recorder", "recorder", recorder.params)
+				_ = recorder.Close()
+				freshParams, err := createFreshRecorderParams(ctx, recorder.params)
+				freshRecorder, err := NewDefaultRecorder(ctx, freshParams, recorder.startTime)
+				if err != nil {
+					slog.Error("startRecorderCheck cannot CREATE fresh recorder after conn auth failure", "checkNum", checkNum, "recorderParams", recorder.params)
+				}
+				err = freshRecorder.Start()
+				if err != nil {
+					slog.Error("startRecorderCheck cannot START fresh recorder", "checkNum", checkNum, "error", err, "recorderParams", recorder.params)
+				}
+			}
+		}
+	}
+}
+
+func createFreshRecorderParams(ctx context.Context, oldParams gsh.RecorderParams) (params gsh.RecorderParams, err error) {
+	landscapeKubeConfigs, err := apputil.GetLandscapeKubeconfigs(oldParams.Mode)
+	if err != nil {
+		return
+	}
+	landscapeKubeconfig, ok := landscapeKubeConfigs[oldParams.Landscape]
+	if !ok {
+		err = fmt.Errorf("cannot find kubeconfig for landscape %q", oldParams.Landscape)
+		return
+	}
+	landscapeClient, err := apputil.CreateLandscapeClient(landscapeKubeconfig, oldParams.Mode)
+	if err != nil {
+		err = fmt.Errorf("cannot create landscape client for landscape %q, projectName %q, shootName %q: %w", oldParams.Landscape, oldParams.ProjectName, oldParams.ShootName, err)
+		return
+	}
+	shootKubeconfigPath, err := apputil.GetViewerKubeconfig(ctx, landscapeClient, oldParams.Landscape, oldParams.ProjectName, oldParams.ShootName)
+	if err != nil {
+		err = fmt.Errorf("cannot get viewer kubeconfig for shoot %q: %w", oldParams.ShootName, err)
+		return
+	}
+
+	seedKubeconfigPath, err := apputil.GetViewerKubeconfig(ctx, landscapeClient, oldParams.Landscape, "garden", oldParams.SeedName)
+	if err != nil {
+		err = fmt.Errorf("cannot get viewer kubeconfig for seed %q: %w", oldParams.SeedName, err)
+		return
+	}
+	params = gsh.RecorderParams{
+		Mode:                oldParams.Mode,
+		Landscape:           oldParams.Landscape,
+		ProjectName:         oldParams.ProjectName,
+		ShootName:           oldParams.ShootName,
+		SeedName:            oldParams.SeedName,
+		ShootNameSpace:      oldParams.ShootNameSpace,
+		ShootKubeConfigPath: shootKubeconfigPath,
+		SeedKubeConfigPath:  seedKubeconfigPath,
+		DBDir:               oldParams.DBDir,
+	}
+	return
+}
+
+func NewDefaultRecorder(parentCtx context.Context, params gsh.RecorderParams, startTime time.Time) (gsh.Recorder, error) {
 	// Load kubeconfig file
+	rCtx, rCancelCauseFunc := context.WithCancelCause(parentCtx)
 	config, err := clientcmd.BuildConfigFromFlags("", params.ShootKubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create client config: %w", err)
@@ -73,36 +165,31 @@ func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Rec
 		return nil, fmt.Errorf("cannot create shoot clientset: %w", err)
 	}
 
-	if params.SchedulerName == "" {
-		params.SchedulerName = "bin-packing-scheduler"
-		slog.Info("scheduler name un-specified. defaulting", "SchedulerName", params.SchedulerName)
-	}
-
 	controlConfig, err := clientcmd.BuildConfigFromFlags("", params.SeedKubeConfigPath)
 	if err != nil {
 		slog.Error("cannot create the client config for the control plane", "error", err)
 		return nil, fmt.Errorf("cannot create the client config for the control plane: %w", err)
 	}
+	connChecker, err := NewConnChecker(config, controlConfig)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create the conn checker for recorder %q: %w", params, err)
+	}
+
 	controlClientSet, err := dynamic.NewForConfig(controlConfig)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create clientset for control plane: %w", err)
 	}
 
-	//connChecker, err := NewConnChecker(config, controlConfig)
-	//if err != nil {
-	//	slog.Error("cannot create the conn checker", "error", err)
-	//	return nil, err
-	//}
-
 	informerFactory := informers.NewSharedInformerFactory(clientset, 0)
-	slog.Info("Building recorder", "recorder-params", params)
 	controlInformerFactory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(controlClientSet, 0, params.ShootNameSpace, nil)
 	dataDBName := strings.TrimSuffix(strings.TrimPrefix(path.Base(params.ShootKubeConfigPath), "kubeconfig-"), ".yaml") + ".db"
 	dataDBPath := path.Join(params.DBDir, dataDBName)
-	slog.Info("data db path.", "dataDBPath", dataDBPath)
-	return &defaultRecorder{params: &params,
-		startTime: startTime,
-		//connChecker:            connChecker,
+	slog.Info("Building Recorder", "recorderParams", params, "dataDBPath", dataDBPath)
+	recorderInstance := &defaultRecorder{params: params,
+		ctx:                    rCtx,
+		cancelFunc:             rCancelCauseFunc,
+		connChecker:            connChecker,
+		startTime:              startTime,
 		informerFactory:        informerFactory,
 		eventsInformer:         informerFactory.Core().V1().Events(),
 		controlEventsInformer:  controlInformerFactory.ForResource(eventGVR),
@@ -118,15 +205,26 @@ func NewDefaultRecorder(params gsh.RecorderParams, startTime time.Time) (gsh.Rec
 		configmapInformer:      informerFactory.Core().V1().ConfigMaps(),
 		workerInformer:         controlInformerFactory.ForResource(workerGVR),
 		dataAccess:             db.NewDataAccess(dataDBPath),
-	}, nil
+	}
+	recKey := recorderKey{
+		Landscape:   params.Landscape,
+		ProjectName: params.ProjectName,
+		ShootName:   params.ShootName,
+	}
+	recordersMap[recKey] = recorderInstance
+	go startRecorderCheck(parentCtx)
+	return recorderInstance, nil
 }
 
 var _ gsh.Recorder = (*defaultRecorder)(nil)
 
 type defaultRecorder struct {
-	params                 *gsh.RecorderParams
-	startTime              time.Time
+	params                 gsh.RecorderParams
+	ctx                    context.Context
+	cancelFunc             context.CancelCauseFunc
+	started                bool
 	connChecker            *ConnChecker
+	startTime              time.Time
 	informerFactory        informers.SharedInformerFactory
 	eventsInformer         corev1informers.EventInformer
 	controlEventsInformer  informers.GenericInformer
@@ -146,17 +244,16 @@ type defaultRecorder struct {
 	stopCh                 <-chan struct{}
 }
 
-type sizeLimits struct {
-	Name string
-	Min  int
-	Max  int
-}
-
-func (m sizeLimits) String() string {
-	return fmt.Sprintf("MinMaxSize(Name:%s,Min:%d,Max:%d)", m.Name, m.Min, m.Max)
+func (r *defaultRecorder) IsStarted() bool {
+	return r.started
 }
 
 func (r *defaultRecorder) Close() error {
+	r.cancelFunc(errors.New("recorder closed"))
+	return nil
+}
+
+func (r *defaultRecorder) doClose() error {
 	err := r.dataAccess.Close()
 	if err != nil {
 		return err
@@ -610,13 +707,12 @@ func (r *defaultRecorder) onDeletePDB(pdbObj any) {
 	//}
 }
 
-func (r *defaultRecorder) Start(ctx context.Context) error {
-	//err := r.connChecker.TestConnection(ctx)
-	//if err != nil {
-	//	slog.Error("connection check failed", "error", err)
-	//	return err
-	//}
-	err := r.dataAccess.Init()
+func (r *defaultRecorder) Start() error {
+	err := r.connChecker.TestConnection(r.ctx)
+	if err != nil {
+		return fmt.Errorf("conn failed connection test for recorder %q: %w", r.params, err)
+	}
+	err = r.dataAccess.Init()
 	if err != nil {
 		return err
 	}
@@ -705,12 +801,12 @@ func (r *defaultRecorder) Start(ctx context.Context) error {
 		DeleteFunc: r.onDeleteCSINode,
 	})
 
-	stopCh := ctx.Done()
+	stopCh := r.ctx.Done()
 	r.stopCh = stopCh
 	r.runInformers(stopCh)
 
 	slog.Info("Waiting for caches to be synced...")
-	if !cache.WaitForCacheSync(ctx.Done(),
+	if !cache.WaitForCacheSync(r.ctx.Done(),
 		r.deploymentInformer.Informer().HasSynced,
 		r.configmapInformer.Informer().HasSynced,
 		r.mcdInformer.Informer().HasSynced,
@@ -722,9 +818,10 @@ func (r *defaultRecorder) Start(ctx context.Context) error {
 		r.controlEventsInformer.Informer().HasSynced) {
 		return fmt.Errorf("could not sync caches for informers")
 	}
-	slog.Info("Informer caches are synced")
-	context.AfterFunc(ctx, func() {
-		_ = r.Close()
+	r.started = true
+	slog.Info("Recorder is now considered STARTED after sync of informer caches", "recorderParams", r.params)
+	context.AfterFunc(r.ctx, func() {
+		_ = r.doClose()
 	})
 	return nil
 }
@@ -881,77 +978,6 @@ func (r *defaultRecorder) onDeleteMCC(obj interface{}) {
 		slog.Error("cannot update the deletion timestamp for the MachineClassInfo", "Name", mccName, "DeletionTimestamp", delTimeStamp)
 	}
 }
-
-//func getCACommand(deployment *unstructured.Unstructured) ([]string, error) {
-//	parentMap := deployment.UnstructuredContent()
-//	specMap, err := GetInnerMap(parentMap, "spec", "template", "spec")
-//	if err != nil {
-//		return []string{}, err
-//	}
-//	caContainer := (specMap["containers"].([]interface{})[0]).(map[string]interface{})
-//	return lo.Map(caContainer["command"].([]interface{}), func(item interface{}, _ int) string {
-//		return item.(string)
-//	}), nil
-//}
-
-//func processCACommand(caCommand []string) (result map[string]string) {
-//	//TODO get the priority expander for CA and record the priorities
-//	result = make(map[string]string)
-//	for _, command := range caCommand {
-//		command = strings.TrimPrefix(command, "--")
-//		commandParts := strings.Split(command, "=")
-//		if len(commandParts) < 2 {
-//			continue
-//		}
-//		key := commandParts[0]
-//		value := commandParts[1]
-//		if caOptions.Has(key) {
-//			result[key] = value
-//		}
-//	}
-//	return
-//}
-
-//func parseCACommand(caCommand map[string]string) (caSettings gsc.CASettingsInfo, err error) {
-//
-//	caSettings.Expander = caCommand["expander"]
-//	caSettings.MaxNodeProvisionTime, err = time.ParseDuration(caCommand["max-node-provision-time"])
-//	if err != nil {
-//		err = fmt.Errorf("cannot parse max-node-provision-time  to duration: %w", err)
-//		return
-//	}
-//	caSettings.ScanInterval, err = time.ParseDuration(caCommand["scan-interval"])
-//	if err != nil {
-//		err = fmt.Errorf("cannot parse scan-interval  to duration: %w", err)
-//		return
-//	}
-//	caSettings.MaxGracefulTerminationSeconds, err = strconv.Atoi(caCommand["max-graceful-termination-sec"])
-//	if err != nil {
-//		err = fmt.Errorf("cannot parse max-graceful-termination-sec  to int: %w", err)
-//		return
-//	}
-//	caSettings.NewPodScaleUpDelay, err = time.ParseDuration(caCommand["new-pod-scale-up-delay"])
-//	if err != nil {
-//		err = fmt.Errorf("cannot parse new-pod-scale-up-delay to duration: %w", err)
-//		return
-//	}
-//	caSettings.MaxEmptyBulkDelete, err = strconv.Atoi(caCommand["max-empty-bulk-delete"])
-//	if err != nil {
-//		err = fmt.Errorf("cannot parse max-empty-bulk-delete to int: %w", err)
-//		return
-//	}
-//	caSettings.IgnoreDaemonSetUtilization, err = strconv.ParseBool(caCommand["ignore-daemonsets-utilization"])
-//	if err != nil {
-//		err = fmt.Errorf("cannot parse ignore-daemonsets-utilization  to bool: %w", err)
-//		return
-//	}
-//	caSettings.MaxNodesTotal, err = strconv.Atoi(caCommand["max-nodes-total"])
-//	if err != nil {
-//		err = fmt.Errorf("cannot convert maxNodesTotal string to int: %w", err)
-//		return
-//	}
-//	return
-//}
 
 func parseCASettingsInfo(caDeploymentData map[string]any) (caSettings gsc.CASettingsInfo, err error) {
 	caSettings.NodeGroupsMinMax = make(map[string]gsc.MinMax)
@@ -1364,26 +1390,11 @@ func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gsc.PodScheduleSt
 	return scheduleStatus
 }
 
-//func getMachineDeploymentUpdateTime(worker *unstructured.Unstructured) (*time.Time, error) {
-//	statusMap, err := GetInnerMap(worker.UnstructuredContent(), "status")
-//	if err != nil {
-//		return nil, fmt.Errorf("cannot get worker.status for %q: %w", worker.GetName(), err)
-//	}
-//	timestampStr, ok := statusMap["machineDeploymentsLastUpdateTime"].(string)
-//	if !ok {
-//		return nil, fmt.Errorf("cannot get worker.status.machineDeploymentsLastUpdateTime for %q", worker.GetName())
-//	}
-//	timestamp, err := time.Parse(time.RFC3339, timestampStr)
-//	if err != nil {
-//		return nil, fmt.Errorf("cannot parse worker.status.machineDeploymentsLastUpdateTime %q for worker %q", timestampStr, worker.GetName())
-//	}
-//	return &timestamp, err
-//}
-
 func CreateRecorderParams(ctx context.Context, mode gsh.RecorderMode, configDir string, dbDir string) ([]gsh.RecorderParams, error) {
 	clusterConfigPath := path.Join(configDir, CLUSTERS_CFG_FILE)
 
 	landscapeKubeconfigs, err := apputil.GetLandscapeKubeconfigs(mode)
+
 	if err != nil {
 		return nil, err
 	}
@@ -1436,14 +1447,18 @@ func CreateRecorderParams(ctx context.Context, mode gsh.RecorderMode, configDir 
 		}
 
 		rp := gsh.RecorderParams{
+			Mode:                mode,
 			Landscape:           landscapeName,
+			ProjectName:         projectName,
+			ShootName:           shootName,
+			SeedName:            seedName,
 			ShootNameSpace:      shootNamespace,
 			ShootKubeConfigPath: shootKubeconfigPath,
 			SeedKubeConfigPath:  seedKubeconfigPath,
 			DBDir:               dbDir,
 		}
 
-		slog.Info("Created recorder params", "landscape", landscapeName, "shootNamespace", shootNamespace, "shootKubeConfigPath", shootKubeconfigPath, "seedKubeConfigPath", seedKubeconfigPath, "dbDir", dbDir)
+		slog.Info("Created recorder params", "mode", mode, "landscape", landscapeName, "shootNamespace", shootNamespace, "shootKubeConfigPath", shootKubeconfigPath, "seedKubeConfigPath", seedKubeconfigPath, "dbDir", dbDir)
 		recorderParams[rowIndex] = rp
 	}
 	return recorderParams, nil

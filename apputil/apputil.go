@@ -148,10 +148,12 @@ func GetViewerKubeconfig(ctx context.Context, landscapeClient *kubernetes.Client
 
 	restClient := landscapeClient.CoreV1().RESTClient()
 
-	payload := `{
+	//expirationSecs := 86400
+	expirationSecs := 600
+	payload := fmt.Sprintf(`{
       "apiVersion": "authentication.gardener.cloud/v1alpha1",
       "kind": "ViewerKubeconfigRequest",
-      "spec": {"expirationSeconds": 86400}}`
+      "spec": {"expirationSeconds": %d}}`, expirationSecs)
 
 	result := restClient.Post().AbsPath(url).Body([]byte(payload)).Do(ctx)
 
@@ -163,6 +165,11 @@ func GetViewerKubeconfig(ctx context.Context, landscapeClient *kubernetes.Client
 	responsePayload, err := result.Raw()
 	if err != nil {
 		slog.Error("Could not read result viewerconfig payload", "err", err)
+		return "", err
+	}
+	responsePath := "/tmp/" + landscapeName + "_" + projectName + "_" + shootName + ".json"
+	err = os.WriteFile(responsePath, responsePayload, 0644)
+	if err != nil {
 		return "", err
 	}
 

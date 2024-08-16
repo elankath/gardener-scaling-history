@@ -21,19 +21,23 @@ var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone
 // Recorder monitors the cluster denoted by given kubeconfig and records events and cluster data into cluster database
 type Recorder interface {
 	io.Closer
-	Start(ctx context.Context) error
+	Start() error
+	IsStarted() bool
 	//	GetRecordedClusterSnapshot(time time.Time) (ClusterSnapshot, error)
 }
 
 //Current ClusterInfo in gsc -> ClusterAutoscalerConfig
 
 type RecorderParams struct {
+	Mode                RecorderMode
 	Landscape           string
-	ShootKubeConfigPath string
+	ProjectName         string
+	ShootName           string
+	SeedName            string
 	ShootNameSpace      string
+	ShootKubeConfigPath string
 	SeedKubeConfigPath  string
 	DBDir               string
-	SchedulerName       string
 }
 
 type ReplayerParams struct {
