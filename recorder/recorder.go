@@ -1027,15 +1027,13 @@ func (r *defaultRecorder) onAddDeployment(obj interface{}) {
 	storedCASettingsInfo, err := r.dataAccess.LoadLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Error("cannot get the latest ca deployment stored in db", "error", err)
+			slog.Error("cannot get the latest ca settings stored in db", "error", err)
 			return
 		}
 	}
-	if storedCASettingsInfo != nil {
-		caSettings.Priorities = storedCASettingsInfo.Priorities
-	}
+	caSettings.Priorities = storedCASettingsInfo.Priorities
 	caSettings.Hash = caSettings.GetHash()
-	if storedCASettingsInfo == nil || storedCASettingsInfo.Hash != caSettings.Hash {
+	if storedCASettingsInfo.Hash != caSettings.Hash {
 		_, err := r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
 			slog.Error("cannot store ca settings in ca_settings_info", "error", err)
@@ -1074,19 +1072,17 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 	var caSettings = gsc.CASettingsInfo{
 		Priorities: priorities,
 	}
-	caSettings.Hash = caSettings.GetHash()
-	latestCADeployment, err := r.dataAccess.LoadLatestCASettingsInfo()
+	prevCASettings, err := r.dataAccess.LoadLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Error("cannot get the latest ca deployment stored in db", "error", err)
 			return
 		}
 	}
-	if latestCADeployment != nil {
-		caSettings.MaxNodesTotal = latestCADeployment.MaxNodesTotal
-		caSettings.Expander = latestCADeployment.Expander
-	}
-	if latestCADeployment == nil || latestCADeployment.Hash != caSettings.Hash {
+	caSettings.MaxNodesTotal = prevCASettings.MaxNodesTotal
+	caSettings.Expander = prevCASettings.Expander
+	caSettings.Hash = caSettings.GetHash()
+	if prevCASettings.Hash != caSettings.Hash {
 		_, err = r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
 			slog.Error("cannot store ca settings in ca_settings_info", "error", err)
@@ -1407,24 +1403,25 @@ func CreateRecorderParams(ctx context.Context, mode gsh.RecorderMode, configDir 
 		if len(row) != 3 {
 			return nil, fmt.Errorf("invalid row in cluster config %q, should be 3 colums", clusterConfigPath)
 		}
-		landscapeName := row[0]
-		projectName := row[1]
-		shootName := row[2]
+		landscapeName := strings.TrimSpace(row[0])
+		projectName := strings.TrimSpace(row[1])
+		shootName := strings.TrimSpace(row[2])
 
-		slog.Info("Reading config row", "landscapeName", landscapeName, "projectName", projectName, "shootName", shootName)
+		slog.Info("Creating landscape client.", "landscapeName", landscapeName, "projectName", projectName, "shootName", shootName)
 		landscapeKubeconfig, ok := landscapeKubeconfigs[landscapeName]
 		if !ok {
 			return nil, fmt.Errorf("cannot find kubeconfig for landscape %q", landscapeName)
 		}
 		landscapeClient, err := apputil.CreateLandscapeClient(landscapeKubeconfig, mode)
 		if err != nil {
-			return nil, fmt.Errorf("cannot create landscape client for landscape %q: %w", landscapeName, err)
+			return nil, fmt.Errorf("cannot create landscape client for landscape %q, projectName %q, shootName %q: %w", landscapeName, projectName, shootName, err)
 		}
 
 		seedName, err := apputil.GetSeedName(ctx, landscapeClient, projectName, shootName)
 		if err != nil {
-			return nil, fmt.Errorf("cannot get seed for landscape %q: %w", landscapeName, err)
+			return nil, fmt.Errorf("cannot get seed for landscape %q projectName %q shootName %q: %w", landscapeName, projectName, shootName, err)
 		}
+		slog.Info("Obtained seedName for", "seedName", seedName, "landscapeName", landscapeName, "projectName", projectName, "shootName", shootName)
 
 		shootNamespace := fmt.Sprintf("shoot--%s--%s", projectName, shootName)
 

@@ -15,7 +15,7 @@ Repository providers 2 apps:
 1. Prepare `clusters.csv` for recordering. This is a CSV file with 3 columns: landscape name, project name, shoot name
     An example clusters.csv file for recording data for the `g2` cluster of project `i034796` in the `dev` landscape is shown below.
     ```clusters.csv
-    dev,I034796,g2
+    dev,i034796,g2
     ```
 1. Store `clusters.csv` in a directory `configDir`. 
 1. Kindly set environment variables
