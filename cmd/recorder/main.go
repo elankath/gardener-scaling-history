@@ -35,8 +35,12 @@ func main() {
 func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.RecorderMode) int {
 	configDir := os.Getenv("CONFIG_DIR")
 	if len(configDir) == 0 {
-		slog.Error("CONFIG_DIR env must be set. This is the dir holding the 'clusters.csv' file")
-		return 1
+		if mode == gsh.InUtilityClusterRecorderMode {
+			configDir = "/cfg"
+		} else {
+			slog.Error("CONFIG_DIR env must be set. This is the dir holding the 'clusters.csv' file")
+			return 1
+		}
 	}
 	dbDir := os.Getenv("DB_DIR")
 	if len(dbDir) == 0 {

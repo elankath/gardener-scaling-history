@@ -148,8 +148,8 @@ func GetViewerKubeconfig(ctx context.Context, landscapeClient *kubernetes.Client
 
 	restClient := landscapeClient.CoreV1().RESTClient()
 
-	//expirationSecs := 86400
-	expirationSecs := 600
+	expirationSecs := 86400
+	//expirationSecs := 600
 	payload := fmt.Sprintf(`{
       "apiVersion": "authentication.gardener.cloud/v1alpha1",
       "kind": "ViewerKubeconfigRequest",

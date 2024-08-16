@@ -436,7 +436,7 @@ func (r *defaultRecorder) onUpdateNode(old, new any) {
 	InvokeOrScheduleFunc("onUpdateNode", 10*time.Second, nodeNewInfo, func(_ gsc.NodeInfo) error {
 		allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
 		if allocatableVolumes == 0 {
-			slog.Warn("Allocatable Volumes key not found. Deferring insert", "node.Name", nodeNewInfo.Name)
+			slog.Debug("Allocatable Volumes key not found. Deferring insert", "node.Name", nodeNewInfo.Name)
 			return ErrKeyNotFound
 		}
 		nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, allocatableVolumes)
@@ -454,6 +454,7 @@ func (r *defaultRecorder) onUpdateNode(old, new any) {
 		if err != nil {
 			return nil
 		}
+		slog.Info("OnUpdateNode stored node", "node.Name", nodeNewInfo.Name, "allocatableVolumes", allocatableVolumes, "node.Hash", nodeNewInfo.Hash)
 		return nil
 	})
 }
@@ -599,7 +600,7 @@ func (r *defaultRecorder) processWorker(workerOld, workerNew *unstructured.Unstr
 	for name, poolNew := range newPoolInfos {
 		existingHash, ok := oldPoolInfoHashes[name]
 		if ok && existingHash == poolNew.Hash {
-			slog.Info("Skipping store of poolNew since it has same hash as poolOld.", "Name", name, "Hash", poolNew.Hash)
+			slog.Debug("Skipping store of poolNew since it has same hash as poolOld.", "Name", name, "Hash", poolNew.Hash)
 			continue
 		}
 		_, err = r.dataAccess.StoreWorkerPoolInfo(poolNew)
@@ -1029,6 +1030,8 @@ func parseCASettingsInfo(caDeploymentData map[string]any) (caSettings gsc.CASett
 			ngMinMax.Min, err = strconv.Atoi(ngVals[0])
 			ngMinMax.Max, err = strconv.Atoi(ngVals[1])
 			caSettings.NodeGroupsMinMax[ngVals[2]] = ngMinMax
+		case "--expander":
+			caSettings.Expander = val
 		}
 		if err != nil {
 			return
@@ -1099,20 +1102,19 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 	} else {
 		slog.Info("Found priorities defined in configmap", "configMap", configMap, "priorities", priorities)
 	}
-	var caSettings = gsc.CASettingsInfo{
-		Priorities: priorities,
-	}
-	prevCASettings, err := r.dataAccess.LoadLatestCASettingsInfo()
+
+	caSettings, err := r.dataAccess.LoadLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.Error("cannot get the latest ca deployment stored in db", "error", err)
 			return
 		}
 	}
-	caSettings.MaxNodesTotal = prevCASettings.MaxNodesTotal
-	caSettings.Expander = prevCASettings.Expander
+
+	caSettings.Priorities = priorities
+	oldHash := caSettings.Hash
 	caSettings.Hash = caSettings.GetHash()
-	if prevCASettings.Hash != caSettings.Hash {
+	if caSettings.Hash != oldHash {
 		_, err = r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
 			slog.Error("cannot store ca settings in ca_settings_info", "error", err)
@@ -1285,7 +1287,7 @@ func (r *defaultRecorder) processMCD(mcdOld, mcdNew *unstructured.Unstructured) 
 	if mcdOldHash != mcdNewInfo.Hash {
 		_, err = r.dataAccess.StoreMachineDeploymentInfo(mcdNewInfo)
 	} else {
-		slog.Info("skipping store of MachineDeploymentInfo", "Name", mcdName, "Hash", mcdNewInfo.Hash)
+		slog.Debug("skipping store of MachineDeploymentInfo", "Name", mcdName, "Hash", mcdNewInfo.Hash)
 	}
 	return err
 }
@@ -1316,7 +1318,7 @@ func (r *defaultRecorder) processMCC(mccOld, mccNew *unstructured.Unstructured) 
 	if mccOldHash != mccNewInfo.Hash {
 		_, err = r.dataAccess.StoreMachineClassInfo(mccNewInfo)
 	} else {
-		slog.Info("skipping store of MachineClassInfo", "Name", mccName, "Hash", mccNewInfo.Hash)
+		slog.Debug("skipping store of MachineClassInfo", "Name", mccName, "Hash", mccNewInfo.Hash)
 	}
 	return err
 }

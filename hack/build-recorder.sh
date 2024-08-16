@@ -21,10 +21,10 @@ if [[ -z "$tag" ]]; then
 fi
 docker buildx build --push --platform linux/amd64 --tag $tag .
 
-if [[ ! -f "/tmp/tls.key" ]]; then
-  echoErr "Please follow step 2 of https://github.wdf.sap.corp/kubernetes/landscape-setup#signing-oci-images-manually and save as /tmp/tls.key"
-  exit 1
-fi
+#if [[ ! -f "/tmp/tls.key" ]]; then
+#  echoErr "Please follow step 2 of https://github.wdf.sap.corp/kubernetes/landscape-setup#signing-oci-images-manually and save as /tmp/tls.key"
+#  exit 1
+#fi
 
 #echo "Creating random password"
 ## cosign_password=$(cat /dev/urandom | base64 | tr -dc '0-9a-zA-Z' | head -c${1:-64})
