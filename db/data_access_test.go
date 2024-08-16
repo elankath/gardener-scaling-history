@@ -280,7 +280,7 @@ func TestStoreLoadNodeInfo(t *testing.T) {
 		Key:       "k3",
 		Value:     "v3",
 		Effect:    "Custom",
-		TimeAdded: &metav1.Time{today},
+		TimeAdded: &metav1.Time{Time: today},
 	}
 	a1 := gsc.NodeInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
@@ -377,9 +377,16 @@ func initDataAccess() (dataAccess *DataAccess, err error) {
 	return dataAccess, err
 }
 
-func getTodayYesterdayDayBeforeYesterday() (today, yesterday, dayBeforeYesterday time.Time) {
+func getTodayYesterdayDayBeforeYesterdayOld() (today, yesterday, dayBeforeYesterday time.Time) {
 	now := time.Now()
 	today = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	yesterday = today.Add(-24 * time.Hour).UTC()
+	dayBeforeYesterday = yesterday.Add(-24 * time.Hour).UTC()
+	return
+}
+
+func getTodayYesterdayDayBeforeYesterday() (today, yesterday, dayBeforeYesterday time.Time) {
+	today = time.Now().UTC()
 	yesterday = today.Add(-24 * time.Hour).UTC()
 	dayBeforeYesterday = yesterday.Add(-24 * time.Hour).UTC()
 	return
@@ -406,6 +413,7 @@ func TestStoreLoadMachineDeploymentInfos(t *testing.T) {
 	assert.Nil(t, err)
 
 	today, yesterday, dayBeforeYesterday := getTodayYesterdayDayBeforeYesterday()
+
 	m1 := gsc.MachineDeploymentInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			CreationTimestamp: dayBeforeYesterday,
@@ -425,10 +433,9 @@ func TestStoreLoadMachineDeploymentInfos(t *testing.T) {
 		},
 		Taints: []corev1.Taint{
 			{
-				Key:       "bingo",
-				Value:     "tringo",
-				Effect:    corev1.TaintEffectNoSchedule,
-				TimeAdded: &metav1.Time{Time: today},
+				Key:    "bingo",
+				Value:  "tringo",
+				Effect: corev1.TaintEffectNoSchedule,
 			},
 		},
 	}
@@ -612,11 +619,12 @@ func TestLoadStorePriorityClassInfo(t *testing.T) {
 	pc1.RowID = rowID
 
 	t.Logf("LoadLatestPriorityClassInfoBeforeSnapshotTime: %d", yesterday.UnixMilli())
-	pcInfos, err := dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(yesterday)
+	loadedPCInfos, err := dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(yesterday)
 	assert.Nil(t, err)
-	assert.Equal(t, 1, len(pcInfos), "only 1 PriorityClassInfo should be present at this time")
-	t.Logf("Loaded PriorityClassInfo: %s", pcInfos[0])
-	assert.Equal(t, pc1.Hash, pcInfos[0].Hash)
+	assert.Equal(t, 1, len(loadedPCInfos), "only 1 PriorityClassInfo should be present at this time")
+	t.Logf("Loaded PriorityClassInfo: %s", loadedPCInfos[0])
+	assert.Equal(t, pc1.Hash, loadedPCInfos[0].Hash)
+	assert.Equal(t, pc1, loadedPCInfos[0])
 
 	t.Run("CountPCInfoWithSpecHash", func(t *testing.T) {
 		count, err := dataAccess.CountPCInfoWithSpecHash(string(pc1.UID), pc1.Hash)
@@ -646,8 +654,9 @@ func TestStoreLoadCASettingInfos(t *testing.T) {
 		Max: 3,
 	}
 
+	now := time.Now().UTC()
 	storeInfo := gsc.CASettingsInfo{
-		SnapshotTimestamp:             time.Now().UTC(),
+		SnapshotTimestamp:             now,
 		Expander:                      "priority",
 		NodeGroupsMinMax:              ngMinMax,
 		MaxNodeProvisionTime:          time.Minute,
@@ -665,7 +674,7 @@ func TestStoreLoadCASettingInfos(t *testing.T) {
 	assert.Nil(t, err)
 	t.Logf("StoreCASettingsInfo is  %s", storeInfo)
 
-	loadInfo, err := dataAccess.GetLatestCASettingsInfo()
+	loadInfo, err := dataAccess.LoadCASettingsBefore(storeInfo.SnapshotTimestamp.UTC())
 	assert.Nil(t, err)
 	t.Logf("LoadInfo is %s", loadInfo)
 

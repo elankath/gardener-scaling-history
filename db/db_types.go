@@ -44,7 +44,7 @@ type workerPoolRow struct {
 func (r workerPoolRow) AsInfo() (mcdInfo gsc.WorkerPoolInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
-		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
+		delTimeStamp = timeFromNano(r.DeletionTimeStamp.Int64)
 	}
 	var zones []string
 	if strings.TrimSpace(r.Zones) != "" {
@@ -53,8 +53,8 @@ func (r workerPoolRow) AsInfo() (mcdInfo gsc.WorkerPoolInfo, err error) {
 	mcdInfo = gsc.WorkerPoolInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
-			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
-			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
+			CreationTimestamp: timeFromNano(r.CreationTimestamp),
+			SnapshotTimestamp: timeFromNano(r.SnapshotTimestamp),
 			Name:              r.Name,
 			Namespace:         r.Namespace,
 		},
@@ -92,7 +92,7 @@ type mcdRow struct {
 func (r mcdRow) AsInfo() (mcdInfo gsc.MachineDeploymentInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
-		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
+		delTimeStamp = timeFromNano(r.DeletionTimeStamp.Int64)
 	}
 	labels, err := labelsFromText(r.Labels)
 	if err != nil {
@@ -105,8 +105,8 @@ func (r mcdRow) AsInfo() (mcdInfo gsc.MachineDeploymentInfo, err error) {
 	mcdInfo = gsc.MachineDeploymentInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
-			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
-			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
+			CreationTimestamp: timeFromNano(r.CreationTimestamp),
+			SnapshotTimestamp: timeFromNano(r.SnapshotTimestamp),
 			Name:              r.Name,
 			Namespace:         r.Namespace,
 		},
@@ -143,7 +143,7 @@ type mccRow struct {
 func (r mccRow) AsInfo() (mccInfo gsh.MachineClassInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
-		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
+		delTimeStamp = timeFromNano(r.DeletionTimeStamp.Int64)
 	}
 	labels, err := labelsFromText(r.Labels)
 	if err != nil {
@@ -156,8 +156,8 @@ func (r mccRow) AsInfo() (mccInfo gsh.MachineClassInfo, err error) {
 	mccInfo = gsh.MachineClassInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
-			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
-			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
+			CreationTimestamp: timeFromNano(r.CreationTimestamp),
+			SnapshotTimestamp: timeFromNano(r.SnapshotTimestamp),
 			Name:              r.Name,
 			Namespace:         r.Namespace,
 		},
@@ -208,13 +208,13 @@ func (r nodeRow) AsInfo() (nodeInfo gsc.NodeInfo, err error) {
 	}
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
-		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
+		delTimeStamp = timeFromNano(r.DeletionTimeStamp.Int64)
 	}
 	nodeInfo = gsc.NodeInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
-			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
-			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
+			CreationTimestamp: timeFromNano(r.CreationTimestamp),
+			SnapshotTimestamp: timeFromNano(r.SnapshotTimestamp),
 			Name:              r.Name,
 			Namespace:         r.Namespace,
 		},
@@ -250,7 +250,7 @@ type podRow struct {
 func (r podRow) AsInfo() (podInfo gsc.PodInfo, err error) {
 	var delTimeStamp time.Time
 	if r.DeletionTimeStamp.Valid {
-		delTimeStamp = time.UnixMilli(r.DeletionTimeStamp.Int64)
+		delTimeStamp = timeFromNano(r.DeletionTimeStamp.Int64)
 	}
 	labels, err := labelsFromText(r.Labels)
 	if err != nil {
@@ -267,8 +267,8 @@ func (r podRow) AsInfo() (podInfo gsc.PodInfo, err error) {
 	podInfo = gsc.PodInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
 			RowID:             r.RowID,
-			CreationTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
-			SnapshotTimestamp: time.UnixMilli(r.SnapshotTimestamp).UTC(),
+			CreationTimestamp: timeFromNano(r.CreationTimestamp),
+			SnapshotTimestamp: timeFromNano(r.SnapshotTimestamp),
 			Name:              r.Name,
 			Namespace:         r.Namespace,
 		},
@@ -303,7 +303,7 @@ type priorityClassRow struct {
 func (r priorityClassRow) AsInfo() (info gsc.PriorityClassInfo, err error) {
 	var delTimeStamp *metav1.Time
 	if r.DeletionTimeStamp.Valid {
-		delTimeStamp = &metav1.Time{Time: time.UnixMilli(r.DeletionTimeStamp.Int64)}
+		delTimeStamp = &metav1.Time{Time: timeFromNano(r.DeletionTimeStamp.Int64)}
 	}
 	var preemptionPolicy corev1.PreemptionPolicy
 	if r.PreemptionPolicy != "" {
@@ -314,7 +314,7 @@ func (r priorityClassRow) AsInfo() (info gsc.PriorityClassInfo, err error) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              r.Name,
 			UID:               types.UID(r.UID),
-			CreationTimestamp: metav1.Time{Time: time.UnixMilli(r.CreationTimestamp).UTC()},
+			CreationTimestamp: metav1.Time{Time: timeFromNano(r.CreationTimestamp)},
 			DeletionTimestamp: delTimeStamp,
 			Labels:            labels,
 		},
@@ -325,7 +325,7 @@ func (r priorityClassRow) AsInfo() (info gsc.PriorityClassInfo, err error) {
 	}
 	pcInfo := gsc.PriorityClassInfo{
 		RowID:             r.RowID,
-		SnapshotTimestamp: time.UnixMilli(r.CreationTimestamp).UTC(),
+		SnapshotTimestamp: timeFromNano(r.CreationTimestamp),
 		PriorityClass:     priorityClass,
 	}
 	pcInfo.Hash = pcInfo.GetHash()
@@ -355,8 +355,8 @@ type caSettingsRow struct {
 	Hash       string //primary key
 }
 
-func timeFromMillis(timestamp int64) time.Time {
-	return time.UnixMilli(timestamp).UTC()
+func timeFromNano(timestamp int64) time.Time {
+	return time.Unix(0, timestamp).UTC()
 }
 func (r caSettingsRow) AsInfo() (caSettingsInfo gsc.CASettingsInfo, err error) {
 	minMaxMap, err := minMaxMapFromText(r.NodeGroupsMinMax)
@@ -364,12 +364,12 @@ func (r caSettingsRow) AsInfo() (caSettingsInfo gsc.CASettingsInfo, err error) {
 		return
 	}
 	caSettingsInfo = gsc.CASettingsInfo{
-		SnapshotTimestamp:             timeFromMillis(r.SnapshotTimestamp),
+		SnapshotTimestamp:             timeFromNano(r.SnapshotTimestamp),
 		Expander:                      r.Expander,
-		MaxNodeProvisionTime:          time.Duration(r.MaxNodeProvisionTime),
-		ScanInterval:                  time.Duration(r.ScanInterval),
+		MaxNodeProvisionTime:          time.Duration(r.MaxNodeProvisionTime * int64(time.Millisecond)),
+		ScanInterval:                  time.Duration(r.ScanInterval * int64(time.Millisecond)),
 		MaxGracefulTerminationSeconds: r.MaxGracefulTerminationSeconds,
-		NewPodScaleUpDelay:            time.Duration(r.NewPodScaleUpDelay),
+		NewPodScaleUpDelay:            time.Duration(r.NewPodScaleUpDelay * int64(time.Millisecond)),
 		MaxEmptyBulkDelete:            r.MaxEmptyBulkDelete,
 		IgnoreDaemonSetUtilization:    r.IgnoreDaemonSetUtilization,
 		MaxNodesTotal:                 r.MaxNodesTotal,

@@ -103,7 +103,7 @@ func (d *DataAccess) Close() error {
 }
 
 func (d *DataAccess) InsertRecorderStartTime(startTime time.Time) error {
-	_, err := d.dataDB.Exec(InsertRecorderStateInfo, startTime.UTC().UnixMilli())
+	_, err := d.dataDB.Exec(InsertRecorderStateInfo, startTime.UTC().UnixNano())
 	if err != nil {
 		return fmt.Errorf("cannot execute the InsertRecorderStateInfo statement: %w", err)
 	}
@@ -435,7 +435,7 @@ func (d *DataAccess) CountNodeInfoWithHash(name, hash string) (int, error) {
 }
 
 func updateDeletionTimestamp(stmt *sql.Stmt, name string, deletionTimestamp time.Time) (updated int64, err error) {
-	result, err := stmt.Exec(deletionTimestamp.UTC().UnixMilli(), name)
+	result, err := stmt.Exec(deletionTimestamp.UTC().UnixNano(), name)
 	if err != nil {
 		return -1, err
 	}
@@ -466,7 +466,7 @@ func (d *DataAccess) StoreEventInfo(event gsc.EventInfo) error {
 	//eventsStmt, err := db.Prepare("INSERT INTO event_info(UID, EventTime, ReportingController, Reason, Message, InvolvedObjectKind, InvolvedObjectName, InvolvedObjectNamespace, InvolvedObjectUID) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)")
 	_, err := d.insertEvent.Exec(
 		event.UID,
-		event.EventTime,
+		event.EventTime.UTC(),
 		event.ReportingController,
 		event.Reason,
 		event.Message,
@@ -499,8 +499,8 @@ func (d *DataAccess) StoreMachineDeploymentInfo(m gsc.MachineDeploymentInfo) (ro
 		return -1, err
 	}
 	result, err := d.insertMCDInfo.Exec(
-		m.CreationTimestamp.UTC().UnixMilli(),
-		m.SnapshotTimestamp.UTC().UnixMilli(),
+		m.CreationTimestamp.UTC().UnixNano(),
+		m.SnapshotTimestamp.UTC().UnixNano(),
 		m.Name,
 		m.Namespace,
 		m.Replicas,
@@ -542,8 +542,8 @@ func (d *DataAccess) StoreMachineClassInfo(m gsh.MachineClassInfo) (rowID int64,
 		return -1, err
 	}
 	result, err := d.insertMCCInfo.Exec(
-		m.CreationTimestamp.UTC().UnixMilli(),
-		m.SnapshotTimestamp.UTC().UnixMilli(),
+		m.CreationTimestamp.UTC().UnixNano(),
+		m.SnapshotTimestamp.UTC().UnixNano(),
 		m.Name,
 		m.Namespace,
 		m.InstanceType,
@@ -577,8 +577,8 @@ func (d *DataAccess) StoreWorkerPoolInfo(w gsc.WorkerPoolInfo) (rowID int64, err
 		w.Hash = w.GetHash()
 	}
 	result, err := d.insertWorkerPoolInfo.Exec(
-		w.CreationTimestamp.UTC().UnixMilli(),
-		w.SnapshotTimestamp.UTC().UnixMilli(),
+		w.CreationTimestamp.UTC().UnixNano(),
+		w.SnapshotTimestamp.UTC().UnixNano(),
 		w.Name,
 		w.Namespace,
 		w.MachineType,
@@ -713,24 +713,6 @@ func (d *DataAccess) LoadCASettingsBefore(timestamp time.Time) (caSettings gsc.C
 	return queryAndMapToInfo[gsc.CASettingsInfo, caSettingsRow](d.selectLatestCASettingsInfoBefore, timestamp)
 }
 
-// GetLatestCASettingsInfo needs a TODO: move me to generics
-func (d *DataAccess) GetLatestCASettingsInfo() (caDeployment *gsc.CASettingsInfo, err error) {
-	rows, err := d.selectLatestCASettingsInfo.Query()
-	if err != nil {
-		return
-	}
-	var caDeployments []gsc.CASettingsInfo
-	err = scan.Rows(&caDeployments, rows)
-	if err != nil {
-		return nil, err
-	}
-	if len(caDeployments) == 0 {
-		return nil, nil
-	}
-	caDeployment = &caDeployments[0]
-	return
-}
-
 // GetCADeploymentWithHash has a  TODO: move me to generics
 func (d *DataAccess) GetCADeploymentWithHash(Hash string) (caDeployment *gsc.CASettingsInfo, err error) {
 	rows, err := d.selectLatestCASettingsInfo.Query(Hash)
@@ -766,8 +748,8 @@ func (d *DataAccess) StorePodInfo(podInfo gsc.PodInfo) (int64, error) {
 		return -1, err
 	}
 	result, err := d.insertPodInfo.Exec(
-		podInfo.CreationTimestamp.UTC().UnixMilli(),
-		podInfo.SnapshotTimestamp.UTC().UnixMilli(),
+		podInfo.CreationTimestamp.UTC().UnixNano(),
+		podInfo.SnapshotTimestamp.UTC().UnixNano(),
 		podInfo.Name,
 		podInfo.Namespace,
 		podInfo.UID,
@@ -792,8 +774,8 @@ func (d *DataAccess) StorePriorityClassInfo(pcInfo gsc.PriorityClassInfo) (int64
 	}
 	labels, err := labelsToText(pcInfo.Labels)
 	result, err := d.insertPriorityClassInfo.Exec(
-		pcInfo.CreationTimestamp.UTC().UnixMilli(),
-		pcInfo.SnapshotTimestamp.UTC().UnixMilli(),
+		pcInfo.CreationTimestamp.UTC().UnixNano(),
+		pcInfo.SnapshotTimestamp.UTC().UnixNano(),
 		pcInfo.Name,
 		pcInfo.UID,
 		pcInfo.Value,
@@ -836,8 +818,8 @@ func (d *DataAccess) StoreNodeInfo(n gsc.NodeInfo) (rowID int64, err error) {
 		return
 	}
 	result, err := d.insertNodeInfo.Exec(
-		n.CreationTimestamp.UTC().UnixMilli(),
-		n.SnapshotTimestamp.UTC().UnixMilli(),
+		n.CreationTimestamp.UTC().UnixNano(),
+		n.SnapshotTimestamp.UTC().UnixNano(),
 		n.Name,
 		n.Namespace,
 		n.ProviderID,
@@ -856,7 +838,7 @@ func (d *DataAccess) StoreNodeInfo(n gsc.NodeInfo) (rowID int64, err error) {
 }
 
 func (d *DataAccess) LoadNodeInfosBefore(snapshotTimestamp time.Time) ([]gsc.NodeInfo, error) {
-	nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp.UTC().UnixMilli(), snapshotTimestamp.UTC().UnixMilli())
+	nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp.UTC().UnixNano(), snapshotTimestamp.UTC().UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("LoadNodeInfosBefore could not scan rows: %w", err)
 	}
@@ -869,10 +851,10 @@ func (d *DataAccess) StoreCASettingsInfo(caSettings gsc.CASettingsInfo) (int64, 
 		return -1, fmt.Errorf("cannot create row for CASettings: %w", err)
 	}
 	result, err := d.insertCASettingsInfo.Exec(
-		caSettings.SnapshotTimestamp.UTC().UnixMilli(),
+		caSettings.SnapshotTimestamp.UTC().UnixNano(),
 		caSettings.Expander,
-		caSettings.MaxNodeProvisionTime.Milliseconds(),
 		caSettings.ScanInterval.Milliseconds(),
+		caSettings.MaxNodeProvisionTime.Milliseconds(),
 		caSettings.MaxGracefulTerminationSeconds,
 		caSettings.NewPodScaleUpDelay.Milliseconds(),
 		caSettings.MaxEmptyBulkDelete,
@@ -900,7 +882,7 @@ func (d *DataAccess) GetInitialRecorderStartTime() (startTime time.Time, err err
 	if err != nil {
 		return
 	}
-	return time.UnixMilli(rows[0].BeginTimestamp).UTC(), nil
+	return timeFromNano(rows[0].BeginTimestamp), nil
 }
 
 func labelsToText(valMap map[string]string) (textVal string, err error) {
@@ -1143,7 +1125,7 @@ func queryAndMapToInfos[I any, T row[I]](stmt *sql.Stmt, params ...any) (infoObj
 
 func adjustParam(p any) any {
 	if t, ok := p.(time.Time); ok {
-		return t.UTC().UnixMilli()
+		return t.UTC().UnixNano()
 	}
 	return p
 }
