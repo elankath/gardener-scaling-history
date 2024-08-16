@@ -31,6 +31,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"log/slog"
+	"net"
 	"os"
 	"path"
 	"regexp"
@@ -92,7 +93,10 @@ func startRecorderCheck(ctx context.Context) {
 					continue
 				}
 				slog.Error("startRecorderCheck FAILED connection test for recorder", "checkNum", checkNum, "error", err, "recorderParams", recorder.params)
-				if !apierrors.IsUnauthorized(err) {
+				connError := errors.Is(err, net.ErrClosed)
+				authError := apierrors.IsUnauthorized(err)
+				if !authError && !connError {
+					slog.Error("startRecorderCheck skipping re-init test for recorder since neither conn nor auth error", "checkNum", checkNum, "error", err, "recorderParams", recorder.params)
 					continue
 				}
 				slog.Warn("startRecorderCheck is STOPPING old recorder and RECREATING fresh recorder after unauthorized error", "checkNum", checkNum, "recorderParams", recorder.params)
