@@ -38,10 +38,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
-
-const PoolLabel = "worker.gardener.cloud/pool"
 
 const CLUSTERS_CFG_FILE = "clusters.csv"
 
@@ -70,21 +69,20 @@ type recorderKey struct {
 }
 
 var recordersMap = make(map[recorderKey]*defaultRecorder)
-var recorderCheckStarted bool
+var recorderCheckStarted atomic.Bool
 var checkNum = 0
 
 func startRecorderCheck(ctx context.Context) {
-	if recorderCheckStarted {
+	if !recorderCheckStarted.CompareAndSwap(false, true) {
 		return
 	}
-	recorderCheckStarted = true
 	for {
 		checkNum++
 		select {
 		case <-ctx.Done():
-			slog.Info("startRecorderCheck exiting since ctx is done")
-			break
-		case <-time.After(30 * time.Second):
+			slog.Info("startRecorderCheck exiting since serverCtx is done")
+			return
+		case <-time.After(3 * time.Minute):
 			slog.Info("startRecorderCheck commencing", "checkNum", checkNum)
 			for _, recorder := range recordersMap {
 				err := recorder.connChecker.TestConnection(recorder.ctx)
@@ -1098,9 +1096,9 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 	}
 	priorities := getPrirotiesFromCAConfig(configMap)
 	if priorities == "" {
-		slog.Info("No priorities defined in configmap", "configMap", configMap)
+		slog.Warn("No priorities defined in configmap", "configMap", configMap)
 	} else {
-		slog.Info("Found priorities defined in configmap", "configMap", configMap, "priorities", priorities)
+		slog.Debug("Found priorities defined in configmap", "configMap", configMap, "priorities", priorities)
 	}
 
 	caSettings, err := r.dataAccess.LoadLatestCASettingsInfo()
@@ -1231,8 +1229,10 @@ func (r *defaultRecorder) onAddCSINode(obj interface{}) {
 	csiNode := obj.(*storagev1.CSINode)
 	allocatableCount := -1
 	if len(csiNode.Spec.Drivers) != 0 {
-		allocatableCount = int(*(csiNode.Spec.Drivers[0].Allocatable.Count))
-
+		allocatableResources := csiNode.Spec.Drivers[0].Allocatable
+		if allocatableResources != nil {
+			allocatableCount = int(*allocatableResources.Count)
+		}
 	}
 	r.nodeAllocatableVolumes.Store(csiNode.Name, allocatableCount)
 }

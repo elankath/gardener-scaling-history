@@ -21,8 +21,17 @@ Repository providers 2 apps:
 1. Kindly set environment variables
    1. `export MODE=local` 
    1. `export CONFIG_DIR=<configDir>` # Dir of `clusters.csv`
-   1. (OPTIONAL) `export DB_DIR=<dbDir>` # Place you want SQLite DB for recorded data to be persisted. Defaults to CONFIG_DIR for local mode.
+   1. `export DB_DIR=/tmp` # Directory where recorder stores SQLite `<clusterName>.db` files
 1. Execute: `go run cmd/recorder/main.go`
+ 
+### Remote Launch
+1. Login into `utility-int` cluster `gardenctl target --garden sap-landscape-live --project garden-ops --shoot utility-int`
+1. Export your docker hub username: `export DOCKERHUB_USER=<dockerHubUser>`
+1. Login into Docker Hub: `docker login -u $DOCKERHUB_USER -p <dockerHubPass>`
+1. Run `./hack/build-recorder.sh`
+1. Run `./hack/build-recorder.sh`
+
+### Download Recorder DB
 
 
 ## Launch the Re-player

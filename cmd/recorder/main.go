@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/recorder"
@@ -44,13 +45,8 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Recorde
 	}
 	dbDir := os.Getenv("DB_DIR")
 	if len(dbDir) == 0 {
-		if mode == gsh.LocalRecorderMode {
-			dbDir = configDir
-			slog.Warn("DB_DIR not set for local mode. Assuming same value as CONFIG_DIR", "dbDir", configDir)
-		} else {
-			slog.Error("DB_DIR env must be set for non-local mode")
-			return 2
-		}
+		slog.Error("DB_DIR env must be set for non-local mode")
+		return 2
 	}
 
 	recorderParams, err := recorder.CreateRecorderParams(ctx, mode, configDir, dbDir)
@@ -78,6 +74,17 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Recorde
 			return 6
 		}
 	}
+	//launch engine in a goroutine
+	go func() {
+		err := recorder.LaunchFileServer(ctx, dbDir)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				slog.Info("recorder fileserver was cancelled", "error", err)
+			} else {
+				slog.Warn("recorder fileserver ran into error", "error", err)
+			}
+		}
+	}()
 	apputil.WaitForSignalAndShutdown(cancelFunc)
 	return 0
 }

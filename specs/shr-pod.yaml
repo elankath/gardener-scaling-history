@@ -37,22 +37,19 @@ spec:
   serviceAccount: "robot"
   containers:
     - name: recorder
-      image: aaronfernandes/recorder:latest
+      image: ${DOCKERHUB_USER}/scaling-history-recorder:latest
+      ports:
+        - containerPort: 8080
       resources:
         limits:
           memory: 4Gi
       env:
-        - name: SHOOT_NAMESPACE
-          value: shoot--hc-canary--prod-hna0 #TODO
         - name: MODE
           value: in-utility-cluster
         - name: DB_DIR
-          value: /var/data/db-dir
+          value: /db
       volumeMounts:
-#        - mountPath: /var/run/secrets/gardener.cloud/shoot/generic-kubeconfig
-#          name: kubeconfig
-#          readOnly: true
-        - mountPath: /var/data/db-dir
+        - mountPath: /db
           name: db-dir
         - mountPath: /app/secrets/gardens
           name: robot-gardens
@@ -62,22 +59,6 @@ spec:
     - name: db-dir
       persistentVolumeClaim:
         claimName: recorder-pvc
-#    - name: kubeconfig
-#      projected:
-#        defaultMode: 420
-#        sources:
-#          - secret:
-#              items:
-#                - key: kubeconfig
-#                  path: kubeconfig
-#              name: generic-token-kubeconfig-dec7d246
-#              optional: false
-#          - secret:
-#              items:
-#                - key: token
-#                  path: token
-#              name: shoot-access-cluster-autoscaler
-#              optional: false
     - name: robot-gardens
       secret:
         defaultMode: 420

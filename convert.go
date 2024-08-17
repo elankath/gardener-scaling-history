@@ -14,6 +14,11 @@ import (
 
 const PoolLabel = "worker.gardener.cloud/pool"
 const PoolLabelAlt = "worker_gardener_cloud_pool"
+const PoolLabelAlt1 = "worker.gardener.cloud_pool"
+
+var PoolLabels = []string{
+	PoolLabel, PoolLabelAlt, PoolLabelAlt1,
+}
 
 func MachineDeploymentInfoFromUnstructured(mcd *unstructured.Unstructured, snapshotTime time.Time) (mcdInfo gsc.MachineDeploymentInfo, err error) {
 	mcdName := mcd.GetName()
@@ -48,9 +53,14 @@ func MachineDeploymentInfoFromUnstructured(mcd *unstructured.Unstructured, snaps
 		err = fmt.Errorf("cant find labels map via path %q in MachineDeployment %q", labelsLookupPath, mcdName)
 		return
 	}
-	poolName, ok := labelsMap[PoolLabel]
+	//poolName, ok := labelsMap[PoolLabel]
+	//if !ok {
+	//	err = fmt.Errorf("cant find pool label %q in labels of MachineDeployment %q", PoolLabel, mcdName)
+	//	return
+	//}
+	poolName, ok := getPoolLabel(labelsMap)
 	if !ok {
-		err = fmt.Errorf("cant find pool label %q in labels of MachineDeployment %q", PoolLabel, mcdName)
+		err = fmt.Errorf("cant find any pool label in %q within labels of MachineDeployment %q", PoolLabels, mcdName)
 		return
 	}
 	var zone string
@@ -185,14 +195,19 @@ func MachineClassInfoFromUnstructured(mcc *unstructured.Unstructured, snapshotTi
 	}
 	maps.Copy(labelsMap, mcc.GetLabels())
 
-	poolName, ok := labelsMap[PoolLabelAlt]
+	poolName, ok := getPoolLabel(labelsMap)
 	if !ok {
-		poolName, ok = labelsMap[PoolLabel]
-		if !ok {
-			err = fmt.Errorf("cant find pool label %q or %q in labels of MachineClass %q", PoolLabel, PoolLabelAlt, mccName)
-			return
-		}
+		err = fmt.Errorf("cant find any pool label in %q within labels of MachineClass %q", PoolLabels, mccName)
+		return
 	}
+	//poolName, ok := labelsMap[PoolLabelAlt]
+	//if !ok {
+	//	poolName, ok = labelsMap[PoolLabel]
+	//	if !ok {
+	//		err = fmt.Errorf("cant find pool label %q or %q in labels of MachineClass %q", PoolLabel, PoolLabelAlt, mccName)
+	//		return
+	//	}
+	//}
 
 	mccInfo = MachineClassInfo{
 		SnapshotMeta: gsc.SnapshotMeta{
@@ -384,13 +399,12 @@ func parseIntOrStr(val any) (intstr.IntOrString, error) {
 	return intstr.IntOrString{}, fmt.Errorf("cannot parse %v as int or string", val)
 }
 
-//func GetMapValue[M map[string]V, V any](m M, keys ...string) (value V, ok bool) {
-//	for _, k := range keys {
-//		value, ok = m[k]
-//		if ok {
-//			return
-//		}
-//	}
-//	ok = false
-//	return
-//}
+func getPoolLabel(labels map[string]string) (label string, ok bool) {
+	for _, pl := range PoolLabels {
+		label, ok = labels[pl]
+		if ok {
+			return
+		}
+	}
+	return
+}

@@ -3,17 +3,21 @@ set -eo pipefail
 
 echoErr() { echo "$@" 1>&2; }
 
-echo "Please make sure you have logged into your docker hub account using 'docker login' \
-and set the TAG env for the image tag before running this script"
+if [[ -z "$DOCKERHUB_USER" ]]; then
+  echoErr "Please export DOCKERHUB_USER var before executing this script and ensure you have logged in using 'docker login'"
+  exit 1
+fi
 
-echo "Please ensure your image in spec/recorder-pod.yaml is correct"
+if [[ ! -f specs/shr-pod.yaml ]]; then
+  echoErr "Please ensure that you are in the base dir of the gardener-scaling-history repo before running this script"
+  exit 2
+fi
 
 echo "Please ensure you have used gardenctl to log into the right shoot cluster"
-
-kubectl delete -f specs/recorder-pod.yaml || echo "recorder pods not yet deployed."
-
-kubectl delete cm -n robot scaling-history-recorder-config || echo "recorder config not already deployed. Will deploy again."
-
+recorderPoYaml="/tmp/shr-pod.yaml"
+envsubst < specs/shr-pod.yaml > "$recorderPoYaml"
+echo "Substituted env variables in specs/recorder-pod.yaml and wrote to $recorderPoYaml"
+kubectl delete -f "$recorderPoYaml" || echo "NOTE: recorder pods not already deployed."
+kubectl delete cm -n robot scaling-history-recorder-config || echo "NOTE: recorder config not already deployed."
 kubectl create cm -n robot scaling-history-recorder-config --from-file=cfg/clusters.csv
-
-kubectl apply -f specs/recorder-pod.yaml
+kubectl apply -f  "$recorderPoYaml"
