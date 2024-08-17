@@ -1052,14 +1052,14 @@ func (r *defaultRecorder) onAddDeployment(obj interface{}) {
 	}
 	caSettings, err := parseCASettingsInfo(deployment.UnstructuredContent())
 	if err != nil {
-		slog.Error("cannot parse the ca command from deployment", "error", err)
+		slog.Error("onAddDeployment cannot parse the ca command from deployment", "error", err)
 		return
 	}
 	caSettings.SnapshotTimestamp = time.Now().UTC()
 	storedCASettingsInfo, err := r.dataAccess.LoadLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Error("cannot get the latest ca settings stored in db", "error", err)
+			slog.Error("onAddDeployment cannot get the latest ca settings stored in db", "error", err)
 			return
 		}
 	}
@@ -1068,7 +1068,7 @@ func (r *defaultRecorder) onAddDeployment(obj interface{}) {
 	if storedCASettingsInfo.Hash != caSettings.Hash {
 		_, err := r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
-			slog.Error("cannot store ca settings in ca_settings_info", "error", err)
+			slog.Error("onAddDeployment cannot store ca settings in ca_settings_info", "error", err)
 			return
 		}
 	}
@@ -1097,7 +1097,7 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 	}
 	priorities := getPrirotiesFromCAConfig(configMap)
 	if priorities == "" {
-		slog.Warn("No priorities defined in configmap", "configMap", configMap, "recorderParams", r.params)
+		slog.Warn("onAddConfigMap found no priorities defined in configmap", "configMap", configMap, "recorderParams", r.params)
 	} else {
 		slog.Debug("Found priorities defined in configmap", "configMap", configMap, "priorities", priorities, "recorderParams", r.params)
 	}
@@ -1105,7 +1105,7 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 	caSettings, err := r.dataAccess.LoadLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Error("cannot get the latest ca deployment stored in db", "error", err, "recorderParams", r.params)
+			slog.Error("onAddConfigMap cannot get the latest ca deployment stored in db", "error", err, "recorderParams", r.params)
 			return
 		}
 	}
@@ -1116,7 +1116,7 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 	if caSettings.Hash != oldHash {
 		_, err = r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
-			slog.Error("cannot store ca settings in ca_settings_info", "error", err, "recorderParams", r.params)
+			slog.Error("onAddConfigMap cannot store ca settings in ca_settings_info", "error", err, "recorderParams", r.params)
 			return
 		}
 	}

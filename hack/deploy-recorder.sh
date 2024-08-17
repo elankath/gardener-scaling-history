@@ -19,5 +19,9 @@ envsubst < specs/shr.yaml > "$recorderPoYaml"
 echo "Substituted env variables in specs/recorder-pod.yaml and wrote to $recorderPoYaml"
 kubectl delete -f "$recorderPoYaml" || echo "NOTE: recorder pods not already deployed."
 kubectl delete cm -n robot scaling-history-recorder-config || echo "NOTE: recorder config not already deployed."
+
+waitSecs=8
+echo "cleared objects..waiting for $waitSecs seconds before deploying fresh objects..."
+sleep "$waitSecs"
 kubectl create cm -n robot scaling-history-recorder-config --from-file=cfg/clusters.csv
 kubectl apply -f  "$recorderPoYaml"
