@@ -305,7 +305,7 @@ func (r *defaultRecorder) onAddPod(obj any) {
 	slog.Debug("onAddPod.", "podName", podNew.Name, "podNew.UID", podNew.UID, "podNew.UID", podNew.UID)
 	err := r.processPod(nil, podNew)
 	if err != nil {
-		slog.Error("onAddPod failed", "error", err)
+		slog.Error("onAddPod failed", "error", err, "recorderParams", r.params)
 	}
 }
 
@@ -318,7 +318,7 @@ func (r *defaultRecorder) processPC(pcOld, pcNew *schedulingv1.PriorityClass) er
 
 	pcCountWithSpecHash, err := r.dataAccess.CountPCInfoWithSpecHash(pcNew.Name, pcInfo.Hash)
 	if err != nil {
-		slog.Error("CountPCInfoWithSpecHash failed", "error", err, "pc.Name", pcNew.Name, "pc.uid", pcNew.UID, "pc.hash", pcInfo.Hash)
+		slog.Error("CountPCInfoWithSpecHash failed", "error", err, "pc.Name", pcNew.Name, "pc.uid", pcNew.UID, "pc.hash", pcInfo.Hash, "recorderParams", r.params)
 		return err
 	}
 
@@ -329,7 +329,7 @@ func (r *defaultRecorder) processPC(pcOld, pcNew *schedulingv1.PriorityClass) er
 
 	_, err = r.dataAccess.StorePriorityClassInfo(pcInfo)
 	if err != nil {
-		slog.Error("could not execute pc_info insert", "error", err, "pod.Name", pcInfo.Name, "pod.UID", pcInfo.UID, "pod.CreationTimestamp", pcInfo.CreationTimestamp, "pod.Hash", pcInfo.Hash)
+		slog.Error("could not execute pc_info insert", "error", err, "pod.Name", pcInfo.Name, "pod.UID", pcInfo.UID, "pod.CreationTimestamp", pcInfo.CreationTimestamp, "pod.Hash", pcInfo.Hash, "recorderParams", r.params)
 		return err
 	}
 	return nil
@@ -345,7 +345,7 @@ func (r *defaultRecorder) onUpdatePC(old, new any) {
 	slog.Debug("onUpdatepc.", "pcName", pcOld.Name, "pcOld.UID", pcOld.UID, "pcNew.UID", pcNew.UID)
 	err := r.processPC(pcOld, pcNew)
 	if err != nil {
-		slog.Error("onUpdatePod failed", "error", err)
+		slog.Error("onUpdatePod failed", "error", err, "recorderParams", r.params)
 	}
 }
 
@@ -357,7 +357,7 @@ func (r *defaultRecorder) onAddPC(obj any) {
 	slog.Info("onAddPC.", "pcName", pcNew.Name, "pcNew.UID", pcNew.UID, "pcNew.Value", pcNew.Value, "pcNew.PreemptionPolicy", pcNew.PreemptionPolicy)
 	err := r.processPC(nil, pcNew)
 	if err != nil {
-		slog.Error("onAddPC failed", "error", err)
+		slog.Error("onAddPC failed", "error", err, "recorderParams", r.params)
 		return
 	}
 }
@@ -383,7 +383,7 @@ func (r *defaultRecorder) onUpdatePod(old, new any) {
 	slog.Debug("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID)
 	err := r.processPod(podOld, podNew)
 	if err != nil {
-		slog.Error("onUpdatePod failed", "error", err)
+		slog.Error("onUpdatePod failed", "error", err, "recorderParams", r.params)
 	}
 }
 
@@ -400,7 +400,7 @@ func (r *defaultRecorder) onDeletePod(obj any) {
 		}
 		pod, ok = tombstone.Obj.(*corev1.Pod)
 		if !ok {
-			slog.Error("Tombstone contained object that is not a Pod", "object", obj)
+			slog.Error("Tombstone contained object that is not a Pod", "object", obj, "recorderParams", r.params)
 			return
 		}
 	}
@@ -450,6 +450,7 @@ func (r *defaultRecorder) onUpdateNode(old, new any) {
 		}
 		_, err = r.dataAccess.StoreNodeInfo(nodeNewInfo)
 		if err != nil {
+			slog.Error("could not store node info.", "node.Name", nodeNew.Name, "error", err, "recorderParams", r.params)
 			return nil
 		}
 		slog.Info("OnUpdateNode stored node", "node.Name", nodeNewInfo.Name, "allocatableVolumes", allocatableVolumes, "node.Hash", nodeNewInfo.Hash)
@@ -484,12 +485,12 @@ func (r *defaultRecorder) onDeleteNode(obj any) {
 	if !ok {
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
-			slog.Error("onDeleteNode got an obj that is neither node nor cache.DeletedFinalStateUnknown", "object", obj)
+			slog.Error("onDeleteNode got an obj that is neither node nor cache.DeletedFinalStateUnknown", "object", obj, "recorderParams", r.params)
 			return
 		}
 		node, ok = tombstone.Obj.(*corev1.Node)
 		if !ok {
-			slog.Error("Tombstone contained object that is not a Node", "object", obj)
+			slog.Error("Tombstone contained object that is not a Node", "object", obj, "recorderParams", r.params)
 			return
 		}
 	}
@@ -500,7 +501,7 @@ func (r *defaultRecorder) onDeleteNode(obj any) {
 	rowsUpdated, err := r.dataAccess.UpdateNodeInfoDeletionTimestamp(node.Name, delTimeStamp)
 	slog.Debug("updated DeletionTimestamp of Node.", "node.Name", node.Name, "node.DeletionTimestamp", delTimeStamp, "rows.updated", rowsUpdated)
 	if err != nil {
-		slog.Error("could not execute UpdateNodeInfoDeletionTimestamp ", "error", err, "node.Name", node.Name, "node.DeletionTimestamp", delTimeStamp)
+		slog.Error("could not execute UpdateNodeInfoDeletionTimestamp ", "error", err, "node.Name", node.Name, "node.DeletionTimestamp", delTimeStamp, "recorderParams", r.params)
 	}
 }
 
@@ -550,7 +551,7 @@ func (r *defaultRecorder) onAddEvent(obj any) {
 	if isCAEvent || isSchedulerEvent || isNodeControllerEvent {
 		err := r.dataAccess.StoreEventInfo(eventInfo)
 		if err != nil {
-			slog.Error("could not execute event insert", "error", err)
+			slog.Error("could not execute event insert", "error", err, "recorderParams", r.params)
 			errCount++
 		}
 	}
@@ -592,7 +593,7 @@ func (r *defaultRecorder) processWorker(workerOld, workerNew *unstructured.Unstr
 	}
 	oldPoolInfoHashes, err := r.getAllWorkerPoolHashes(workerOld)
 	if err != nil {
-		slog.Error("Error loading worker pool hashes", "error", err)
+		slog.Error("Error loading worker pool hashes", "error", err, "recorderParams", r.params)
 		return err
 	}
 	for name, poolNew := range newPoolInfos {
@@ -658,7 +659,7 @@ func (r *defaultRecorder) onUpdateWorker(old, new any) {
 	workerOld := old.(*unstructured.Unstructured)
 	err := r.processWorker(workerOld, workerNew)
 	if err != nil {
-		slog.Error("onUpdateWorker failed", "error", err)
+		slog.Error("onUpdateWorker failed", "error", err, "recorderParams", r.params)
 	}
 }
 
@@ -839,12 +840,12 @@ func (r *defaultRecorder) runInformers(stopCh <-chan struct{}) {
 func (r *defaultRecorder) onAddMCD(obj interface{}) {
 	mcd := obj.(*unstructured.Unstructured)
 	if mcd.GetDeletionTimestamp() != nil {
-		slog.Error("onAddMCD: MachineDeployment is already deleted.", "Name", mcd.GetName(), "DeletionTimestamp", mcd.GetDeletionTimestamp())
+		slog.Error("onAddMCD: MachineDeployment is already deleted.", "Name", mcd.GetName(), "DeletionTimestamp", mcd.GetDeletionTimestamp(), "recorderParams", r.params)
 		return
 	}
 	err := r.processMCD(nil, mcd)
 	if err != nil {
-		slog.Error("onAddMCD failed.", "error", err)
+		slog.Error("onAddMCD failed.", "error", err, "recorderParams", r.params)
 	}
 }
 
@@ -1089,22 +1090,22 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 	}
 	configMap, ok := obj.(*corev1.ConfigMap)
 	if !ok {
-		slog.Error("onAddConfigMap not invoked with corev1.configMap", "obj", obj)
+		slog.Error("onAddConfigMap not invoked with corev1.configMap", "obj", obj, "recorderParams", r.params)
 	}
 	if configMap.GetName() != "cluster-autoscaler-priority-expander" {
 		return
 	}
 	priorities := getPrirotiesFromCAConfig(configMap)
 	if priorities == "" {
-		slog.Warn("No priorities defined in configmap", "configMap", configMap)
+		slog.Warn("No priorities defined in configmap", "configMap", configMap, "recorderParams", r.params)
 	} else {
-		slog.Debug("Found priorities defined in configmap", "configMap", configMap, "priorities", priorities)
+		slog.Debug("Found priorities defined in configmap", "configMap", configMap, "priorities", priorities, "recorderParams", r.params)
 	}
 
 	caSettings, err := r.dataAccess.LoadLatestCASettingsInfo()
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
-			slog.Error("cannot get the latest ca deployment stored in db", "error", err)
+			slog.Error("cannot get the latest ca deployment stored in db", "error", err, "recorderParams", r.params)
 			return
 		}
 	}
@@ -1115,7 +1116,7 @@ func (r *defaultRecorder) onAddConfigMap(obj any) {
 	if caSettings.Hash != oldHash {
 		_, err = r.dataAccess.StoreCASettingsInfo(caSettings)
 		if err != nil {
-			slog.Error("cannot store ca settings in ca_settings_info", "error", err)
+			slog.Error("cannot store ca settings in ca_settings_info", "error", err, "recorderParams", r.params)
 			return
 		}
 	}
