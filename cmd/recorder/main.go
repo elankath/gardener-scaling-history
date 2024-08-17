@@ -38,15 +38,23 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Recorde
 	if len(configDir) == 0 {
 		if mode == gsh.InUtilityClusterRecorderMode {
 			configDir = "/cfg"
+		} else if mode == gsh.LocalRecorderMode {
+			configDir = "cfg"
 		} else {
 			slog.Error("CONFIG_DIR env must be set. This is the dir holding the 'clusters.csv' file")
 			return 1
 		}
+		slog.Info("Assumed default configDir for mode", "configDir", configDir, "mode", mode)
 	}
 	dbDir := os.Getenv("DB_DIR")
 	if len(dbDir) == 0 {
-		slog.Error("DB_DIR env must be set for non-local mode")
-		return 2
+		if mode == gsh.LocalRecorderMode {
+			dbDir = "gen"
+		} else {
+			slog.Error("DB_DIR env must be set for non-local mode")
+			return 2
+		}
+		slog.Info("Assumed default dbDir for mode", "dbDir", dbDir, "mode", mode)
 	}
 
 	recorderParams, err := recorder.CreateRecorderParams(ctx, mode, configDir, dbDir)
