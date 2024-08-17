@@ -8,14 +8,14 @@ if [[ -z "$DOCKERHUB_USER" ]]; then
   exit 1
 fi
 
-if [[ ! -f specs/shr-pod.yaml ]]; then
+if [[ ! -f specs/shr.yaml ]]; then
   echoErr "Please ensure that you are in the base dir of the gardener-scaling-history repo before running this script"
   exit 2
 fi
 
 echo "Please ensure you have used gardenctl to log into the right shoot cluster"
-recorderPoYaml="/tmp/shr-pod.yaml"
-envsubst < specs/shr-pod.yaml > "$recorderPoYaml"
+recorderPoYaml="/tmp/shr.yaml"
+envsubst < specs/shr.yaml > "$recorderPoYaml"
 echo "Substituted env variables in specs/recorder-pod.yaml and wrote to $recorderPoYaml"
 kubectl delete -f "$recorderPoYaml" || echo "NOTE: recorder pods not already deployed."
 kubectl delete cm -n robot scaling-history-recorder-config || echo "NOTE: recorder config not already deployed."
