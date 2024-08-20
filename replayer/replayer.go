@@ -1,7 +1,9 @@
 package replayer
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -13,6 +15,7 @@ import (
 	"github.com/elankath/gardener-scaling-history/recorder"
 	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
+	"io"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -25,6 +28,7 @@ import (
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 	"log/slog"
+	"net/http"
 	"os"
 	"path"
 	"slices"
@@ -105,6 +109,7 @@ func (d *defaultReplayer) Replay(ctx context.Context) error {
 	if d.replayMode == ReplayFromDBMode {
 		return d.ReplayFromDB(ctx)
 	} else {
+		slog.Info("Running scenario report against scaling-recommender. Please ensure that the scaling-recommender has been started.")
 		return d.ReplayFromReport(ctx)
 	}
 }
@@ -132,8 +137,13 @@ func (d *defaultReplayer) ReplayFromReport(ctx context.Context) error {
 			return ctx.Err()
 		}
 
+		writeClusterSnapshot(s.ClusterSnapshot)
+		if err = postClusterSnapshot(s.ClusterSnapshot); err != nil {
+			return err
+		}
+
 		d.lastClusterSnapshot = s.ClusterSnapshot
-		scenario, err := d.createScenario(ctx, s.ClusterSnapshot)
+		outputScenario, err := d.createScenario(ctx, s.ClusterSnapshot)
 		if err != nil {
 			if errors.Is(err, ErrNoScenario) {
 				continue
@@ -141,10 +151,51 @@ func (d *defaultReplayer) ReplayFromReport(ctx context.Context) error {
 				return err
 			}
 		}
-		err = d.appendScenario(scenario, s.ClusterSnapshot)
+		err = d.appendScenario(outputScenario, s.ClusterSnapshot)
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func postClusterSnapshot(cs gsc.ClusterSnapshot) error {
+	reqURL := "http://localhost:8080/recommend/"
+	slog.Info("Posting clusterSnapshot to scaling-recommender...", "requestURL", reqURL)
+	reqBytes, err := json.Marshal(cs)
+	if err != nil {
+		return err
+	}
+	r := bytes.NewReader(reqBytes)
+	req, err := http.NewRequest(http.MethodPost, reqURL, r)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := http.Client{
+		Timeout: 5 * time.Minute,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode == http.StatusOK {
+		var resBytes []byte
+		resBytes, err = io.ReadAll(res.Body)
+		if err != nil {
+			return err
+		}
+		slog.Info("recommender response", "body", string(resBytes))
+	} else {
+		slog.Error("failed simulation", "StatusCode", res.StatusCode, "Status", res.Status)
+		return fmt.Errorf("failed simulation: %s, StatusCode: %d, Status:%s", cs.ID, res.StatusCode, res.Status)
 	}
 	return nil
 }
@@ -304,19 +355,7 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				}
 				return err
 			}
-			bytes, err := json.Marshal(clusterSnapshot)
-			if err != nil {
-				return err
-			}
-			snapShotPath := fmt.Sprintf("/tmp/clusterSnapshot-%d.json", clusterSnapshot.Number)
-			_ = os.WriteFile(snapShotPath, bytes, 0644)
-
-			slog.Info("obtained recorded cluster snapshot for replay.",
-				"Number", clusterSnapshot.Number,
-				"SnapshotTime", clusterSnapshot.SnapshotTime,
-				"Hash", clusterSnapshot.Hash,
-				"PrevHash", d.lastClusterSnapshot.Hash,
-			)
+			writeClusterSnapshot(clusterSnapshot)
 			if clusterSnapshot.Hash == d.lastClusterSnapshot.Hash {
 				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash)
 				d.lastClusterSnapshot = clusterSnapshot
@@ -369,6 +408,24 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func writeClusterSnapshot(cs gsc.ClusterSnapshot) {
+	csBytes, err := json.Marshal(cs)
+	if err != nil {
+		slog.Warn("Failed to marshal clusterSnapshot", "error", err)
+		return
+	}
+	snapShotPath := fmt.Sprintf("/tmp/clusterSnapshot-%d.json", cs.Number)
+	if err = os.WriteFile(snapShotPath, csBytes, 0644); err != nil {
+		slog.Warn("Failed to write clusterSnapshot to file", "path", snapShotPath, "error", err)
+		return
+	}
+	slog.Info("obtained recorded cluster snapshot for replay.",
+		"Number", cs.Number,
+		"SnapshotTime", cs.SnapshotTime,
+		"Hash", cs.Hash,
+	)
 }
 
 func (d *defaultReplayer) CleanCluster(ctx context.Context) error {
@@ -451,12 +508,12 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 		d.reportPath = path.Join(d.params.ReportDir, reportFileName)
 
 	} else {
-		bytes, err := os.ReadFile(d.params.InputDataPath)
+		sBytes, err := os.ReadFile(d.params.InputDataPath)
 		if err != nil {
 			return err
 		}
 		var inputReport gsh.ReplayReport
-		err = json.Unmarshal(bytes, &inputReport)
+		err = json.Unmarshal(sBytes, &inputReport)
 		if err != nil {
 			return err
 		}
@@ -989,12 +1046,12 @@ func (d *defaultReplayer) appendScenario(scenario gsh.Scenario, clusterSnapshot 
 	}
 	d.report.Scenarios = append(d.report.Scenarios, scenario)
 	slog.Info("appended scenario for", "snapshotTime", clusterSnapshot.SnapshotTime, "scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
-	bytes, err := json.Marshal(d.report)
+	rBytes, err := json.Marshal(d.report)
 	if err != nil {
 		return fmt.Errorf("cannot marshal the scenario report: %w", err)
 	}
 
-	err = os.WriteFile(d.reportPath, bytes, 0666)
+	err = os.WriteFile(d.reportPath, rBytes, 0666)
 	if err != nil {
 		return fmt.Errorf("cannot write to report to file %q: %w", d.reportPath, err)
 	}
