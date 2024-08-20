@@ -27,7 +27,7 @@ func GetDuration(name string, defVal time.Duration) time.Duration {
 func main() {
 	inputDataPath := os.Getenv("INPUT_DATA_PATH")
 	if len(inputDataPath) == 0 {
-		slog.Error("DB_PATH env MUST be set")
+		slog.Error("INPUT_DATA_PATH env MUST be set. Must be either a scenario .json file or a recorded .db path")
 		os.Exit(1)
 	}
 	virtualClusterKubeConfig := os.Getenv("KUBECONFIG")

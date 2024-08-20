@@ -1,8 +1,9 @@
 #landscape_name,project_name,shoot_name
-live,hc-canary,prod-hna0
-live,hc-canary,prod-haas
-live,hc-ap11,prod-haas
-live,hc-ap11,prod-hdl
-live,hc-ap11,prod-orc
-live,hc-eu20,prod-az-haas
-live,hc-eu20,prod-az-orc
+#live,hc-canary,prod-hna0
+#live,hc-canary,prod-haas
+#live,hc-ap11,prod-haas
+#live,hc-ap11,prod-hdl
+#live,hc-ap11,prod-orc
+#live,hc-eu20,prod-az-haas
+#live,hc-eu20,prod-az-orc
+dev,i034796,g2

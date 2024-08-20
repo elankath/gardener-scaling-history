@@ -54,9 +54,18 @@ Repository providers 2 apps:
    
    
 
+## Launch the Replayer
 
-## Launch the Re-player
-1. Launch the Virtual cluster. 
-1. `go run cmd/replayer/main.go`
+The replayer operates replays scenarios and generates a report. It needs a `INPUT_DATA_PATH` which is a path
+to the recorded DB Path which can also be a generated scenario json.
 
+In either case it generates another scenario report.
 
+### Launch Replayer to generate scenario from recorded DB
+
+1. Launch the virtual cluster: KVCL. 
+1. Export `INPUT_DATA_PATH`. Ex: `export  INPUT_DATA_PATH=dev_i034796_g2.db`
+1. (optional) You may also optionally change default `STABILIZE_INTERVAL` of `1m`. . Ex: `export STABILIZE_INTERVAL=25s`
+1. (optional) You may also optionally change default of `/tmp` for the scenario `REPORT_DIR`. Ex: `REPORT_DIR=/tmp`
+1. (optional) You may also optionally change default of `/tmp/kvcl.yaml` for the virtual `KUBECONFIG`. Ex: `KUBECONFIG=cfg/virtual-kubeconfig.yaml`
+1. Execute replayer:  `go run cmd/replayer/main.go`
