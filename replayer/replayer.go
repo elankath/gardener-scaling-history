@@ -347,6 +347,7 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime)
 				return nil
 			}
+			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime)
 			clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
@@ -898,8 +899,12 @@ func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapsh
 // This includes removing persistentVolumeClaims, etc.
 func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
 	new = old
-	for i := range new.Spec.Volumes {
-		new.Spec.Volumes[i].PersistentVolumeClaim.ClaimName = ""
+	if new.Spec.Volumes != nil {
+		for i := range new.Spec.Volumes {
+			if new.Spec.Volumes[i].PersistentVolumeClaim != nil {
+				new.Spec.Volumes[i].PersistentVolumeClaim = nil
+			}
+		}
 	}
 	return
 }
