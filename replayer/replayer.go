@@ -522,7 +522,9 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 			return fmt.Errorf("no scenarios found in the report")
 		}
 		slog.Info("Replayer started in replayFromReport mode")
-		reportFileName := apputil.FilenameWithoutExtension(d.params.InputDataPath) + "-report-replay.json"
+
+		fileNameWithoutExtension := apputil.FilenameWithoutExtension(d.params.InputDataPath)
+		reportFileName := strings.TrimSuffix(fileNameWithoutExtension, "-db-replay") + "-report-replay.json"
 		d.reportPath = path.Join(d.params.ReportDir, reportFileName)
 	}
 	return nil
@@ -785,9 +787,12 @@ func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 
 func (d *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err error) {
 	if d.scaleUpEventCounter >= len(d.scaleUpEvents) {
+		slog.Info("getNextReplayMarkTime could find no more scale-up events")
 		return
 	}
-	replayTime = d.scaleUpEvents[d.scaleUpEventCounter].EventTime
+	scaleUpEvent := d.scaleUpEvents[d.scaleUpEventCounter]
+	replayTime = scaleUpEvent.EventTime
+	slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime)
 	d.scaleUpEventCounter++
 	//if d.lastClusterSnapshot.SnapshotTime.IsZero() {
 	//	//recordStartTime, err := d.dataAccess.GetInitialRecorderStartTime()
@@ -1203,7 +1208,7 @@ func waitTillNodesStarted(ctx context.Context, clientSet *kubernetes.Clientset, 
 		case <-ctx.Done():
 			slog.Warn("Context cancelled or timed out:", ctx.Err())
 			return ctx.Err()
-		default:
+		case <-time.After(3 * time.Second):
 			slog.Info("waitTillNodesStarted listing nodes of virtual cluster", "snapshotNumber", snapshotNumber, "numWaitNodes", numWaitNodes)
 			nodes, err := clientutil.ListAllNodes(ctx, clientSet)
 			if err != nil {
@@ -1224,7 +1229,7 @@ func waitTillNodesStarted(ctx context.Context, clientSet *kubernetes.Clientset, 
 					"numRunningNodes", numRunningNodes,
 					"numWaitNodes", numWaitNodes)
 			}
-			<-time.After(2 * time.Second)
+
 		}
 	}
 }
