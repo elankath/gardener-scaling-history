@@ -37,7 +37,7 @@ import (
 	"time"
 )
 
-const DefaultStabilizeInterval = time.Duration(1 * time.Minute)
+const DefaultStabilizeInterval = time.Duration(2 * time.Minute)
 const DefaultReplayInterval = time.Duration(5 * time.Minute)
 
 var ErrNoScenario = errors.New("no-scenario")
