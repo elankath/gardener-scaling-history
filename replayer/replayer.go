@@ -37,7 +37,7 @@ import (
 	"time"
 )
 
-const DefaultStabilizeInterval = time.Duration(2 * time.Minute)
+const DefaultStabilizeInterval = time.Duration(1 * time.Minute)
 const DefaultReplayInterval = time.Duration(5 * time.Minute)
 
 var ErrNoScenario = errors.New("no-scenario")
@@ -60,6 +60,7 @@ type defaultReplayer struct {
 	scaleUpEventCounter int
 	scaleUpEvents       []gsc.EventInfo
 	inputScenarios      []gsh.Scenario
+	lastScenario        gsh.Scenario
 }
 
 var _ gsh.Replayer = (*defaultReplayer)(nil)
@@ -363,26 +364,30 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				continue
 			}
 			var deletedPendingPods []corev1.Pod
-			if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
-				slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
-				// Before writing autoscaler config, I must delete any unscheduled Pods .
-				// Other-wise CA will call VirtualNodeGroup.IncreaseSize just after AutoScalerConfig is written
-				// which isn't good since we want VirtualNodeGroup.IncreaseSize to be called only AFTER computeAndApplyDeltaWork
-				deletedPendingPods, err = deletePendingUnscheduledPods(ctx, d.clientSet)
-				if err != nil {
-					err = fmt.Errorf("cannot delete pendign unscheduled pods: %w", err)
-					return err
-				}
-				err = WriteAutoscalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
-				if err != nil {
-					err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
-					return err
-				}
-				err = waitTillNodesStarted(ctx, d.clientSet, clusterSnapshot.Number, len(clusterSnapshot.AutoscalerConfig.ExistingNodes))
-				if err != nil {
-					return err
-				}
+			//if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
+			slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
+			// Before writing autoscaler config, I must delete any unscheduled Pods .
+			// Other-wise CA will call VirtualNodeGroup.IncreaseSize just after AutoScalerConfig is written
+			// which isn't good since we want VirtualNodeGroup.IncreaseSize to be called only AFTER computeAndApplyDeltaWork
+			deletedPendingPods, err = deletePendingUnscheduledPods(ctx, d.clientSet)
+			if err != nil {
+				err = fmt.Errorf("cannot delete pendign unscheduled pods: %w", err)
+				return err
 			}
+			//if len(d.lastScenario.ScalingResult.ScaledUpNodes) != 0 {
+			//	slog.Info("Resetting autoscaler config hash to reset nodes")
+			//	clusterSnapshot.AutoscalerConfig.Hash = "reset"
+			//}
+			err = WriteAutoscalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+			if err != nil {
+				err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+				return err
+			}
+			err = waitTillNodesStarted(ctx, d.clientSet, clusterSnapshot.Number, len(clusterSnapshot.AutoscalerConfig.ExistingNodes))
+			if err != nil {
+				return err
+			}
+			//}
 			_, err = d.computeAndApplyDeltaWork(ctx, clusterSnapshot, deletedPendingPods)
 			if err != nil {
 				return err
@@ -403,6 +408,7 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 					return err
 				}
 			}
+			d.lastScenario = scenario
 			err = d.appendScenario(scenario, clusterSnapshot)
 			if err != nil {
 				return err
@@ -791,22 +797,17 @@ func (d *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err err
 		slog.Info("getNextReplayMarkTime could find no more scale-up events")
 		return
 	}
-	scaleUpEvent := d.scaleUpEvents[d.scaleUpEventCounter]
-	replayTime = scaleUpEvent.EventTime
-	slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime)
-	d.scaleUpEventCounter++
-	//if d.lastClusterSnapshot.SnapshotTime.IsZero() {
-	//	//recordStartTime, err := d.dataAccess.GetInitialRecorderStartTime()
-	//	//if err != nil {
-	//	//	return
-	//	//}
-	//	//recordStartTime = recordStartTime.Add(d.params.StabilizeInterval).UTC()
-	//	firstScaleUpEventTime := d.scaleUpEvents[0].EventTime
-	//	//replayTime = firstScaleUpEventTime.Add(-d.params.StabilizeInterval).UTC()
-	//	replayTime = firstScaleUpEventTime.UTC()
-	//	return
-	//}
-	//replayTime = d.lastClusterSnapshot.SnapshotTime.UTC().Add(d.params.ReplayInterval).UTC()
+	for i := d.scaleUpEventCounter; i < len(d.scaleUpEvents); i++ {
+		scaleUpEvent := d.scaleUpEvents[i]
+		replayTime = scaleUpEvent.EventTime
+		diff := replayTime.Sub(d.lastClusterSnapshot.SnapshotTime)
+		if diff >= 10*time.Second {
+			slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime)
+			d.scaleUpEventCounter = i
+			return
+		}
+	}
+	replayTime = time.Time{}
 	return
 }
 
