@@ -695,7 +695,7 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 	if err != nil {
 		return fmt.Errorf("applyDeltaWork cannot delete un-used namespaces: %w", err)
 	}
-	slog.Info("applyDeltaWork success", "workCount", deltaWork.Number, "deltaWork", deltaWork)
+	slog.Info("applyDeltaWork success", "workCount", deltaWork.Number)
 	return nil
 }
 
@@ -1084,7 +1084,7 @@ func (d *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 		scaledUpNodes = append(scaledUpNodes, gsh.NodeInfoFromNode(&node, 0))
 	}
 	if len(scaledUpNodes) == 0 {
-		slog.Warn("no scale-up in this replay interval, so skipping this scenario", "snapshotTime", clusterSnapshot.SnapshotTime)
+		slog.Warn("NO SCALE-UP in this replay interval, so skipping appending this scenario to report", "snapshotTime", clusterSnapshot.SnapshotTime)
 		err = ErrNoScenario
 		return
 	}
