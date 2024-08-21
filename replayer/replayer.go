@@ -888,7 +888,18 @@ func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapsh
 		if ok {
 			continue
 		}
+		podInfo = adjustPodInfo(podInfo)
 		podWork.ToDeploy = append(podWork.ToDeploy, podInfo)
+	}
+	return
+}
+
+// adjustPodInfo adjusts the old PodInfo to make it more suitable for deployment onto the virtual cluster.
+// This includes removing persistentVolumeClaims, etc.
+func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
+	new = old
+	for i := range new.Spec.Volumes {
+		new.Spec.Volumes[i].PersistentVolumeClaim.ClaimName = ""
 	}
 	return
 }
