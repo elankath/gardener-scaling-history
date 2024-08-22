@@ -345,14 +345,14 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				return nil
 			}
 			if replayMarkTime.After(time.Now()) {
-				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime)
+				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano())
 				return nil
 			}
-			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime)
+			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano())
 			clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime)
+					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano())
 					return nil
 				}
 				return err
@@ -374,10 +374,12 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				err = fmt.Errorf("cannot delete pendign unscheduled pods: %w", err)
 				return err
 			}
-			//if len(d.lastScenario.ScalingResult.ScaledUpNodes) != 0 {
-			//	slog.Info("Resetting autoscaler config hash to reset nodes")
-			//	clusterSnapshot.AutoscalerConfig.Hash = "reset"
-			//}
+			if len(d.lastScenario.ScalingResult.ScaledUpNodes) != 0 {
+				//FIXME: Hack to ensure that virtual CA deletes virtually scaled nodes during its
+				// sync nodes operation in VirtualNodeGroup.Refresh()
+				slog.Info("RESET autoscaler config hash to clear virtual scaled nodes")
+				clusterSnapshot.AutoscalerConfig.Hash = "reset"
+			}
 			err = WriteAutoscalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
 			if err != nil {
 				err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
@@ -573,12 +575,12 @@ func (d DeltaWork) String() string {
 	sb.WriteString("#")
 	sb.WriteString(strconv.Itoa(d.Number))
 	sb.WriteString("| ")
-	sb.WriteString(fmt.Sprintf("podsToDelete: (%s)", d.PodWork.ToDelete))
-	sb.WriteString("podsToDeploy: (")
-	lo.Reduce(d.PodWork.ToDeploy, func(agg *strings.Builder, item gsc.PodInfo, index int) *strings.Builder {
-		agg.WriteString(item.Name + ",")
-		return agg
-	}, &sb)
+	sb.WriteString(fmt.Sprintf("#podsToDelete: (%d)", len(d.PodWork.ToDelete)))
+	sb.WriteString(fmt.Sprintf("#podsToDeploy: (%d)", len(d.PodWork.ToDeploy)))
+	//lo.Reduce(d.PodWork.ToDeploy, func(agg *strings.Builder, item gsc.PodInfo, index int) *strings.Builder {
+	//	agg.WriteString(item.Name + ",")
+	//	return agg
+	//}, &sb)
 	sb.WriteString(")")
 	return sb.String()
 }
@@ -666,7 +668,11 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 			GracePeriodSeconds: pointer.Int64(0),
 		})
 		if err != nil {
-			return err
+			if apierrors.IsNotFound(err) {
+				slog.Warn("applyDeltaWork cannot delete pod since already deleted", "pod", p.Name, "namespace", p.Namespace, "err", err)
+			} else {
+				return err
+			}
 		}
 		slog.Info("applyDeltaWork successfully deleted the pod", "pod.Name", p.Name)
 	}
@@ -802,7 +808,7 @@ func (d *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err err
 		replayTime = scaleUpEvent.EventTime
 		diff := replayTime.Sub(d.lastClusterSnapshot.SnapshotTime)
 		if diff >= 10*time.Second {
-			slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime)
+			slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime, "replayMarkTimeUnixNanos", replayTime.UnixNano())
 			d.scaleUpEventCounter = i
 			return
 		}
@@ -831,7 +837,6 @@ func (d *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterS
 }
 
 func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clusterSnapshot gsc.ClusterSnapshot, pendingPods []corev1.Pod) (deltaWork DeltaWork, err error) {
-	slog.Info("computeDeltaWork for clusterSnapshot.", "clusterSnapshot.Number", clusterSnapshot.Number)
 	pcWork, err := computePriorityClassWork(ctx, clientSet, clusterSnapshot.PriorityClasses)
 	if err != nil {
 		return
@@ -850,6 +855,8 @@ func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clus
 	deltaWork.PodWork = podWork
 	deltaWork.PriorityClassWork = pcWork
 	deltaWork.NamespaceWork = nsWork
+	slog.Info("computeDeltaWork for clusterSnapshot.", "clusterSnapshot.Number", clusterSnapshot.Number, "clusterSnapshot.SnapshotTime.UnixNano", clusterSnapshot.SnapshotTime.UnixNano(), "deltaWork", deltaWork)
+
 	return
 }
 
@@ -1238,7 +1245,7 @@ func waitTillNodesStarted(ctx context.Context, clientSet *kubernetes.Clientset, 
 				}
 			}
 			if numRunningNodes >= numWaitNodes {
-				slog.Info("waitTillNodesStarted has reached required numRunningNodes", "numRunningNodes", numRunningNodes)
+				slog.Info("waitTillNodesStarted has reached required numRunningNodes", "numRunningNodes", numRunningNodes, "numWaitNodes", numWaitNodes)
 				return nil
 			} else {
 				slog.Info("waitTillNodesStarted has not yet reached required numWaitNodes",
