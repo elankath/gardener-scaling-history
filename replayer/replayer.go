@@ -1330,9 +1330,9 @@ func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, s
 		})
 		if len(unscheduledPods) == 0 {
 			if scalingOccurred {
-				slog.Info("Zero unscheduledPods and zero virtualScaledNodes; skip scenario creation", "numNodes", len(nodes), "numPods", len(pods), "workCount", workCount)
-			} else {
 				slog.Info("Zero unscheduledPods after virtual scaling; continue scenario creation", "numNodes", len(nodes), "numPods", len(pods), "numVirtualScaledNodes", len(virtualScaledNodes), "workCount", workCount)
+			} else {
+				slog.Info("Zero unscheduledPods and zero virtualScaledNodes; skip scenario creation", "numNodes", len(nodes), "numPods", len(pods), "workCount", workCount)
 			}
 			return
 		}
