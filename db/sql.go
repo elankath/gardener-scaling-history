@@ -40,7 +40,7 @@ const InsertWorkerPoolInfo = `INSERT INTO worker_pool_info(
 	Hash
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-const SelectWorkerPoolInfoBefore = `SELECT * FROM worker_pool_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
+const SelectWorkerPoolInfoBefore = `SELECT * FROM worker_pool_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
 const SelectAllWorkerPoolInfoHashes = "SELECT RowID, Name, SnapshotTimestamp, Hash FROM worker_pool_info ORDER BY RowID desc"
 
 const CreateMCDInfoTable = `CREATE TABLE IF NOT EXISTS mcd_info(
@@ -73,7 +73,7 @@ const InsertMCDInfo = `INSERT INTO mcd_info(
 	Labels,
 	Taints,
 	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectLatestMCDInfoBefore = `SELECT * FROM mcd_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
+const SelectLatestMCDInfoBefore = `SELECT * FROM mcd_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
 const UpdateMCDInfoDeletionTimestamp = `UPDATE mcd_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCDInfoHash = "SELECT Hash FROM mcd_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCDInfo = "SELECT * FROM mcd_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
@@ -104,7 +104,7 @@ const InsertMCCInfo = `INSERT INTO mcc_info(
 	Labels,
 	Capacity,
 	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectLatestMCCInfoBefore = `SELECT * FROM mcc_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
+const SelectLatestMCCInfoBefore = `SELECT * FROM mcc_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
 const UpdateMCCInfoDeletionTimestamp = `UPDATE mcc_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCCInfoHash = "SELECT Hash FROM mcc_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCCInfo = "SELECT * FROM mcc_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
@@ -140,7 +140,7 @@ const InsertNodeInfo = `INSERT INTO node_info(
 
 // `SELECT * FROM node_info WHERE CreationTimestamp < ? ORDER BY CreationTimestamp DESC`
 const SelectNodeInfoBefore = `SELECT * FROM node_info 
-	WHERE SnapshotTimestamp <= ?
+	WHERE CreationTimestamp <= ?
 	AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)
 	GROUP BY node_info.Name HAVING max(SnapshotTimestamp)`
 
@@ -184,8 +184,8 @@ const SelectUnscheduledPodsBeforeSnapshotTimestamp = `SELECT * FROM (SELECT * fr
 const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT * FROM pod_info WHERE (ScheduleStatus = 1)  
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
                 GROUP BY Name;`
-const SelectLatestPodsBeforeSnapshotTimestamp = `SELECT * FROM pod_info WHERE
-                SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pod_info.UID HAVING max(SnapshotTimestamp);`
+const SelectLatestPodsBeforeCreationTimestamp = `SELECT * FROM pod_info WHERE
+                CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pod_info.UID HAVING max(SnapshotTimestamp);`
 
 const CreatePriorityClassInfoTable = `CREATE TABLE IF NOT EXISTS pc_info (
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -214,7 +214,7 @@ const InsertPriorityClassInfo = `INSERT INTO pc_info(
 	Hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const SelectLatestPriorityClassInfoBeforeSnapshotTimestamp = `SELECT * FROM pc_info WHERE
-                SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pc_info.Name HAVING max(SnapshotTimestamp);`
+                CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pc_info.Name HAVING max(SnapshotTimestamp);`
 const UpdatePriorityClassInfoDeletionTimestamp = "UPDATE pc_info SET DeletionTimestamp=? WHERE UID=?"
 const SelectPriorityClassInfoCountWithUIDAndHash = "SELECT COUNT(*) from pc_info where UID=? and Hash=?"
 

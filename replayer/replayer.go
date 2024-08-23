@@ -37,7 +37,7 @@ import (
 	"time"
 )
 
-const DefaultStabilizeInterval = time.Duration(1 * time.Minute)
+const DefaultStabilizeInterval = time.Duration(12 * time.Second)
 const DefaultReplayInterval = time.Duration(5 * time.Minute)
 
 var ErrNoScenario = errors.New("no-scenario")
@@ -94,45 +94,46 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 	}, nil
 }
 
-func WriteAutoscalerConfig(autoscalerConfig gsc.AutoscalerConfig, path string) error {
-	bytes, err := json.Marshal(autoscalerConfig)
+func writeAutoscalerConfig(id string, autoscalerConfig gsc.AutoscalerConfig, path string) error {
+	data, err := json.Marshal(autoscalerConfig)
 	if err != nil {
 		return err
 	}
-	err = os.WriteFile(path, bytes, 0644)
+	err = os.WriteFile(path, data, 0644)
 	if err != nil {
 		return err
 	}
+	slog.Info("writeAutoscalerConfig success.", "id", id, "path", path)
 	return nil
 }
 
-func (d *defaultReplayer) Replay(ctx context.Context) error {
-	if d.replayMode == ReplayFromDBMode {
-		return d.ReplayFromDB(ctx)
+func (r *defaultReplayer) Replay(ctx context.Context) error {
+	if r.replayMode == ReplayFromDBMode {
+		return r.ReplayFromDB(ctx)
 	} else {
 		slog.Info("Running scenario report against scaling-recommender. Please ensure that the scaling-recommender has been started.")
-		return d.ReplayFromReport(ctx)
+		return r.ReplayFromReport(ctx)
 	}
 }
 
-func (d *defaultReplayer) ReplayFromReport(ctx context.Context) error {
-	for _, s := range d.inputScenarios {
-		err := WriteAutoscalerConfig(s.ClusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+func (r *defaultReplayer) ReplayFromReport(ctx context.Context) error {
+	for _, s := range r.inputScenarios {
+		err := writeAutoscalerConfig(s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
 		if err != nil {
-			err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", s.ClusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
+			err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", s.ClusterSnapshot.SnapshotTime, r.params.VirtualAutoScalerConfigPath, err)
 			return err
 		}
-		err = syncNodes(ctx, d.clientSet, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
-		if err != nil {
-			return err
-		}
-		_, err = d.computeAndApplyDeltaWork(ctx, s.ClusterSnapshot, nil)
+		err = syncNodes(ctx, r.clientSet, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
 		if err != nil {
 			return err
 		}
-		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval, "workCount", d.workCount)
+		_, err = r.computeAndApplyDeltaWork(ctx, s.ClusterSnapshot, nil)
+		if err != nil {
+			return err
+		}
+		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", r.params.StabilizeInterval, "workCount", r.workCount)
 		select {
-		case <-time.After(d.params.StabilizeInterval):
+		case <-time.After(r.params.StabilizeInterval):
 		case <-ctx.Done():
 			slog.Warn("Context cancelled or timed out:", ctx.Err())
 			return ctx.Err()
@@ -143,8 +144,8 @@ func (d *defaultReplayer) ReplayFromReport(ctx context.Context) error {
 			return err
 		}
 
-		d.lastClusterSnapshot = s.ClusterSnapshot
-		outputScenario, err := d.createScenario(ctx, s.ClusterSnapshot)
+		r.lastClusterSnapshot = s.ClusterSnapshot
+		outputScenario, err := r.createScenario(ctx, s.ClusterSnapshot)
 		if err != nil {
 			if errors.Is(err, ErrNoScenario) {
 				continue
@@ -152,7 +153,7 @@ func (d *defaultReplayer) ReplayFromReport(ctx context.Context) error {
 				return err
 			}
 		}
-		err = d.appendScenario(outputScenario, s.ClusterSnapshot)
+		err = r.appendScenario(outputScenario, s.ClusterSnapshot)
 		if err != nil {
 			return err
 		}
@@ -329,14 +330,14 @@ func buildReadyConditions() []corev1.NodeCondition {
 	}
 }
 
-func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
+func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Warn("context is cancelled/done, exiting re-player")
 			return ctx.Err()
 		default:
-			replayMarkTime, err := d.getNextReplayMarkTime()
+			replayMarkTime, err := r.getNextReplayMarkTime()
 			if err != nil {
 				return err
 			}
@@ -349,7 +350,7 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				return nil
 			}
 			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano())
-			clusterSnapshot, err := d.GetRecordedClusterSnapshot(replayMarkTime)
+			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano())
@@ -357,52 +358,48 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				}
 				return err
 			}
-			writeClusterSnapshot(clusterSnapshot)
-			if clusterSnapshot.Hash == d.lastClusterSnapshot.Hash {
+			// UNCOMMENT ME FOR DIAGNOSIS ONLY
+			//writeClusterSnapshot(clusterSnapshot)
+			if clusterSnapshot.Hash == r.lastClusterSnapshot.Hash {
 				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash)
-				d.lastClusterSnapshot = clusterSnapshot
+				r.lastClusterSnapshot = clusterSnapshot
 				continue
 			}
 			var deletedPendingPods []corev1.Pod
-			//if clusterSnapshot.AutoscalerConfig.Hash != d.lastClusterSnapshot.AutoscalerConfig.Hash {
-			slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
+			//if clusterSnapshot.AutoscalerConfig.Hash != r.lastClusterSnapshot.AutoscalerConfig.Hash {
 			// Before writing autoscaler config, I must delete any unscheduled Pods .
 			// Other-wise CA will call VirtualNodeGroup.IncreaseSize just after AutoScalerConfig is written
 			// which isn't good since we want VirtualNodeGroup.IncreaseSize to be called only AFTER computeAndApplyDeltaWork
-			deletedPendingPods, err = deletePendingUnscheduledPods(ctx, d.clientSet)
+			deletedPendingPods, err = deletePendingUnscheduledPods(ctx, r.clientSet)
 			if err != nil {
 				err = fmt.Errorf("cannot delete pendign unscheduled pods: %w", err)
 				return err
 			}
-			if len(d.lastScenario.ScalingResult.ScaledUpNodes) != 0 {
+			if len(deletedPendingPods) > 0 || len(r.lastScenario.ScalingResult.ScaledUpNodes) != 0 {
 				//FIXME: Hack to ensure that virtual CA deletes virtually scaled nodes during its
 				// sync nodes operation in VirtualNodeGroup.Refresh()
 				slog.Info("RESET autoscaler config hash to clear virtual scaled nodes")
 				clusterSnapshot.AutoscalerConfig.Hash = "reset"
 			}
-			err = WriteAutoscalerConfig(clusterSnapshot.AutoscalerConfig, d.params.VirtualAutoScalerConfigPath)
+			if r.lastClusterSnapshot.AutoscalerConfig.Hash != clusterSnapshot.AutoscalerConfig.Hash {
+				slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
+				err = writeAutoscalerConfigAndWaitForSignal(ctx, clusterSnapshot.ID, clusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath, r.params.StabilizeInterval)
+				if err != nil {
+					return err
+				}
+			} else {
+				slog.Info("skip writeAutoscalerConfigAndWaitForSignal since hash unchanged", "hash", clusterSnapshot.AutoscalerConfig.Hash)
+			}
+			_, err = r.computeAndApplyDeltaWork(ctx, clusterSnapshot, deletedPendingPods)
 			if err != nil {
-				err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", clusterSnapshot.SnapshotTime, d.params.VirtualAutoScalerConfigPath, err)
 				return err
 			}
-			err = waitTillNodesStarted(ctx, d.clientSet, clusterSnapshot.Number, len(clusterSnapshot.AutoscalerConfig.ExistingNodes))
-			if err != nil {
-				return err
+			r.lastClusterSnapshot = clusterSnapshot
+			scalingOccurred, err := checkVirtualScaling(ctx, r.clientSet, r.params.StabilizeInterval, r.workCount)
+			if !scalingOccurred {
+				continue
 			}
-			//}
-			_, err = d.computeAndApplyDeltaWork(ctx, clusterSnapshot, deletedPendingPods)
-			if err != nil {
-				return err
-			}
-			slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", d.params.StabilizeInterval, "workCount", d.workCount)
-			select {
-			case <-time.After(d.params.StabilizeInterval):
-			case <-ctx.Done():
-				slog.Warn("Context cancelled or timed out:", ctx.Err())
-				return ctx.Err()
-			}
-			d.lastClusterSnapshot = clusterSnapshot
-			scenario, err := d.createScenario(ctx, clusterSnapshot)
+			scenario, err := r.createScenario(ctx, clusterSnapshot)
 			if err != nil {
 				if errors.Is(err, ErrNoScenario) {
 					continue
@@ -410,10 +407,58 @@ func (d *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 					return err
 				}
 			}
-			d.lastScenario = scenario
-			err = d.appendScenario(scenario, clusterSnapshot)
+			r.lastScenario = scenario
+			err = r.appendScenario(scenario, clusterSnapshot)
 			if err != nil {
 				return err
+			}
+		}
+	}
+}
+
+func writeAutoscalerConfigAndWaitForSignal(ctx context.Context, id string, asConfig gsc.AutoscalerConfig, asConfigWritePath string, stabilizeInterval time.Duration) error {
+	err := writeAutoscalerConfig(id, asConfig, asConfigWritePath)
+	if err != nil {
+		err = fmt.Errorf("cannot write autoscaler config for snapshot %q to path %q: %w", id, asConfigWritePath, err)
+		return err
+	}
+	err = waitForVirtualCASignal(ctx, asConfig.SuccessSignalPath, asConfig.ErrorSignalPath, stabilizeInterval)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func waitForVirtualCASignal(ctx context.Context, successSignalPath string, errorSignalPath string, stabilizeInterval time.Duration) error {
+	slog.Info("waitForVirtualCASignal entered..", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath, "stabilizeInterval", stabilizeInterval)
+	signalTimeout := 4 * time.Minute
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Warn("waitForVirtualCASignal context cancelled or timed out:", ctx.Err())
+			return ctx.Err()
+		case <-time.After(signalTimeout):
+			slog.Error("waitForVirtualCASignal exceeded signalTimeout.", "signalTimeout", signalTimeout)
+			return fmt.Errorf("waitForVirtualCASignal exceeded signalTimeout %q waiting for %q or %q", signalTimeout, successSignalPath, errorSignalPath)
+		case <-time.After(stabilizeInterval):
+			slog.Info("waitForVirtualCASignal checking signal paths.", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath)
+			data, err := os.ReadFile(errorSignalPath)
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("waitForVirtualCASignal got error reading %q: %w", errorSignalPath, err)
+			}
+			if data != nil {
+				errorSignal := string(data)
+				slog.Error("waitForVirtualCASignal obtained error signal.", "errorSignal", errorSignal, "errorSignalPath", errorSignalPath)
+				return fmt.Errorf("virtual CA signalled issue: %s", errorSignal)
+			}
+			data, err = os.ReadFile(successSignalPath)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("waitForVirtualCASignal got error reading %q: %w", successSignalPath, err)
+			}
+			if data != nil {
+				successSignal := string(data)
+				slog.Info("waitForVirtualCASignal obtained success signal.", "successSignal", successSignal, "successSignalPath", successSignalPath)
+				return nil
 			}
 		}
 	}
@@ -425,7 +470,7 @@ func writeClusterSnapshot(cs gsc.ClusterSnapshot) {
 		slog.Warn("Failed to marshal clusterSnapshot", "error", err)
 		return
 	}
-	snapShotPath := fmt.Sprintf("/tmp/clusterSnapshot-%d.json", cs.Number)
+	snapShotPath := fmt.Sprintf("/tmp/cs_%s.json", cs.ID)
 	if err = os.WriteFile(snapShotPath, csBytes, 0644); err != nil {
 		slog.Warn("Failed to write clusterSnapshot to file", "path", snapShotPath, "error", err)
 		return
@@ -437,27 +482,27 @@ func writeClusterSnapshot(cs gsc.ClusterSnapshot) {
 	)
 }
 
-func (d *defaultReplayer) CleanCluster(ctx context.Context) error {
+func (r *defaultReplayer) CleanCluster(ctx context.Context) error {
 	slog.Info("Cleaning the virtual cluster  nodes, priority-classes...")
-	err := clearPods(ctx, d.clientSet)
+	err := clearPods(ctx, r.clientSet)
 	if err != nil {
 		return err
 	}
-	nodes, err := d.clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+	nodes, err := r.clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		slog.Error("cannot list the nodes", "error", err)
 		return err
 	}
 	slog.Info("Deleting nodes.", "numNodes", len(nodes.Items))
 	for _, node := range nodes.Items {
-		err = d.clientSet.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
+		err = r.clientSet.CoreV1().Nodes().Delete(ctx, node.Name, metav1.DeleteOptions{})
 		if err != nil {
 			slog.Error("cannot delete the node", "node.Name", node.Name, "error", err)
 			return err
 		}
 	}
 
-	pcs, err := d.clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
+	pcs, err := r.clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		slog.Error("cannot list the priority classes", "error", err)
 		return err
@@ -467,7 +512,7 @@ func (d *defaultReplayer) CleanCluster(ctx context.Context) error {
 			continue
 		}
 		slog.Info("Deleting Priority Class", "priorityCLass", pc.Name)
-		err = d.clientSet.SchedulingV1().PriorityClasses().Delete(ctx, pc.Name, metav1.DeleteOptions{})
+		err = r.clientSet.SchedulingV1().PriorityClasses().Delete(ctx, pc.Name, metav1.DeleteOptions{})
 		if err != nil {
 			slog.Error("cannot delete the priority class", "pc.Name", pc.Name, "error", err)
 			return err
@@ -495,29 +540,29 @@ func clearPods(ctx context.Context, c *kubernetes.Clientset) error {
 	return err
 }
 
-func (d *defaultReplayer) Start(ctx context.Context) error {
-	err := d.CleanCluster(ctx)
+func (r *defaultReplayer) Start(ctx context.Context) error {
+	err := r.CleanCluster(ctx)
 	if err != nil {
 		return err
 	}
-	if d.replayMode == ReplayFromDBMode {
-		err = d.dataAccess.Init()
+	if r.replayMode == ReplayFromDBMode {
+		err = r.dataAccess.Init()
 		if err != nil {
 			return err
 		}
-		d.scaleUpEvents, err = d.dataAccess.LoadTriggeredScaleUpEvents()
+		r.scaleUpEvents, err = r.dataAccess.LoadTriggeredScaleUpEvents()
 		if err != nil {
 			return err
 		}
-		if len(d.scaleUpEvents) == 0 {
+		if len(r.scaleUpEvents) == 0 {
 			return fmt.Errorf("no TriggeredScaleUp events found in recorded data")
 		}
 		slog.Info("Replayer started in replayFromDB mode")
-		reportFileName := apputil.FilenameWithoutExtension(d.params.InputDataPath) + "-db-replay.json"
-		d.reportPath = path.Join(d.params.ReportDir, reportFileName)
+		reportFileName := apputil.FilenameWithoutExtension(r.params.InputDataPath) + "-db-replay.json"
+		r.reportPath = path.Join(r.params.ReportDir, reportFileName)
 
 	} else {
-		sBytes, err := os.ReadFile(d.params.InputDataPath)
+		sBytes, err := os.ReadFile(r.params.InputDataPath)
 		if err != nil {
 			return err
 		}
@@ -526,15 +571,15 @@ func (d *defaultReplayer) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		d.inputScenarios = inputReport.Scenarios
-		if len(d.inputScenarios) == 0 {
+		r.inputScenarios = inputReport.Scenarios
+		if len(r.inputScenarios) == 0 {
 			return fmt.Errorf("no scenarios found in the report")
 		}
 		slog.Info("Replayer started in replayFromReport mode")
 
-		fileNameWithoutExtension := apputil.FilenameWithoutExtension(d.params.InputDataPath)
+		fileNameWithoutExtension := apputil.FilenameWithoutExtension(r.params.InputDataPath)
 		reportFileName := strings.TrimSuffix(fileNameWithoutExtension, "-db-replay") + "-report-replay.json"
-		d.reportPath = path.Join(d.params.ReportDir, reportFileName)
+		r.reportPath = path.Join(r.params.ReportDir, reportFileName)
 	}
 	return nil
 }
@@ -713,9 +758,9 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 }
 
 // applyDeltaWorkOld is dead code and can be removed later
-func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
+func (r *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (workDone bool, err error) {
 
-	virtualPCs, err := d.clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
+	virtualPCs, err := r.clientSet.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot list the priority classes in virtual cluster: %w", err)
 		return
@@ -728,7 +773,7 @@ func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 		if ok {
 			continue
 		}
-		_, err = d.clientSet.SchedulingV1().PriorityClasses().Create(ctx, &pcInfo.PriorityClass, metav1.CreateOptions{})
+		_, err = r.clientSet.SchedulingV1().PriorityClasses().Create(ctx, &pcInfo.PriorityClass, metav1.CreateOptions{})
 		if err != nil {
 			return false, fmt.Errorf("cannot create the priority class %s: %w", pcInfo.Name, err)
 		}
@@ -737,7 +782,7 @@ func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 	}
 
 	podNamespaces := clusterSnapshot.GetPodNamspaces()
-	virtualNamespaces, err := getNamespaces(ctx, d.clientSet)
+	virtualNamespaces, err := getNamespaces(ctx, r.clientSet)
 	if err != nil {
 		return
 	}
@@ -745,12 +790,12 @@ func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 	//nsToDelete := virtualNamespaces.Difference(podNamespaces)
 	nsToDeploy := podNamespaces.Difference(virtualNamespaces)
 
-	err = createNamespaces(ctx, d.clientSet, nsToDeploy.UnsortedList()...)
+	err = createNamespaces(ctx, r.clientSet, nsToDeploy.UnsortedList()...)
 	if err != nil {
 		return
 	}
 
-	virtualPodsList, err := d.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	virtualPodsList, err := r.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
 		return
@@ -766,7 +811,7 @@ func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 		if ok && (snapshotPodInfo.NominatedNodeName == podInfo.NominatedNodeName || snapshotPodInfo.NodeName == podInfo.NodeName) {
 			continue
 		}
-		err = d.clientSet.CoreV1().Pods(podInfo.Namespace).Delete(ctx, podInfo.Name, metav1.DeleteOptions{
+		err = r.clientSet.CoreV1().Pods(podInfo.Namespace).Delete(ctx, podInfo.Name, metav1.DeleteOptions{
 			GracePeriodSeconds: pointer.Int64(0),
 		})
 		if err != nil {
@@ -785,7 +830,7 @@ func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 		pod := getCorePodFromPodInfo(podInfo)
 		deployCount++
 		slog.Info("deploying pod", "deployCount", deployCount, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
-		_, err = d.clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
+		_, err = r.clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
 		if podInfo.NodeName != "" {
 
 		}
@@ -798,18 +843,18 @@ func (d *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 	return
 }
 
-func (d *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err error) {
-	if d.scaleUpEventCounter >= len(d.scaleUpEvents) {
+func (r *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err error) {
+	if r.scaleUpEventCounter >= len(r.scaleUpEvents) {
 		slog.Info("getNextReplayMarkTime could find no more scale-up events")
 		return
 	}
-	for i := d.scaleUpEventCounter; i < len(d.scaleUpEvents); i++ {
-		scaleUpEvent := d.scaleUpEvents[i]
-		replayTime = scaleUpEvent.EventTime
-		diff := replayTime.Sub(d.lastClusterSnapshot.SnapshotTime)
-		if diff >= 10*time.Second {
-			slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime, "replayMarkTimeUnixNanos", replayTime.UnixNano())
-			d.scaleUpEventCounter = i
+	for i := r.scaleUpEventCounter; i < len(r.scaleUpEvents); i++ {
+		scaleUpEvent := r.scaleUpEvents[i]
+		replayTime = scaleUpEvent.EventTime.UTC()
+		diff := replayTime.Sub(r.lastClusterSnapshot.SnapshotTime)
+		if diff > 10*time.Second {
+			slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime, "replayMarkTimeUnixNanos", replayTime.UTC().UnixNano())
+			r.scaleUpEventCounter = i
 			return
 		}
 	}
@@ -817,8 +862,8 @@ func (d *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err err
 	return
 }
 
-func (d *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot, pendingPods []corev1.Pod) (workDone bool, err error) {
-	deltaWork, err := computeDeltaWork(ctx, d.clientSet, clusterSnapshot, pendingPods)
+func (r *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot, pendingPods []corev1.Pod) (workDone bool, err error) {
+	deltaWork, err := computeDeltaWork(ctx, r.clientSet, clusterSnapshot, pendingPods)
 	if err != nil {
 		return
 	}
@@ -826,9 +871,9 @@ func (d *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterS
 		slog.Info("deltaWork is empty. Skipping applying work")
 		return
 	}
-	d.workCount++
-	deltaWork.Number = d.workCount
-	err = applyDeltaWork(ctx, d.clientSet, deltaWork)
+	r.workCount++
+	deltaWork.Number = r.workCount
+	err = applyDeltaWork(ctx, r.clientSet, deltaWork)
 	if err != nil {
 		return
 	}
@@ -985,26 +1030,27 @@ func deletePodsNotBelongingTo(ctx context.Context, clientSet *kubernetes.Clients
 	return nil
 }
 
-func (d *defaultReplayer) Close() error {
+func (r *defaultReplayer) Close() error {
 	// TODO: clean up cluster can be done here.
-	return d.dataAccess.Close()
+	return r.dataAccess.Close()
 }
 
-func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc.ClusterSnapshot, err error) {
-	d.snapshotCount++
-	cs.Number = d.snapshotCount
+func (r *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+	r.snapshotCount++
+	cs.Number = r.snapshotCount
+	cs.ID = fmt.Sprintf("%s-%d", apputil.FilenameWithoutExtension(r.params.InputDataPath), cs.Number)
 	cs.SnapshotTime = markTime
 
-	mccs, err := d.dataAccess.LoadMachineClassInfosBefore(markTime)
+	mccs, err := r.dataAccess.LoadMachineClassInfosBefore(markTime)
 	if err != nil {
 		return
 	}
 
-	mcds, err := d.dataAccess.LoadMachineDeploymentInfosBefore(markTime)
+	mcds, err := r.dataAccess.LoadMachineDeploymentInfosBefore(markTime)
 	if err != nil {
 		return
 	}
-	workerPools, err := d.dataAccess.LoadWorkerPoolInfosBefore(markTime)
+	workerPools, err := r.dataAccess.LoadWorkerPoolInfosBefore(markTime)
 	if err != nil {
 		return
 	}
@@ -1015,12 +1061,12 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc
 		return
 	}
 
-	cs.PriorityClasses, err = d.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(markTime)
+	cs.PriorityClasses, err = r.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(markTime)
 	if err != nil {
 		return
 	}
 
-	cs.Nodes, err = d.dataAccess.LoadNodeInfosBefore(markTime)
+	cs.Nodes, err = r.dataAccess.LoadNodeInfosBefore(markTime)
 	if err != nil {
 		err = fmt.Errorf("cannot get the node infos before markTime %q: %w", markTime, err)
 		return
@@ -1030,10 +1076,10 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc
 		return
 	}
 
-	cs.Pods, err = d.dataAccess.GetLatestPodInfosBeforeSnapshotTime(markTime)
+	cs.Pods, err = r.dataAccess.GetLatestPodInfosBeforeCreationTime(markTime)
 	apputil.SortPodInfosForReadability(cs.Pods)
 
-	cs.AutoscalerConfig.CASettings, err = d.dataAccess.LoadCASettingsBefore(markTime)
+	cs.AutoscalerConfig.CASettings, err = r.dataAccess.LoadCASettingsBefore(markTime)
 	if err != nil {
 		return
 	}
@@ -1043,13 +1089,18 @@ func (d *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc
 	if err != nil {
 		return
 	}
-
+	successSignalFileName := fmt.Sprintf("vas-success-%d.txt", cs.Number)
+	errorSignalFileName := fmt.Sprintf("vas-error-%d.txt", cs.Number)
+	cs.AutoscalerConfig.SuccessSignalPath = path.Join(os.TempDir(), successSignalFileName)
+	cs.AutoscalerConfig.ErrorSignalPath = path.Join(os.TempDir(), errorSignalFileName)
+	_ = os.Remove(cs.AutoscalerConfig.SuccessSignalPath)
+	_ = os.Remove(cs.AutoscalerConfig.ErrorSignalPath)
 	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Hash = cs.GetHash()
 	return
 }
 
-func (d *defaultReplayer) GetParams() gsh.ReplayerParams {
+func (r *defaultReplayer) GetParams() gsh.ReplayerParams {
 	//TODO implement me
 	panic("implement me")
 }
@@ -1066,29 +1117,29 @@ func getNodeGroupsByPoolZone(nodeGroupsByName map[string]gsc.NodeGroupInfo) map[
 	return poolZoneMap
 }
 
-func (d *defaultReplayer) appendScenario(scenario gsh.Scenario, clusterSnapshot gsc.ClusterSnapshot) error {
-	if d.report == nil {
-		d.report = &gsh.ReplayReport{
+func (r *defaultReplayer) appendScenario(scenario gsh.Scenario, clusterSnapshot gsc.ClusterSnapshot) error {
+	if r.report == nil {
+		r.report = &gsh.ReplayReport{
 			StartTime: clusterSnapshot.SnapshotTime,
 			Scenarios: make([]gsh.Scenario, 0),
 		}
 	}
-	d.report.Scenarios = append(d.report.Scenarios, scenario)
+	r.report.Scenarios = append(r.report.Scenarios, scenario)
 	slog.Info("appended scenario for", "snapshotTime", clusterSnapshot.SnapshotTime, "scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
-	rBytes, err := json.Marshal(d.report)
+	rBytes, err := json.Marshal(r.report)
 	if err != nil {
 		return fmt.Errorf("cannot marshal the scenario report: %w", err)
 	}
 
-	err = os.WriteFile(d.reportPath, rBytes, 0666)
+	err = os.WriteFile(r.reportPath, rBytes, 0666)
 	if err != nil {
-		return fmt.Errorf("cannot write to report to file %q: %w", d.reportPath, err)
+		return fmt.Errorf("cannot write to report to file %q: %w", r.reportPath, err)
 	}
 	return nil
 }
 
-func (d *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (scenario gsh.Scenario, err error) {
-	postVirtualNodesList, err := d.clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (scenario gsh.Scenario, err error) {
+	postVirtualNodesList, err := r.clientSet.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
 		return
@@ -1129,7 +1180,7 @@ func (d *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 		}
 		scenario.ScalingResult.ScaledUpNodeGroups[ng.Name]++
 	}
-	pods, err := clientutil.ListAllPods(ctx, d.clientSet)
+	pods, err := clientutil.ListAllPods(ctx, r.clientSet)
 	for _, pod := range pods {
 		podInfo := recorder.PodInfoFromPod(&pod)
 		// FIXME: BUGGY
@@ -1256,4 +1307,43 @@ func waitTillNodesStarted(ctx context.Context, clientSet *kubernetes.Clientset, 
 
 		}
 	}
+}
+
+func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, stabilizeInterval time.Duration, workCount int) (scalingOccurred bool, err error) {
+	var nodes []corev1.Node
+	var pods []corev1.Pod
+	for i := 0; i < 2; i++ {
+		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
+		virtualScaledNodes := lo.Filter(nodes, func(n corev1.Node, _ int) bool {
+			_, ok := n.Labels[gsc.LabelVirtualScaled]
+			return ok
+		})
+		if len(virtualScaledNodes) > 0 {
+			scalingOccurred = true
+		}
+		pods, err = clientutil.ListAllPods(ctx, clientSet)
+		if err != nil {
+			return
+		}
+		unscheduledPods := lo.Filter(pods, func(item corev1.Pod, index int) bool {
+			return item.Spec.NodeName == ""
+		})
+		if len(unscheduledPods) == 0 {
+			if scalingOccurred {
+				slog.Info("Zero unscheduledPods and zero virtualScaledNodes; skip scenario creation", "numNodes", len(nodes), "numPods", len(pods), "workCount", workCount)
+			} else {
+				slog.Info("Zero unscheduledPods after virtual scaling; continue scenario creation", "numNodes", len(nodes), "numPods", len(pods), "numVirtualScaledNodes", len(virtualScaledNodes), "workCount", workCount)
+			}
+			return
+		}
+		slog.Info("checkVirtualScaling waiting for unscheduledPods to be scheduled...", "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodes), "stabilizeInterval", stabilizeInterval, "workCount", workCount)
+		select {
+		case <-time.After(stabilizeInterval):
+			slog.Info("checkVirtualScaling finished wait of stabilizeInterval.", "stabilizeInterval", stabilizeInterval, "virtualScaledNodes", virtualScaledNodes, "workCount", workCount)
+		case <-ctx.Done():
+			slog.Warn("checkVirtualScaling received context cancelled or timed out:", "error", ctx.Err(), "workCount", workCount)
+			err = ctx.Err()
+		}
+	}
+	return
 }

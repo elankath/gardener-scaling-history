@@ -134,15 +134,15 @@ func TestStoreLoadPodInfo(t *testing.T) {
 		assert.Equal(t, 1, len(pods), "there should be one scheduled pod info")
 	})
 
-	t.Run("GetLatestPodInfosBeforeSnapshotTime", func(t *testing.T) {
+	t.Run("GetLatestPodInfosBeforeCreationTime", func(t *testing.T) {
 		snapshotTime := time.Now().Add(time.Second * 10).UTC()
 		savePodInfo.SnapshotTimestamp = snapshotTime
 		savePodInfo.Hash = savePodInfo.GetHash()
 		rowId, err := dataAccess.StorePodInfo(savePodInfo)
 		assert.Nil(t, err)
 		slog.Info("persisted pod info.", "rowId", rowId, "savePodInfo", savePodInfo)
-		slog.Info("invoking GetLatestPodInfosBeforeSnapshotTime", "timestamp", snapshotTime.UnixMilli())
-		pods, err := dataAccess.GetLatestPodInfosBeforeSnapshotTime(snapshotTime)
+		slog.Info("invoking GetLatestPodInfosBeforeCreationTime", "timestamp", snapshotTime.UnixMilli())
+		pods, err := dataAccess.GetLatestPodInfosBeforeCreationTime(snapshotTime)
 		assert.Nil(t, err)
 		assert.Equal(t, 1, len(pods), "there should be one scheduled pod info")
 	})
@@ -684,4 +684,12 @@ func TestStoreLoadCASettingInfos(t *testing.T) {
 	assert.Nil(t, err)
 	t.Logf("Latest LoadInfo is %s", loadInfo)
 	assert.Equal(t, storeInfo, loadInfo)
+}
+
+func TestErrorNil(t *testing.T) {
+	if errors.Is(nil, os.ErrNotExist) {
+		t.Logf("Pass (Bad)")
+	} else {
+		t.Logf("Fail (Expected)")
+	}
 }
