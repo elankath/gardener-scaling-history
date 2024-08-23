@@ -415,23 +415,26 @@ func (r *defaultRecorder) onDeletePod(obj any) {
 }
 
 func (r *defaultRecorder) onAddNode(obj interface{}) {
-	r.onUpdateNode(nil, obj)
+	r.processNode(nil, obj)
 }
 
 func (r *defaultRecorder) onUpdateNode(old, new any) {
+	r.processNode(old, new)
+}
+
+func (r *defaultRecorder) processNode(old any, new any) {
 	nodeNew := new.(*corev1.Node)
 	if nodeNew.DeletionTimestamp != nil {
 		// ignore deletes
 		return
 	}
-	slog.Debug("onUpdateNode invoked.", "nodeNew.name", nodeNew.Name)
 	var nodeOld *corev1.Node
 	if nodeOld != nil {
 		nodeOld = old.(*corev1.Node)
 	}
 	allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
 	nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, allocatableVolumes)
-	InvokeOrScheduleFunc("onUpdateNode", 10*time.Second, nodeNewInfo, func(_ gsc.NodeInfo) error {
+	InvokeOrScheduleFunc("processNode", 10*time.Second, nodeNewInfo, func(_ gsc.NodeInfo) error {
 		allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
 		if allocatableVolumes == 0 {
 			slog.Debug("Allocatable Volumes key not found. Deferring insert", "node.Name", nodeNewInfo.Name)
@@ -453,7 +456,7 @@ func (r *defaultRecorder) onUpdateNode(old, new any) {
 			slog.Error("could not store node info.", "node.Name", nodeNew.Name, "error", err, "recorderParams", r.params)
 			return nil
 		}
-		slog.Info("OnUpdateNode stored node", "node.Name", nodeNewInfo.Name, "allocatableVolumes", allocatableVolumes, "node.Hash", nodeNewInfo.Hash)
+		slog.Info("processNode stored node", "node.Name", nodeNewInfo.Name, "allocatableVolumes", allocatableVolumes, "node.Hash", nodeNewInfo.Hash)
 		return nil
 	})
 }

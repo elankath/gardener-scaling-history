@@ -12,6 +12,8 @@ github.com/elankath/gardener-scaling-common v0.0.0-20240823071831-a2e3c8bd9edb h
 github.com/elankath/gardener-scaling-common v0.0.0-20240823071831-a2e3c8bd9edb/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
 github.com/elankath/gardener-scaling-common v0.0.0-20240823104250-5d8ccb71a704 h1:RdtZIFftuhqarKMJey9die697fK8hzNuqJJXndxWr4c=
 github.com/elankath/gardener-scaling-common v0.0.0-20240823104250-5d8ccb71a704/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
+github.com/elankath/gardener-scaling-common v0.0.0-20240823124828-9325652968da h1:FDX16++9YC1nbMm/ba/P1l2zfyQXQTJGM3M1qmiKesE=
+github.com/elankath/gardener-scaling-common v0.0.0-20240823124828-9325652968da/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
 github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
 github.com/emicklei/go-restful/v3 v3.11.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/evanphx/json-patch v4.12.0+incompatible h1:4onqiflcdA9EOZ4RxV643DvftH5pOlLGNtQ5lPWQu84=
