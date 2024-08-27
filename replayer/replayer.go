@@ -37,7 +37,7 @@ import (
 	"time"
 )
 
-const DefaultStabilizeInterval = time.Duration(12 * time.Second)
+const DefaultStabilizeInterval = time.Duration(2 * time.Minute)
 const DefaultReplayInterval = time.Duration(5 * time.Minute)
 
 var ErrNoScenario = errors.New("no-scenario")
@@ -53,7 +53,7 @@ type defaultReplayer struct {
 	clientSet           *kubernetes.Clientset
 	params              gsh.ReplayerParams
 	snapshotCount       int
-	workCount           int
+	replayCount         int
 	lastClusterSnapshot gsc.ClusterSnapshot
 	report              *gsh.ReplayReport
 	reportPath          string
@@ -123,7 +123,7 @@ func (r *defaultReplayer) ReplayFromReport(ctx context.Context) error {
 			err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", s.ClusterSnapshot.SnapshotTime, r.params.VirtualAutoScalerConfigPath, err)
 			return err
 		}
-		err = syncNodes(ctx, r.clientSet, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
+		err = syncNodes(ctx, r.clientSet, s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
 		if err != nil {
 			return err
 		}
@@ -131,7 +131,7 @@ func (r *defaultReplayer) ReplayFromReport(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", r.params.StabilizeInterval, "workCount", r.workCount)
+		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", r.params.StabilizeInterval, "replayCount", r.replayCount)
 		select {
 		case <-time.After(r.params.StabilizeInterval):
 		case <-ctx.Done():
@@ -202,7 +202,7 @@ func postClusterSnapshot(cs gsc.ClusterSnapshot) error {
 	return nil
 }
 
-func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, nodeInfos []gsc.NodeInfo) error {
+func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, snapshotID string, nodeInfos []gsc.NodeInfo) error {
 	nodeInfosByName := lo.Associate(nodeInfos, func(item gsc.NodeInfo) (string, struct{}) {
 		return item.Name, struct{}{}
 	})
@@ -221,10 +221,10 @@ func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, nodeInfos [
 		}
 		err := clientSet.CoreV1().Nodes().Delete(ctx, vn.Name, metav1.DeleteOptions{})
 		if err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("cannot delete the virtual node %q: %w", vn.Name, err)
+			return fmt.Errorf("%s | cannot delete the virtual node %q: %w", snapshotID, vn.Name, err)
 		}
 		//delete(virtualNodesMap, vn.Name)
-		klog.V(3).Infof("synchronizeNodes deleted the virtual node %q", vn.Name)
+		klog.V(3).Infof("%s | synchronizeNodes deleted the virtual node %q", snapshotID, vn.Name)
 	}
 
 	for _, nodeInfo := range nodeInfos {
@@ -256,15 +256,15 @@ func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, nodeInfos [
 		if !exists {
 			_, err = clientSet.CoreV1().Nodes().Create(context.Background(), &node, metav1.CreateOptions{})
 			if apierrors.IsAlreadyExists(err) {
-				klog.Warningf("synchronizeNodes: node already exists. updating node %q", node.Name)
+				klog.Warningf("%s | synchronizeNodes: node already exists. updating node %q", node.Name)
 				_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
 			}
 			if err == nil {
-				klog.V(3).Infof("synchronizeNodes created node %q", node.Name)
+				klog.V(3).Infof("%s | synchronizeNodes created node %q", snapshotID, node.Name)
 			}
 		} else {
 			_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
-			klog.V(3).Infof("synchronizeNodes updated node %q", node.Name)
+			klog.V(3).Infof("%s | synchronizeNodes updated node %q", snapshotID, node.Name)
 		}
 		if err != nil {
 			return fmt.Errorf("synchronizeNodes cannot create/update node with name %q: %w", node.Name, err)
@@ -331,26 +331,28 @@ func buildReadyConditions() []corev1.NodeCondition {
 }
 
 func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
+	loopNum := 0
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Warn("context is cancelled/done, exiting re-player")
 			return ctx.Err()
 		default:
+			loopNum++
 			replayMarkTime := r.getNextReplayMarkTime()
 			if replayMarkTime.IsZero() {
-				slog.Info("no more scale ups to be replayed. Exiting")
+				slog.Info("no more scale ups to be replayed. Exiting", "loopNum", loopNum)
 				return nil
 			}
 			if replayMarkTime.After(time.Now()) {
-				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano())
+				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano(), "loopNum", loopNum, "replayCount", r.replayCount)
 				return nil
 			}
-			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano())
+			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano(), "loopNum", loopNum, "replayCount", r.replayCount)
 			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano())
+					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano(), "loopNum", loopNum, "replayCount", r.replayCount)
 					return nil
 				}
 				return err
@@ -358,7 +360,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			// UNCOMMENT ME FOR DIAGNOSIS ONLY
 			//writeClusterSnapshot(clusterSnapshot)
 			if clusterSnapshot.Hash == r.lastClusterSnapshot.Hash {
-				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash)
+				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
 				r.lastClusterSnapshot = clusterSnapshot
 				continue
 			}
@@ -375,24 +377,33 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			if len(deletedPendingPods) > 0 || len(r.lastScenario.ScalingResult.ScaledUpNodes) != 0 {
 				//FIXME: Hack to ensure that virtual CA deletes virtually scaled nodes during its
 				// sync nodes operation in VirtualNodeGroup.Refresh()
-				slog.Info("RESET autoscaler config hash to clear virtual scaled nodes")
+				slog.Info("RESET autoscaler config hash to clear virtual scaled nodes", "loopNum", loopNum, "replayCount", r.replayCount)
 				clusterSnapshot.AutoscalerConfig.Hash = "reset"
 			}
+			deltaWork, err := computeDeltaWork(ctx, r.clientSet, clusterSnapshot, deletedPendingPods)
+			if err != nil {
+				return err
+			}
+			if deltaWork.IsEmpty() {
+				slog.Info("deltaWork is empty. Skipping this loop.", "loopNum", loopNum, "replayCount", r.replayCount)
+				continue
+			}
 			if r.lastClusterSnapshot.AutoscalerConfig.Hash != clusterSnapshot.AutoscalerConfig.Hash {
-				slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash)
+				slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
 				err = writeAutoscalerConfigAndWaitForSignal(ctx, clusterSnapshot.ID, clusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath, r.params.StabilizeInterval)
 				if err != nil {
 					return err
 				}
 			} else {
-				slog.Info("skip writeAutoscalerConfigAndWaitForSignal since hash unchanged", "hash", clusterSnapshot.AutoscalerConfig.Hash)
+				slog.Info("skip writeAutoscalerConfigAndWaitForSignal since hash unchanged", "hash", clusterSnapshot.AutoscalerConfig.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
 			}
-			_, err = r.computeAndApplyDeltaWork(ctx, clusterSnapshot, deletedPendingPods)
+			err = applyDeltaWork(ctx, r.clientSet, deltaWork)
 			if err != nil {
 				return err
 			}
+			r.replayCount++
 			r.lastClusterSnapshot = clusterSnapshot
-			scalingOccurred, err := checkVirtualScaling(ctx, r.clientSet, r.params.StabilizeInterval, r.workCount)
+			scalingOccurred, err := checkVirtualScaling(ctx, r.clientSet, r.params.StabilizeInterval, r.replayCount)
 			if !scalingOccurred {
 				continue
 			}
@@ -428,16 +439,17 @@ func writeAutoscalerConfigAndWaitForSignal(ctx context.Context, id string, asCon
 
 func waitForVirtualCASignal(ctx context.Context, successSignalPath string, errorSignalPath string, stabilizeInterval time.Duration) error {
 	slog.Info("waitForVirtualCASignal entered..", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath, "stabilizeInterval", stabilizeInterval)
-	signalTimeout := 4 * time.Minute
+	waitInterval := 15 * time.Second
+	timeout := time.After(stabilizeInterval)
 	for {
 		select {
 		case <-ctx.Done():
 			slog.Warn("waitForVirtualCASignal context cancelled or timed out:", ctx.Err())
 			return ctx.Err()
-		case <-time.After(signalTimeout):
-			slog.Error("waitForVirtualCASignal exceeded signalTimeout.", "signalTimeout", signalTimeout)
-			return fmt.Errorf("waitForVirtualCASignal exceeded signalTimeout %q waiting for %q or %q", signalTimeout, successSignalPath, errorSignalPath)
-		case <-time.After(stabilizeInterval):
+		case <-timeout:
+			slog.Error("waitForVirtualCASignal exceeded stabilizeInterval.", "", stabilizeInterval)
+			return fmt.Errorf("waitForVirtualCASignal exceeded signalTimeout %q waiting for %q or %q", stabilizeInterval, successSignalPath, errorSignalPath)
+		case <-time.After(waitInterval):
 			slog.Info("waitForVirtualCASignal checking signal paths.", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath)
 			data, err := os.ReadFile(errorSignalPath)
 			if !errors.Is(err, os.ErrNotExist) {
@@ -690,14 +702,15 @@ func deleteNamespaces(ctx context.Context, clientSet *kubernetes.Clientset, nss 
 }
 
 func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaWork DeltaWork) error {
-	slog.Info("applyDeltaWork commencing.", "deltaWork", deltaWork)
+	replayCount := deltaWork.Number
+	slog.Info("applyDeltaWork commencing.", "replayCount", replayCount, "deltaWork", deltaWork)
 	var err error
 	for _, pcInfo := range deltaWork.PriorityClassWork.ToDeploy {
 		_, err = clientSet.SchedulingV1().PriorityClasses().Create(ctx, &pcInfo.PriorityClass, metav1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("applyDeltaWork cannot create the priority class %s: %w", pcInfo.Name, err)
 		}
-		slog.Info("applyDeltaWork successfully created the priority class", "pc.Name", pcInfo.Name)
+		slog.Info("applyDeltaWork successfully created the priority class", "replayCount", replayCount, "pc.Name", pcInfo.Name)
 	}
 	err = createNamespaces(ctx, clientSet, deltaWork.NamespaceWork.ToCreate.UnsortedList()...)
 	if err != nil {
@@ -711,12 +724,12 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 		})
 		if err != nil {
 			if apierrors.IsNotFound(err) {
-				slog.Warn("applyDeltaWork cannot delete pod since already deleted", "pod", p.Name, "namespace", p.Namespace, "err", err)
+				slog.Warn("applyDeltaWork cannot delete pod since already deleted", "replayCount", replayCount, "pod", p.Name, "namespace", p.Namespace, "err", err)
 			} else {
 				return err
 			}
 		}
-		slog.Info("applyDeltaWork successfully deleted the pod", "pod.Name", p.Name)
+		slog.Info("applyDeltaWork successfully deleted the pod", "replayCount", replayCount, "pod.Name", p.Name)
 	}
 
 	podsToDeploy := deltaWork.PodWork.ToDeploy
@@ -732,7 +745,7 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 		//		return err
 		//	}
 		//}
-		slog.Info("applyDeltaWork is deploying pod", "deployCount", i+1, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
+		slog.Info("applyDeltaWork is deploying pod", "replayCount", replayCount, "deployCount", i+1, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
 		podNew, err := clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
 		if err != nil {
 			return fmt.Errorf("applyDeltaWork cannot create the pod  %s: %w", pod.Name, err)
@@ -750,7 +763,7 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 	if err != nil {
 		return fmt.Errorf("applyDeltaWork cannot delete un-used namespaces: %w", err)
 	}
-	slog.Info("applyDeltaWork success", "workCount", deltaWork.Number)
+	slog.Info("applyDeltaWork was successful", "replayCount", replayCount)
 	return nil
 }
 
@@ -860,8 +873,8 @@ func (r *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterS
 		slog.Info("deltaWork is empty. Skipping applying work")
 		return
 	}
-	r.workCount++
-	deltaWork.Number = r.workCount
+	r.replayCount++
+	deltaWork.Number = r.replayCount
 	err = applyDeltaWork(ctx, r.clientSet, deltaWork)
 	if err != nil {
 		return
@@ -1306,16 +1319,22 @@ func waitTillNodesStarted(ctx context.Context, clientSet *kubernetes.Clientset, 
 	}
 }
 
-func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, stabilizeInterval time.Duration, workCount int) (scalingOccurred bool, err error) {
+func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, stabilizeInterval time.Duration, replayCount int) (scalingOccurred bool, err error) {
 	var nodes []corev1.Node
 	var pods []corev1.Pod
-	for i := 0; i < 2; i++ {
+	waitInterval := 30 * time.Second
+	timeout := time.After(stabilizeInterval)
+	for {
 		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
-		virtualScaledNodes := lo.Filter(nodes, func(n corev1.Node, _ int) bool {
-			_, ok := n.Labels[gsc.LabelVirtualScaled]
-			return ok
+		virtualScaledNodeNames := lo.FilterMap(nodes, func(n corev1.Node, _ int) (nodeName string, ok bool) {
+			_, ok = n.Labels[gsc.LabelVirtualScaled]
+			if !ok {
+				return
+			}
+			nodeName = n.Name
+			return
 		})
-		if len(virtualScaledNodes) > 0 {
+		if len(virtualScaledNodeNames) > 0 {
 			scalingOccurred = true
 		}
 		pods, err = clientutil.ListAllPods(ctx, clientSet)
@@ -1327,22 +1346,24 @@ func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, s
 		})
 		if len(unscheduledPods) == 0 {
 			if scalingOccurred {
-				slog.Info("Zero unscheduledPods after virtual scaling; continue scenario creation", "numNodes", len(nodes), "numPods", len(pods), "numVirtualScaledNodes", len(virtualScaledNodes), "workCount", workCount)
+				slog.Info("checkVirtualScaling found zero unscheduledPods; continue scenario creation", "numNodes", len(nodes), "numPods", len(pods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "replayCount", replayCount)
 			} else {
-				slog.Info("Zero unscheduledPods and zero virtualScaledNodes; skip scenario creation", "numNodes", len(nodes), "numPods", len(pods), "workCount", workCount)
+				slog.Info("checkVirtualScaling found zero unscheduledPods AND zero virtualScaledNodeNames; skip scenario creation", "numNodes", len(nodes), "numPods", len(pods), "replayCount", replayCount)
 			}
 			return
 		}
-		slog.Info("checkVirtualScaling waiting for unscheduledPods to be scheduled...", "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodes), "stabilizeInterval", stabilizeInterval, "workCount", workCount)
+		slog.Info("checkVirtualScaling waiting for unscheduledPods to be scheduled.", "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "waitInterval", waitInterval, "stabilizeInterval", stabilizeInterval, "replayCount", replayCount)
 		select {
-		case <-time.After(stabilizeInterval):
-			slog.Info("checkVirtualScaling finished wait of stabilizeInterval.", "stabilizeInterval", stabilizeInterval, "virtualScaledNodes", virtualScaledNodes, "workCount", workCount)
+		case <-timeout:
+			slog.Warn("checkVirtualScaling exceeded stabilizeInterval but still unscheduledPods", "stabilizeInterval", stabilizeInterval, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames))
+			return
+		case <-time.After(waitInterval):
+			slog.Info("checkVirtualScaling finished wait.", "waitInterval", waitInterval, "virtualScaledNodeNames", virtualScaledNodeNames, "replayCount", replayCount)
 		case <-ctx.Done():
-			slog.Warn("checkVirtualScaling received context cancelled or timed out:", "error", ctx.Err(), "workCount", workCount)
+			slog.Warn("checkVirtualScaling received context cancelled or timed out:", "error", ctx.Err(), "replayCount", replayCount)
 			err = ctx.Err()
 		}
 	}
-	return
 }
 
 func adjustNodes(nodes []gsc.NodeInfo, pods []gsc.PodInfo) {
