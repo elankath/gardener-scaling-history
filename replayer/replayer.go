@@ -337,10 +337,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			slog.Warn("context is cancelled/done, exiting re-player")
 			return ctx.Err()
 		default:
-			replayMarkTime, err := r.getNextReplayMarkTime()
-			if err != nil {
-				return err
-			}
+			replayMarkTime := r.getNextReplayMarkTime()
 			if replayMarkTime.IsZero() {
 				slog.Info("no more scale ups to be replayed. Exiting")
 				return nil
@@ -843,22 +840,14 @@ func (r *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 	return
 }
 
-func (r *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time, err error) {
+func (r *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time) {
 	if r.scaleUpEventCounter >= len(r.scaleUpEvents) {
 		slog.Info("getNextReplayMarkTime could find no more scale-up events")
 		return
 	}
-	for i := r.scaleUpEventCounter; i < len(r.scaleUpEvents); i++ {
-		scaleUpEvent := r.scaleUpEvents[i]
-		replayTime = scaleUpEvent.EventTime.UTC()
-		diff := replayTime.Sub(r.lastClusterSnapshot.SnapshotTime)
-		if diff > 10*time.Second {
-			slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime, "replayMarkTimeUnixNanos", replayTime.UTC().UnixNano())
-			r.scaleUpEventCounter = i
-			return
-		}
-	}
-	replayTime = time.Time{}
+	nextScaleUpEvent := r.scaleUpEvents[r.scaleUpEventCounter]
+	r.scaleUpEventCounter++
+	replayTime = nextScaleUpEvent.EventTime.UTC()
 	return
 }
 
@@ -1066,25 +1055,28 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc
 		return
 	}
 
-	cs.Nodes, err = r.dataAccess.LoadNodeInfosBefore(markTime)
-	if err != nil {
-		err = fmt.Errorf("cannot get the node infos before markTime %q: %w", markTime, err)
-		return
-	}
-	if len(cs.Nodes) == 0 {
-		err = fmt.Errorf("no existingNodes available before markTime %q", markTime)
-		return
-	}
-
-	cs.Pods, err = r.dataAccess.GetLatestPodInfosBeforeCreationTime(markTime)
-	apputil.SortPodInfosForReadability(cs.Pods)
+	allPods, err := r.dataAccess.GetLatestPodInfosBeforeCreationTime(markTime)
+	apputil.SortPodInfosForReadability(allPods)
 
 	cs.AutoscalerConfig.CASettings, err = r.dataAccess.LoadCASettingsBefore(markTime)
 	if err != nil {
 		return
 	}
 	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerMode
-	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
+
+	nodes, err := r.dataAccess.LoadNodeInfosBefore(markTime)
+	if err != nil {
+		err = fmt.Errorf("cannot get the node infos before markTime %q: %w", markTime, err)
+		return
+	}
+	if len(nodes) == 0 {
+		err = fmt.Errorf("no existingNodes available before markTime %q", markTime)
+		return
+	}
+	//adjustNodes(nodes, allPods)
+	cs.Nodes = nodes
+	cs.Pods = filterAppPods(allPods)
+	cs.AutoscalerConfig.ExistingNodes = nodes
 	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
 	if err != nil {
 		return
@@ -1346,4 +1338,67 @@ func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, s
 		}
 	}
 	return
+}
+
+func adjustNodes(nodes []gsc.NodeInfo, pods []gsc.PodInfo) {
+	for i := 0; i < len(nodes); i++ {
+		node := nodes[i]
+		nodeSystemPods := filterSystemPodsForNode(pods, node.Name)
+		systemPodRequests := lo.Map(nodeSystemPods, func(p gsc.PodInfo, _ int) corev1.ResourceList {
+			return p.Requests
+		})
+		sumSystemPodRequests := gsc.SumResources(systemPodRequests)
+		slog.Info("adjustedNodes found numNodeSystemPods on node", "nodeName", node.Name, "numNodeSystemPods", len(nodeSystemPods), "sumSystemPodRequests", gsc.ResourcesAsString(sumSystemPodRequests))
+		newAllocatable := computeNodeAllocatable(node.Capacity, sumSystemPodRequests)
+		for resourceName, _ := range node.Capacity {
+			newQuant, found := newAllocatable[resourceName]
+			if !found {
+				continue
+			}
+			node.Allocatable[resourceName] = newQuant
+			continue
+		}
+		// virtual world old allocatable = 6474244Ki = 6322 MB
+		// real world node allocatable = 6322.50
+		// virtual world node allocatable = 6858.75 MB
+		slog.Info("adjustNodes adjusted node.Allocatable.", "nodeName", node.Name, "nodeAllocatable", gsc.ResourcesAsString(node.Allocatable))
+		nodes[i] = node
+	}
+}
+
+func computeNodeAllocatable(nodeCapacity corev1.ResourceList, sumSystemPodRequests corev1.ResourceList) (allocatable corev1.ResourceList) {
+	revisedMem := nodeCapacity.Memory()
+	revisedMem.Sub(sumSystemPodRequests[corev1.ResourceMemory])
+	revisedCpu := nodeCapacity.Cpu()
+	revisedCpu.Sub(sumSystemPodRequests[corev1.ResourceCPU])
+	revisedStorage := nodeCapacity.Storage()
+	revisedStorage.Sub(sumSystemPodRequests[corev1.ResourceStorage])
+	revisedEphStorage := nodeCapacity.StorageEphemeral()
+	revisedEphStorage.Sub(sumSystemPodRequests[corev1.ResourceEphemeralStorage])
+
+	allocatable = corev1.ResourceList{
+		corev1.ResourceMemory:           *revisedMem,
+		corev1.ResourceCPU:              *revisedCpu,
+		corev1.ResourceStorage:          *revisedStorage,
+		corev1.ResourceEphemeralStorage: *revisedEphStorage,
+	}
+
+	return
+}
+
+func filterSystemPodsForNode(pods []gsc.PodInfo, nodeName string) []gsc.PodInfo {
+	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
+		return p.NodeName == nodeName && p.Namespace == "kube-system"
+	})
+}
+
+func filterAppPods(pods []gsc.PodInfo) []gsc.PodInfo {
+	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
+		return p.Namespace != "kube-system"
+	})
+}
+func filterKubeSystemPods(pods []gsc.PodInfo) []gsc.PodInfo {
+	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
+		return p.Namespace == "kube-system"
+	})
 }

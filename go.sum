@@ -14,6 +14,12 @@ github.com/elankath/gardener-scaling-common v0.0.0-20240823104250-5d8ccb71a704 h
 github.com/elankath/gardener-scaling-common v0.0.0-20240823104250-5d8ccb71a704/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
 github.com/elankath/gardener-scaling-common v0.0.0-20240823124828-9325652968da h1:FDX16++9YC1nbMm/ba/P1l2zfyQXQTJGM3M1qmiKesE=
 github.com/elankath/gardener-scaling-common v0.0.0-20240823124828-9325652968da/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
+github.com/elankath/gardener-scaling-common v0.0.0-20240827075103-aa643b3fd429 h1:GHKCeMenBdhn5vjP97xZLQRHLpJbFW+uNy0vyWj0lgs=
+github.com/elankath/gardener-scaling-common v0.0.0-20240827075103-aa643b3fd429/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
+github.com/elankath/gardener-scaling-common v0.0.0-20240827075414-a3655cfc44b5 h1:xTBnTZlnzp8nDOVF4u13Zk8SSdBhdPW53N3yZfXwGu4=
+github.com/elankath/gardener-scaling-common v0.0.0-20240827075414-a3655cfc44b5/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
+github.com/elankath/gardener-scaling-common v0.0.0-20240827080213-6682755e872b h1:zHgiTVhAP9ubHlYi/kUbLGPXzvbv2yKv778DtlSvR3Y=
+github.com/elankath/gardener-scaling-common v0.0.0-20240827080213-6682755e872b/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
 github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
 github.com/emicklei/go-restful/v3 v3.11.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/evanphx/json-patch v4.12.0+incompatible h1:4onqiflcdA9EOZ4RxV643DvftH5pOlLGNtQ5lPWQu84=
