@@ -4,10 +4,10 @@ set -eo pipefail
 
 echoerr() { echo "$@" 1>&2; }
 
-NA=3
-NB=2
-NC=2
-ND=1
+NA=4
+NB=3
+NC=3
+ND=2
 #PARALLEL=true
 
 if [[ -z "$PARALLEL" ]]; then

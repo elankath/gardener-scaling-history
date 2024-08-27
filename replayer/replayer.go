@@ -934,6 +934,9 @@ func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapsh
 		podInfo = adjustPodInfo(podInfo)
 		podWork.ToDeploy = append(podWork.ToDeploy, podInfo)
 	}
+	slices.SortFunc(podWork.ToDeploy, func(a, b gsc.PodInfo) int {
+		return a.CreationTimestamp.Compare(b.CreationTimestamp)
+	})
 	return
 }
 
@@ -948,6 +951,8 @@ func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
 			}
 		}
 	}
+	new.NodeName = ""
+	new.Spec.NodeName = ""
 	return
 }
 
