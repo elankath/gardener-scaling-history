@@ -33,6 +33,12 @@ Repository providers 2 apps:
 
 ### Download Recorder Databases
 
+### Download Automatically into /tmp dir
+
+1. Ensure you have garden live landscape access.
+1. Kindly run the script `./hack/download-db.sh`
+
+### Download Manually
 1. Port forward the recorder Pod's 8080 port locally 
    1. `kubectl port-forward -n robot pod/scaling-history-recorder 8080:8080`
 2. Use curl to list recorder SQLite DBs: 
