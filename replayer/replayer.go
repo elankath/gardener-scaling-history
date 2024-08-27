@@ -37,7 +37,7 @@ import (
 	"time"
 )
 
-const DefaultStabilizeInterval = time.Duration(2 * time.Minute)
+const DefaultStabilizeInterval = time.Duration(3 * time.Minute)
 const DefaultReplayInterval = time.Duration(5 * time.Minute)
 
 var ErrNoScenario = errors.New("no-scenario")
@@ -439,7 +439,7 @@ func writeAutoscalerConfigAndWaitForSignal(ctx context.Context, id string, asCon
 
 func waitForVirtualCASignal(ctx context.Context, successSignalPath string, errorSignalPath string, stabilizeInterval time.Duration) error {
 	slog.Info("waitForVirtualCASignal entered..", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath, "stabilizeInterval", stabilizeInterval)
-	waitInterval := 15 * time.Second
+	waitInterval := 20 * time.Second
 	timeout := time.After(stabilizeInterval)
 	for {
 		select {
@@ -452,13 +452,13 @@ func waitForVirtualCASignal(ctx context.Context, successSignalPath string, error
 		case <-time.After(waitInterval):
 			slog.Info("waitForVirtualCASignal checking signal paths.", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath)
 			data, err := os.ReadFile(errorSignalPath)
-			if !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("waitForVirtualCASignal got error reading %q: %w", errorSignalPath, err)
-			}
 			if data != nil {
 				errorSignal := string(data)
 				slog.Error("waitForVirtualCASignal obtained error signal.", "errorSignal", errorSignal, "errorSignalPath", errorSignalPath)
 				return fmt.Errorf("virtual CA signalled issue: %s", errorSignal)
+			}
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("waitForVirtualCASignal got error reading %q: %w", errorSignalPath, err)
 			}
 			data, err = os.ReadFile(successSignalPath)
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -858,7 +858,23 @@ func (r *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time) {
 		slog.Info("getNextReplayMarkTime could find no more scale-up events")
 		return
 	}
-	nextScaleUpEvent := r.scaleUpEvents[r.scaleUpEventCounter]
+	if r.scaleUpEventCounter == len(r.scaleUpEvents)-1 { // edge case: last scaleUp event
+		endingScaleUpEvent := r.scaleUpEvents[len(r.scaleUpEvents)-1]
+		replayTime = endingScaleUpEvent.EventTime.UTC()
+		slog.Info("getNextReplayMarkTime returning EventTime of the final scale up event.", "finalScaleUpEvent", endingScaleUpEvent)
+		return
+	}
+	for i := r.scaleUpEventCounter + 1; i < len(r.scaleUpEvents); i++ {
+		prevScaleUpEvent := r.scaleUpEvents[r.scaleUpEventCounter-1]
+		currScaleUpEvent := r.scaleUpEvents[i]
+		diff := currScaleUpEvent.EventTime.Sub(prevScaleUpEvent.EventTime)
+		if diff > r.params.StabilizeInterval {
+			replayTime = currScaleUpEvent.EventTime
+			slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime, "replayMarkTimeUnixNanos", replayTime.UnixNano())
+			d.scaleUpEventCounter = i
+			return
+		}
+	}
 	r.scaleUpEventCounter++
 	replayTime = nextScaleUpEvent.EventTime.UTC()
 	return
@@ -1366,65 +1382,8 @@ func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, s
 	}
 }
 
-func adjustNodes(nodes []gsc.NodeInfo, pods []gsc.PodInfo) {
-	for i := 0; i < len(nodes); i++ {
-		node := nodes[i]
-		nodeSystemPods := filterSystemPodsForNode(pods, node.Name)
-		systemPodRequests := lo.Map(nodeSystemPods, func(p gsc.PodInfo, _ int) corev1.ResourceList {
-			return p.Requests
-		})
-		sumSystemPodRequests := gsc.SumResources(systemPodRequests)
-		slog.Info("adjustedNodes found numNodeSystemPods on node", "nodeName", node.Name, "numNodeSystemPods", len(nodeSystemPods), "sumSystemPodRequests", gsc.ResourcesAsString(sumSystemPodRequests))
-		newAllocatable := computeNodeAllocatable(node.Capacity, sumSystemPodRequests)
-		for resourceName, _ := range node.Capacity {
-			newQuant, found := newAllocatable[resourceName]
-			if !found {
-				continue
-			}
-			node.Allocatable[resourceName] = newQuant
-			continue
-		}
-		// virtual world old allocatable = 6474244Ki = 6322 MB
-		// real world node allocatable = 6322.50
-		// virtual world node allocatable = 6858.75 MB
-		slog.Info("adjustNodes adjusted node.Allocatable.", "nodeName", node.Name, "nodeAllocatable", gsc.ResourcesAsString(node.Allocatable))
-		nodes[i] = node
-	}
-}
-
-func computeNodeAllocatable(nodeCapacity corev1.ResourceList, sumSystemPodRequests corev1.ResourceList) (allocatable corev1.ResourceList) {
-	revisedMem := nodeCapacity.Memory()
-	revisedMem.Sub(sumSystemPodRequests[corev1.ResourceMemory])
-	revisedCpu := nodeCapacity.Cpu()
-	revisedCpu.Sub(sumSystemPodRequests[corev1.ResourceCPU])
-	revisedStorage := nodeCapacity.Storage()
-	revisedStorage.Sub(sumSystemPodRequests[corev1.ResourceStorage])
-	revisedEphStorage := nodeCapacity.StorageEphemeral()
-	revisedEphStorage.Sub(sumSystemPodRequests[corev1.ResourceEphemeralStorage])
-
-	allocatable = corev1.ResourceList{
-		corev1.ResourceMemory:           *revisedMem,
-		corev1.ResourceCPU:              *revisedCpu,
-		corev1.ResourceStorage:          *revisedStorage,
-		corev1.ResourceEphemeralStorage: *revisedEphStorage,
-	}
-
-	return
-}
-
-func filterSystemPodsForNode(pods []gsc.PodInfo, nodeName string) []gsc.PodInfo {
-	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
-		return p.NodeName == nodeName && p.Namespace == "kube-system"
-	})
-}
-
 func filterAppPods(pods []gsc.PodInfo) []gsc.PodInfo {
 	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
 		return p.Namespace != "kube-system"
-	})
-}
-func filterKubeSystemPods(pods []gsc.PodInfo) []gsc.PodInfo {
-	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
-		return p.Namespace == "kube-system"
 	})
 }
