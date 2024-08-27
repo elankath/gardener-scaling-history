@@ -64,7 +64,7 @@ func MachineDeploymentInfoFromUnstructured(mcd *unstructured.Unstructured, snaps
 		return
 	}
 	var zone string
-	for _, zoneLabel := range ZoneLabels {
+	for _, zoneLabel := range gsc.ZoneLabels {
 		z, ok := labelsMap[zoneLabel]
 		if ok {
 			zone = z

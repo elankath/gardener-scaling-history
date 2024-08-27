@@ -16,8 +16,6 @@ var (
 	LocalRecorderMode            RecorderMode = "local"
 )
 
-var ZoneLabels = []string{"topology.gke.io/zone", "topology.ebs.csi.aws.com/zone"}
-
 // Recorder monitors the cluster denoted by given kubeconfig and records events and cluster data into cluster database
 type Recorder interface {
 	io.Closer
