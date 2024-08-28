@@ -273,7 +273,7 @@ func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, snapshotID 
 		if !exists {
 			_, err = clientSet.CoreV1().Nodes().Create(context.Background(), &node, metav1.CreateOptions{})
 			if apierrors.IsAlreadyExists(err) {
-				klog.Warningf("%s | synchronizeNodes: node already exists. updating node %q", node.Name)
+				klog.Warningf("%s | synchronizeNodes: node already exists. updating node %q", snapshotID, node.Name)
 				_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
 			}
 			if err == nil {
@@ -1389,7 +1389,7 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 			slog.Warn("waitAndCheckVirtualScaling exceeded stabilizeInterval but still unscheduledPods", "waitNum", waitNum, "stabilizeInterval", stabilizeInterval, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames))
 			return
 		case <-time.After(waitInterval):
-			slog.Info("waitAndCheckVirtualScaling finished wait.", "waitNum", waitNum, "waitInterval", waitInterval, "virtualScaledNodeNames", virtualScaledNodeNames, "replayCount", replayCount)
+			slog.Info("waitAndCheckVirtualScaling finished wait.", "waitNum", waitNum, "waitInterval", waitInterval, "numVirtualScaledNodeNames", len(virtualScaledNodeNames), "replayCount", replayCount)
 			var data []byte
 			data, err = os.ReadFile(signalFilePath)
 			if data != nil {

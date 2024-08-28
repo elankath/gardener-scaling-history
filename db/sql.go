@@ -142,7 +142,7 @@ const InsertNodeInfo = `INSERT INTO node_info(
 const SelectNodeInfoBefore = `SELECT * FROM node_info 
 	WHERE CreationTimestamp <= ?
 	AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)
-	GROUP BY node_info.Name HAVING max(SnapshotTimestamp)`
+	GROUP BY node_info.Name HAVING max(RowID)`
 
 const SelectNodeCountWithNameAndHash = "SELECT COUNT(*) from node_info where Name=? and Hash=?"
 const UpdateNodeInfoDeletionTimestamp = `UPDATE node_info SET DeletionTimestamp = ? where Name = ?`
@@ -214,7 +214,7 @@ const InsertPriorityClassInfo = `INSERT INTO pc_info(
 	Hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const SelectLatestPriorityClassInfoBeforeSnapshotTimestamp = `SELECT * FROM pc_info WHERE
-                CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pc_info.Name HAVING max(SnapshotTimestamp);`
+                CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pc_info.Name HAVING max(RowID);`
 const UpdatePriorityClassInfoDeletionTimestamp = "UPDATE pc_info SET DeletionTimestamp=? WHERE UID=?"
 const SelectPriorityClassInfoCountWithUIDAndHash = "SELECT COUNT(*) from pc_info where UID=? and Hash=?"
 
