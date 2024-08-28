@@ -1347,7 +1347,7 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 	var pods []corev1.Pod
 	var waitInterval time.Duration
 	if stabilizeInterval > 10*time.Minute {
-		waitInterval = 5 * time.Minute
+		waitInterval = 4 * time.Minute
 	} else {
 		waitInterval = 40 * time.Second
 	}
