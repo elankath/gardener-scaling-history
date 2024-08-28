@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -404,7 +405,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				//FIXME: Hack to ensure that virtual CA deletes virtually scaled nodes during its
 				// sync nodes operation in VirtualNodeGroup.Refresh()
 				slog.Info("RESET autoscaler config hash to clear virtual scaled nodes", "loopNum", loopNum, "replayCount", r.replayCount)
-				clusterSnapshot.AutoscalerConfig.Hash = "reset"
+				clusterSnapshot.AutoscalerConfig.Hash = rand.String(6)
 			}
 			deltaWork, err := computeDeltaWork(ctx, r.clientSet, clusterSnapshot, deletedPendingPods)
 			if err != nil {
