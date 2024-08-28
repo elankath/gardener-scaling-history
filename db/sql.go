@@ -40,7 +40,7 @@ const InsertWorkerPoolInfo = `INSERT INTO worker_pool_info(
 	Hash
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-const SelectWorkerPoolInfoBefore = `SELECT * FROM worker_pool_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
+const SelectWorkerPoolInfoBefore = `SELECT * FROM worker_pool_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(RowID)`
 const SelectAllWorkerPoolInfoHashes = "SELECT RowID, Name, SnapshotTimestamp, Hash FROM worker_pool_info ORDER BY RowID desc"
 
 const CreateMCDInfoTable = `CREATE TABLE IF NOT EXISTS mcd_info(
@@ -73,7 +73,7 @@ const InsertMCDInfo = `INSERT INTO mcd_info(
 	Labels,
 	Taints,
 	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectLatestMCDInfoBefore = `SELECT * FROM mcd_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
+const SelectLatestMCDInfoBefore = `SELECT * FROM mcd_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(RowID)`
 const UpdateMCDInfoDeletionTimestamp = `UPDATE mcd_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCDInfoHash = "SELECT Hash FROM mcd_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCDInfo = "SELECT * FROM mcd_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
@@ -104,7 +104,7 @@ const InsertMCCInfo = `INSERT INTO mcc_info(
 	Labels,
 	Capacity,
 	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectLatestMCCInfoBefore = `SELECT * FROM mcc_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(SnapshotTimestamp)`
+const SelectLatestMCCInfoBefore = `SELECT * FROM mcc_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(RowID)`
 const UpdateMCCInfoDeletionTimestamp = `UPDATE mcc_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCCInfoHash = "SELECT Hash FROM mcc_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCCInfo = "SELECT * FROM mcc_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
@@ -185,7 +185,7 @@ const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT 
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
                 GROUP BY Name;`
 const SelectLatestPodsBeforeCreationTimestamp = `SELECT * FROM pod_info WHERE
-                CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pod_info.UID HAVING max(SnapshotTimestamp);`
+                CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pod_info.UID HAVING max(RowID);`
 
 const CreatePriorityClassInfoTable = `CREATE TABLE IF NOT EXISTS pc_info (
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,

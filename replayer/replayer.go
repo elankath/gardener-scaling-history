@@ -380,7 +380,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			//r.lastScalingRun = replayRun
 
 			// UNCOMMENT ME FOR DIAGNOSIS ONLY
-			//writeClusterSnapshot(clusterSnapshot)
+			writeClusterSnapshot(clusterSnapshot)
 
 			if clusterSnapshot.Hash == r.lastClusterSnapshot.Hash {
 				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash, "loopNum", loopNum, "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "replayCount", r.replayCount)
@@ -514,6 +514,7 @@ func writeClusterSnapshot(cs gsc.ClusterSnapshot) {
 	slog.Info("obtained recorded cluster snapshot for replay.",
 		"Number", cs.Number,
 		"SnapshotTime", cs.SnapshotTime,
+		"snapShotPath", snapShotPath,
 		"Hash", cs.Hash,
 	)
 }

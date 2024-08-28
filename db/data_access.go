@@ -202,7 +202,7 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare selectMCCInfoHash: %w", err)
 	}
 
-	d.selectLatestPodInfoWithName, err = db.Prepare("SELECT * FROM pod_info WHERE Name=? ORDER BY SnapshotTimestamp DESC LIMIT 1")
+	d.selectLatestPodInfoWithName, err = db.Prepare("SELECT * FROM pod_info WHERE Name=? ORDER BY RowID DESC LIMIT 1")
 	if err != nil {
 		return fmt.Errorf("cannot prepare selectLatestPodInfoWithName: %w", err)
 	}
