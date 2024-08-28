@@ -48,19 +48,35 @@ const ReplayFromDBMode ReplayMode = 0
 const ReplayFromReportMode ReplayMode = 1
 
 type defaultReplayer struct {
-	replayMode          ReplayMode
-	dataAccess          *db.DataAccess
-	clientSet           *kubernetes.Clientset
-	params              gsh.ReplayerParams
-	snapshotCount       int
-	replayCount         int
-	lastClusterSnapshot gsc.ClusterSnapshot
-	report              *gsh.ReplayReport
-	reportPath          string
-	scaleUpEventCounter int
-	scaleUpEvents       []gsc.EventInfo
-	inputScenarios      []gsh.Scenario
-	lastScenario        gsh.Scenario
+	replayMode               ReplayMode
+	dataAccess               *db.DataAccess
+	clientSet                *kubernetes.Clientset
+	params                   gsh.ReplayerParams
+	snapshotCount            int
+	replayCount              int
+	lastClusterSnapshot      gsc.ClusterSnapshot
+	report                   *gsh.ReplayReport
+	reportPath               string
+	nextScaleUpRunBeginIndex int
+	scaleUpEvents            []gsc.EventInfo
+	scaleUpEventCounter      int
+	lastScalingRun           ScalingRun
+	inputScenarios           []gsh.Scenario
+	lastScenario             gsh.Scenario
+}
+
+type ScalingRun struct {
+	BeginIndex int
+	EndIndex   int
+	BeginTime  time.Time
+	EndTime    time.Time
+}
+
+func (sr ScalingRun) IsZero() bool {
+	return sr.BeginTime.IsZero()
+}
+func (sr ScalingRun) Equal(o ScalingRun) bool {
+	return sr.BeginIndex == o.BeginIndex && sr.EndIndex == o.EndIndex && sr.BeginTime == o.BeginTime && sr.EndTime == o.EndTime
 }
 
 var _ gsh.Replayer = (*defaultReplayer)(nil)
@@ -340,30 +356,40 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 		default:
 			loopNum++
 			replayMarkTime := r.getNextReplayMarkTime()
+			replayMarkTimeNanos := replayMarkTime.UnixNano()
 			if replayMarkTime.IsZero() {
 				slog.Info("no more scale ups to be replayed. Exiting", "loopNum", loopNum)
 				return nil
 			}
 			if replayMarkTime.After(time.Now()) {
-				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano(), "loopNum", loopNum, "replayCount", r.replayCount)
+				//slog.Warn("replayMarkTime now exceeds current time. Exiting", "BeginTime", replayRun.BeginIndex, "EndTime", replayRun.EndTime, "loopNum", loopNum, "replayCount", r.replayCount)
+				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "loopNum", loopNum, "replayCount", r.replayCount)
 				return nil
 			}
-			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano(), "loopNum", loopNum, "replayCount", r.replayCount)
-			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime)
+			//slog.Info("Invoking GetRecordedClusterSnapshot with BeginTime->EndTime.", "BeginTime", replayRun.BeginTime, "EndTime", replayRun.EndTime, "loopNum", loopNum, "replayCount", r.replayCount)
+			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "loopNum", loopNum, "replayCount", r.replayCount)
+			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime, replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeUnixNanos", replayMarkTime.UnixNano(), "loopNum", loopNum, "replayCount", r.replayCount)
+					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "loopNum", loopNum, "replayCount", r.replayCount)
 					return nil
 				}
 				return err
 			}
+			//r.lastScalingRun = replayRun
+
 			// UNCOMMENT ME FOR DIAGNOSIS ONLY
 			//writeClusterSnapshot(clusterSnapshot)
+
 			if clusterSnapshot.Hash == r.lastClusterSnapshot.Hash {
-				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
+				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash, "loopNum", loopNum, "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "replayCount", r.replayCount)
 				r.lastClusterSnapshot = clusterSnapshot
 				continue
 			}
+
+			//if true { //DIAGNOSIS
+			//	continue
+			//}
 			var deletedPendingPods []corev1.Pod
 			//if clusterSnapshot.AutoscalerConfig.Hash != r.lastClusterSnapshot.AutoscalerConfig.Hash {
 			// Before writing autoscaler config, I must delete any unscheduled Pods .
@@ -403,7 +429,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			}
 			r.replayCount++
 			r.lastClusterSnapshot = clusterSnapshot
-			scalingOccurred, err := checkVirtualScaling(ctx, r.clientSet, r.params.StabilizeInterval, r.replayCount)
+			scalingOccurred, err := waitAndCheckVirtualScaling(ctx, r.clientSet, r.params.StabilizeInterval, r.replayCount)
 			if !scalingOccurred {
 				continue
 			}
@@ -639,12 +665,6 @@ func (d DeltaWork) String() string {
 	return sb.String()
 }
 
-func GetPodsByUID(pods []gsc.PodInfo) (podsMap map[string]gsc.PodInfo) {
-	return lo.KeyBy(pods, func(item gsc.PodInfo) string {
-		return item.UID
-	})
-}
-
 func getCorePodFromPodInfo(podInfo gsc.PodInfo) corev1.Pod {
 	pod := corev1.Pod{
 		TypeMeta: metav1.TypeMeta{
@@ -858,25 +878,28 @@ func (r *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time) {
 		slog.Info("getNextReplayMarkTime could find no more scale-up events")
 		return
 	}
-	if r.scaleUpEventCounter == len(r.scaleUpEvents)-1 { // edge case: last scaleUp event
-		endingScaleUpEvent := r.scaleUpEvents[len(r.scaleUpEvents)-1]
-		replayTime = endingScaleUpEvent.EventTime.UTC()
-		slog.Info("getNextReplayMarkTime returning EventTime of the final scale up event.", "finalScaleUpEvent", endingScaleUpEvent)
-		return
-	}
-	for i := r.scaleUpEventCounter + 1; i < len(r.scaleUpEvents); i++ {
-		prevScaleUpEvent := r.scaleUpEvents[r.scaleUpEventCounter-1]
-		currScaleUpEvent := r.scaleUpEvents[i]
-		diff := currScaleUpEvent.EventTime.Sub(prevScaleUpEvent.EventTime)
-		if diff > r.params.StabilizeInterval {
-			replayTime = currScaleUpEvent.EventTime
-			slog.Info("getNextReplayMarkTime got replayTime from scaleUpEvent", "event", scaleUpEvent, "replayTime", replayTime, "replayMarkTimeUnixNanos", replayTime.UnixNano())
-			d.scaleUpEventCounter = i
-			return
-		}
-	}
+	nextScaleUpEvent := r.scaleUpEvents[r.scaleUpEventCounter]
 	r.scaleUpEventCounter++
 	replayTime = nextScaleUpEvent.EventTime.UTC()
+	return
+}
+
+func (r *defaultReplayer) getReplayRun() (run ScalingRun) {
+	run = GetNextScalingRun(r.scaleUpEvents, r.lastScalingRun, r.params.ReplayInterval)
+	if run.IsZero() {
+		return
+	}
+	runBeginTime := run.BeginTime
+	runEndTime := run.EndTime
+	runBeginTimeUnixNanos := runBeginTime.UnixNano()
+	runEndTimeUnixNanos := runEndTime.UnixNano()
+	slog.Info("getReplayRun got BeginTime, EndTime for a scaling-run.",
+		"run.BeginTime", runBeginTime,
+		"run.BeginTimeUnixNanos",
+		runBeginTimeUnixNanos,
+		"run.EndTime", runEndTime,
+		"run.EndTimeUnixNanos",
+		runEndTimeUnixNanos)
 	return
 }
 
@@ -1035,45 +1058,27 @@ func getPodNamesNotAssignedToNodes(ctx context.Context, clientSet *kubernetes.Cl
 	return
 }
 
-func deletePodsNotBelongingTo(ctx context.Context, clientSet *kubernetes.Clientset, nodes []string) error {
-	nodeNames := sets.New[string](nodes...)
-	podsList, err := clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
-	}
-	for _, pod := range podsList.Items {
-		if nodeNames.Has(pod.Spec.NodeName) {
-			continue
-		}
-		err = clientSet.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
-		if err != nil {
-			return fmt.Errorf("cannot delete the pod %q in namespace %q: %w", pod.Name, pod.Namespace, err)
-		}
-	}
-	return nil
-}
-
 func (r *defaultReplayer) Close() error {
 	// TODO: clean up cluster can be done here.
 	return r.dataAccess.Close()
 }
 
-func (r *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime time.Time) (cs gsc.ClusterSnapshot, err error) {
 	r.snapshotCount++
 	cs.Number = r.snapshotCount
 	cs.ID = fmt.Sprintf("%s-%d", apputil.FilenameWithoutExtension(r.params.InputDataPath), cs.Number)
-	cs.SnapshotTime = markTime
+	cs.SnapshotTime = runBeginTime
 
-	mccs, err := r.dataAccess.LoadMachineClassInfosBefore(markTime)
+	mccs, err := r.dataAccess.LoadMachineClassInfosBefore(runEndTime)
 	if err != nil {
 		return
 	}
 
-	mcds, err := r.dataAccess.LoadMachineDeploymentInfosBefore(markTime)
+	mcds, err := r.dataAccess.LoadMachineDeploymentInfosBefore(runEndTime)
 	if err != nil {
 		return
 	}
-	workerPools, err := r.dataAccess.LoadWorkerPoolInfosBefore(markTime)
+	workerPools, err := r.dataAccess.LoadWorkerPoolInfosBefore(runEndTime)
 	if err != nil {
 		return
 	}
@@ -1084,27 +1089,27 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(markTime time.Time) (cs gsc
 		return
 	}
 
-	cs.PriorityClasses, err = r.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(markTime)
+	cs.PriorityClasses, err = r.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(runEndTime)
 	if err != nil {
 		return
 	}
 
-	allPods, err := r.dataAccess.GetLatestPodInfosBeforeCreationTime(markTime)
+	allPods, err := r.dataAccess.GetLatestPodInfosBeforeCreationTime(runEndTime)
 	apputil.SortPodInfosForReadability(allPods)
 
-	cs.AutoscalerConfig.CASettings, err = r.dataAccess.LoadCASettingsBefore(markTime)
+	cs.AutoscalerConfig.CASettings, err = r.dataAccess.LoadCASettingsBefore(runEndTime)
 	if err != nil {
 		return
 	}
 	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerMode
 
-	nodes, err := r.dataAccess.LoadNodeInfosBefore(markTime)
+	nodes, err := r.dataAccess.LoadNodeInfosBefore(runBeginTime)
 	if err != nil {
-		err = fmt.Errorf("cannot get the node infos before markTime %q: %w", markTime, err)
+		err = fmt.Errorf("cannot get the node infos before markTime %q: %w", runBeginTime, err)
 		return
 	}
 	if len(nodes) == 0 {
-		err = fmt.Errorf("no existingNodes available before markTime %q", markTime)
+		err = fmt.Errorf("no existingNodes available before markTime %q", runBeginTime)
 		return
 	}
 	//adjustNodes(nodes, allPods)
@@ -1335,11 +1340,19 @@ func waitTillNodesStarted(ctx context.Context, clientSet *kubernetes.Clientset, 
 	}
 }
 
-func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, stabilizeInterval time.Duration, replayCount int) (scalingOccurred bool, err error) {
+func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, stabilizeInterval time.Duration, replayCount int) (scalingOccurred bool, err error) {
 	var nodes []corev1.Node
 	var pods []corev1.Pod
-	waitInterval := 30 * time.Second
+	var waitInterval time.Duration
+	if stabilizeInterval > 10*time.Minute {
+		waitInterval = 5 * time.Minute
+	} else {
+		waitInterval = 40 * time.Second
+	}
 	timeout := time.After(stabilizeInterval)
+	waitNum := 0
+	signalFilePath := "/tmp/ca-scale-up-done.txt"
+	_ = os.Remove(signalFilePath)
 	for {
 		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
 		virtualScaledNodeNames := lo.FilterMap(nodes, func(n corev1.Node, _ int) (nodeName string, ok bool) {
@@ -1362,21 +1375,32 @@ func checkVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, s
 		})
 		if len(unscheduledPods) == 0 {
 			if scalingOccurred {
-				slog.Info("checkVirtualScaling found zero unscheduledPods; continue scenario creation", "numNodes", len(nodes), "numPods", len(pods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "replayCount", replayCount)
+				slog.Info("waitAndCheckVirtualScaling found zero unscheduledPods; continue scenario creation", "waitNum", waitNum, "numNodes", len(nodes), "numPods", len(pods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "replayCount", replayCount)
 			} else {
-				slog.Info("checkVirtualScaling found zero unscheduledPods AND zero virtualScaledNodeNames; skip scenario creation", "numNodes", len(nodes), "numPods", len(pods), "replayCount", replayCount)
+				slog.Info("waitAndCheckVirtualScaling found zero unscheduledPods AND zero virtualScaledNodeNames; skip scenario creation", "waitNum", waitNum, "numNodes", len(nodes), "numPods", len(pods), "replayCount", replayCount)
 			}
 			return
 		}
-		slog.Info("checkVirtualScaling waiting for unscheduledPods to be scheduled.", "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "waitInterval", waitInterval, "stabilizeInterval", stabilizeInterval, "replayCount", replayCount)
+		slog.Info("waitAndCheckVirtualScaling waiting for unscheduledPods to be scheduled.", "waitNum", waitNum, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "waitInterval", waitInterval, "stabilizeInterval", stabilizeInterval, "replayCount", replayCount)
 		select {
 		case <-timeout:
-			slog.Warn("checkVirtualScaling exceeded stabilizeInterval but still unscheduledPods", "stabilizeInterval", stabilizeInterval, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames))
+			slog.Warn("waitAndCheckVirtualScaling exceeded stabilizeInterval but still unscheduledPods", "waitNum", waitNum, "stabilizeInterval", stabilizeInterval, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames))
 			return
 		case <-time.After(waitInterval):
-			slog.Info("checkVirtualScaling finished wait.", "waitInterval", waitInterval, "virtualScaledNodeNames", virtualScaledNodeNames, "replayCount", replayCount)
+			slog.Info("waitAndCheckVirtualScaling finished wait.", "waitNum", waitNum, "waitInterval", waitInterval, "virtualScaledNodeNames", virtualScaledNodeNames, "replayCount", replayCount)
+			var data []byte
+			data, err = os.ReadFile(signalFilePath)
+			if data != nil {
+				message := string(data)
+				slog.Warn("waitForVirtualCASignal obtained break signal.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath)
+				return
+			}
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				slog.Warn("waitForVirtualCASignal encountered error reading signal", "waitNum", waitNum, "error", err, "signalFilePath", signalFilePath)
+			}
+			waitNum++
 		case <-ctx.Done():
-			slog.Warn("checkVirtualScaling received context cancelled or timed out:", "error", ctx.Err(), "replayCount", replayCount)
+			slog.Warn("waitAndCheckVirtualScaling received context cancelled or timed out:", "waitNum", waitNum, "error", ctx.Err(), "replayCount", replayCount)
 			err = ctx.Err()
 		}
 	}
@@ -1386,4 +1410,47 @@ func filterAppPods(pods []gsc.PodInfo) []gsc.PodInfo {
 	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
 		return p.Namespace != "kube-system"
 	})
+}
+
+func GetNextScalingRun(scaleUpEvents []gsc.EventInfo, lastRun ScalingRun, runInterval time.Duration) (run ScalingRun) {
+	numScaleUpEvents := len(scaleUpEvents)
+	if numScaleUpEvents == 1 {
+		run.BeginIndex = 0
+		run.EndIndex = 0
+		run.BeginTime = scaleUpEvents[0].EventTime.UTC()
+		run.EndTime = run.BeginTime.Add(runInterval).UTC()
+		return
+	}
+
+	if lastRun.EndIndex >= numScaleUpEvents {
+		slog.Info("GetNextScalingRun found no more scaling runs.", "lastRun.EndIndex", lastRun.EndIndex, "numScaleUpEvents", numScaleUpEvents)
+		return
+	}
+	run.BeginIndex = lastRun.EndIndex
+	run.BeginTime = scaleUpEvents[run.BeginIndex].EventTime.UTC()
+	for i := lastRun.EndIndex + 1; i < len(scaleUpEvents); i++ { //e1;lastrun.Endindex=0, e2;run.BeginIdex=i=1 , e3.. beginIndex=1
+		currEvent := scaleUpEvents[i]
+		prevEvent := scaleUpEvents[i-1]
+		limitTime := prevEvent.EventTime.UTC().Add(runInterval)
+		if currEvent.EventTime.UTC().After(limitTime) {
+			run.EndIndex = i - 1
+			run.EndTime = limitTime
+			slog.Info("GetNextScalingRun obtained scaling run.",
+				"run.BeginIndex", run.BeginIndex,
+				"run.BeginTime", run.BeginTime,
+				"run.EndIndex", run.EndIndex,
+				"run.EndTime", run.EndTime,
+				"run.BeginEvent", scaleUpEvents[run.BeginIndex],
+				"run.EndEvent", scaleUpEvents[run.EndIndex])
+			return
+		}
+	}
+	run.EndIndex = len(scaleUpEvents) - 1
+	run.EndTime = scaleUpEvents[run.EndIndex].EventTime.UTC().Add(runInterval).UTC()
+	slog.Info("GetNextScalingRun obtained contiguous run of scaling events found from BeginIndex to EndIndex.",
+		"run.BeginIndex", run.BeginIndex,
+		"run.EndIndex", run.EndIndex,
+		"run.BeginEvent", scaleUpEvents[run.BeginIndex],
+		"run.EndEvent", scaleUpEvents[run.EndIndex])
+	return
 }

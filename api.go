@@ -83,7 +83,8 @@ type ReplayReport struct {
 type Replayer interface {
 	io.Closer
 	Start(context.Context) error
-	GetRecordedClusterSnapshot(time.Time) (gsc.ClusterSnapshot, error)
+	//GetRecordedClusterSnapshot(time.Time) (gsc.ClusterSnapshot, error)
+	GetRecordedClusterSnapshot(runBeginTime, runEndTime time.Time) (gsc.ClusterSnapshot, error)
 	GetParams() ReplayerParams
 	Replay(context.Context) error
 	//input report - scenario report, output report-
