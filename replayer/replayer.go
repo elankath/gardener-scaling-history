@@ -7,15 +7,24 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/elankath/gardener-scaling-common"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"path"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	gsc "github.com/elankath/gardener-scaling-common"
 	"github.com/elankath/gardener-scaling-common/clientutil"
-	"github.com/elankath/gardener-scaling-history"
+	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/db"
 	"github.com/elankath/gardener-scaling-history/recorder"
 	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
-	"io"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -28,14 +37,6 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
-	"log/slog"
-	"net/http"
-	"os"
-	"path"
-	"slices"
-	"strconv"
-	"strings"
-	"time"
 )
 
 const DefaultStabilizeInterval = time.Duration(3 * time.Minute)
@@ -112,6 +113,9 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 }
 
 func writeAutoscalerConfig(id string, autoscalerConfig gsc.AutoscalerConfig, path string) error {
+	for i := 0; i < len(autoscalerConfig.ExistingNodes); i++ {
+		autoscalerConfig.ExistingNodes[i].ProviderID = autoscalerConfig.ExistingNodes[i].Name
+	}
 	data, err := json.Marshal(autoscalerConfig)
 	if err != nil {
 		return err
