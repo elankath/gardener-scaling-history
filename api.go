@@ -43,7 +43,7 @@ type ReplayerParams struct {
 	ReportDir                    string
 	VirtualAutoScalerConfigPath  string
 	VirtualClusterKubeConfigPath string
-	StabilizeInterval            time.Duration
+	DeployParallel               int
 	ReplayInterval               time.Duration
 	//RecurConfigUpdate            bool
 }

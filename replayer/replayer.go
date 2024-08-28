@@ -39,7 +39,6 @@ import (
 	"k8s.io/utils/pointer"
 )
 
-const DefaultStabilizeInterval = time.Duration(3 * time.Minute)
 const DefaultReplayInterval = time.Duration(5 * time.Minute)
 
 var ErrNoScenario = errors.New("no-scenario")
@@ -152,14 +151,6 @@ func (r *defaultReplayer) ReplayFromReport(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		slog.Info("applied work, waiting for cluster to stabilize", "stabilizeInterval", r.params.StabilizeInterval, "replayCount", r.replayCount)
-		select {
-		case <-time.After(r.params.StabilizeInterval):
-		case <-ctx.Done():
-			slog.Warn("Context cancelled or timed out:", ctx.Err())
-			return ctx.Err()
-		}
-
 		writeClusterSnapshot(s.ClusterSnapshot)
 		if err = postClusterSnapshot(s.ClusterSnapshot); err != nil {
 			return err
@@ -415,13 +406,14 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
+			deltaWork.DeployParallel = r.params.DeployParallel
 			if deltaWork.IsEmpty() {
 				slog.Info("deltaWork is empty. Skipping this loop.", "loopNum", loopNum, "replayCount", r.replayCount)
 				continue
 			}
 			if r.lastClusterSnapshot.AutoscalerConfig.Hash != clusterSnapshot.AutoscalerConfig.Hash {
 				slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
-				err = writeAutoscalerConfigAndWaitForSignal(ctx, clusterSnapshot.ID, clusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath, r.params.StabilizeInterval)
+				err = writeAutoscalerConfigAndWaitForSignal(ctx, clusterSnapshot.ID, clusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
 				if err != nil {
 					return err
 				}
@@ -434,7 +426,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			}
 			r.replayCount++
 			r.lastClusterSnapshot = clusterSnapshot
-			scalingOccurred, err := waitAndCheckVirtualScaling(ctx, r.clientSet, r.params.StabilizeInterval, r.replayCount)
+			scalingOccurred, err := waitAndCheckVirtualScaling(ctx, r.clientSet, r.replayCount)
 			if !scalingOccurred {
 				continue
 			}
@@ -455,49 +447,50 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 	}
 }
 
-func writeAutoscalerConfigAndWaitForSignal(ctx context.Context, id string, asConfig gsc.AutoscalerConfig, asConfigWritePath string, stabilizeInterval time.Duration) error {
+func writeAutoscalerConfigAndWaitForSignal(ctx context.Context, id string, asConfig gsc.AutoscalerConfig, asConfigWritePath string) error {
 	err := writeAutoscalerConfig(id, asConfig, asConfigWritePath)
 	if err != nil {
 		err = fmt.Errorf("cannot write autoscaler config for snapshot %q to path %q: %w", id, asConfigWritePath, err)
 		return err
 	}
-	err = waitForVirtualCASignal(ctx, asConfig.SuccessSignalPath, asConfig.ErrorSignalPath, stabilizeInterval)
+	err = waitForVirtualCARefresh(ctx, asConfig.SuccessSignalPath, asConfig.ErrorSignalPath)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func waitForVirtualCASignal(ctx context.Context, successSignalPath string, errorSignalPath string, stabilizeInterval time.Duration) error {
-	slog.Info("waitForVirtualCASignal entered..", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath, "stabilizeInterval", stabilizeInterval)
+func waitForVirtualCARefresh(ctx context.Context, successSignalPath string, errorSignalPath string) error {
+	slog.Info("waitForVirtualCARefresh entered..", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath)
 	waitInterval := 20 * time.Second
-	timeout := time.After(stabilizeInterval)
+	timeout := 5 * time.Minute
+	timeoutCh := time.After(timeout)
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Warn("waitForVirtualCASignal context cancelled or timed out:", ctx.Err())
+			slog.Warn("waitForVirtualCARefresh context cancelled or timed out:", ctx.Err())
 			return ctx.Err()
-		case <-timeout:
-			slog.Error("waitForVirtualCASignal exceeded stabilizeInterval.", "", stabilizeInterval)
-			return fmt.Errorf("waitForVirtualCASignal exceeded signalTimeout %q waiting for %q or %q", stabilizeInterval, successSignalPath, errorSignalPath)
+		case <-timeoutCh:
+			slog.Error("waitForVirtualCARefresh exceeded timeoutCh.", "timeout", timeout)
+			return fmt.Errorf("waitForVirtualCARefresh exceeded signalTimeout %q waiting for %q or %q", timeout, successSignalPath, errorSignalPath)
 		case <-time.After(waitInterval):
-			slog.Info("waitForVirtualCASignal checking signal paths.", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath)
+			slog.Info("waitForVirtualCARefresh checking signal paths.", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath)
 			data, err := os.ReadFile(errorSignalPath)
 			if data != nil {
 				errorSignal := string(data)
-				slog.Error("waitForVirtualCASignal obtained error signal.", "errorSignal", errorSignal, "errorSignalPath", errorSignalPath)
+				slog.Error("waitForVirtualCARefresh obtained error signal.", "errorSignal", errorSignal, "errorSignalPath", errorSignalPath)
 				return fmt.Errorf("virtual CA signalled issue: %s", errorSignal)
 			}
 			if !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("waitForVirtualCASignal got error reading %q: %w", errorSignalPath, err)
+				return fmt.Errorf("waitForVirtualCARefresh got error reading %q: %w", errorSignalPath, err)
 			}
 			data, err = os.ReadFile(successSignalPath)
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("waitForVirtualCASignal got error reading %q: %w", successSignalPath, err)
+				return fmt.Errorf("waitForVirtualCARefresh got error reading %q: %w", successSignalPath, err)
 			}
 			if data != nil {
 				successSignal := string(data)
-				slog.Info("waitForVirtualCASignal obtained success signal.", "successSignal", successSignal, "successSignalPath", successSignalPath)
+				slog.Info("waitForVirtualCARefresh obtained success signal.", "successSignal", successSignal, "successSignalPath", successSignalPath)
 				return nil
 			}
 		}
@@ -646,6 +639,7 @@ type DeltaWork struct {
 	PriorityClassWork PriorityClassWork
 	NamespaceWork     NamespaceWork
 	PodWork           PodWork
+	DeployParallel    int
 }
 
 func (d DeltaWork) IsEmpty() bool {
@@ -765,23 +759,10 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 
 	for i, podInfo := range podsToDeploy {
 		pod := getCorePodFromPodInfo(podInfo)
-		//if pod.Namespace != "default" {
-		//	err = createNamespaces(ctx, clientSet, pod.Namespace)
-		//	if err != nil && !apierrors.IsAlreadyExists(err) {
-		//		return err
-		//	}
-		//}
-		slog.Info("applyDeltaWork is deploying pod", "replayCount", replayCount, "deployCount", i+1, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
-		podNew, err := clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
+		deployCount := i + 1
+		err = doDeploy(ctx, clientSet, replayCount, deployCount, pod)
 		if err != nil {
-			return fmt.Errorf("applyDeltaWork cannot create the pod  %s: %w", pod.Name, err)
-		}
-		if podNew.Spec.NodeName != "" {
-			podNew.Status.Phase = corev1.PodRunning
-			_, err = clientSet.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, podNew, metav1.UpdateOptions{})
-			if err != nil {
-				return fmt.Errorf("applyDeltaWork cannot change the pod Phase to Running for %s: %w", pod.Name, err)
-			}
+			return err
 		}
 	}
 
@@ -790,6 +771,22 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 		return fmt.Errorf("applyDeltaWork cannot delete un-used namespaces: %w", err)
 	}
 	slog.Info("applyDeltaWork was successful", "replayCount", replayCount)
+	return nil
+}
+
+func doDeploy(ctx context.Context, clientSet *kubernetes.Clientset, replayCount int, deployCount int, pod corev1.Pod) error {
+	slog.Info("applyDeltaWork is deploying pod", "replayCount", replayCount, "deployCount", deployCount, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
+	podNew, err := clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("applyDeltaWork cannot create the pod  %s: %w", pod.Name, err)
+	}
+	if podNew.Spec.NodeName != "" {
+		podNew.Status.Phase = corev1.PodRunning
+		_, err = clientSet.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, podNew, metav1.UpdateOptions{})
+		if err != nil {
+			return fmt.Errorf("applyDeltaWork cannot change the pod Phase to Running for %s: %w", pod.Name, err)
+		}
+	}
 	return nil
 }
 
@@ -1314,48 +1311,19 @@ func deletePendingUnscheduledPods(ctx context.Context, clientSet *kubernetes.Cli
 	return
 }
 
-func waitTillNodesStarted(ctx context.Context, clientSet *kubernetes.Clientset, snapshotNumber int, numWaitNodes int) error {
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Warn("Context cancelled or timed out:", ctx.Err())
-			return ctx.Err()
-		case <-time.After(3 * time.Second):
-			slog.Info("waitTillNodesStarted listing nodes of virtual cluster", "snapshotNumber", snapshotNumber, "numWaitNodes", numWaitNodes)
-			nodes, err := clientutil.ListAllNodes(ctx, clientSet)
-			if err != nil {
-				return fmt.Errorf("waitTillNodesStarted for %d nodes got error: %w", numWaitNodes, err)
-			}
-			numRunningNodes := 0
-			for _, n := range nodes {
-				if n.Status.Phase == corev1.NodeRunning {
-					numRunningNodes++
-				}
-			}
-			if numRunningNodes >= numWaitNodes {
-				slog.Info("waitTillNodesStarted has reached required numRunningNodes", "numRunningNodes", numRunningNodes, "numWaitNodes", numWaitNodes)
-				return nil
-			} else {
-				slog.Info("waitTillNodesStarted has not yet reached required numWaitNodes",
-					"snapshotNumber", snapshotNumber,
-					"numRunningNodes", numRunningNodes,
-					"numWaitNodes", numWaitNodes)
-			}
-
-		}
-	}
-}
-
-func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, stabilizeInterval time.Duration, replayCount int) (scalingOccurred bool, err error) {
+func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, replayCount int) (scalingOccurred bool, err error) {
 	var nodes []corev1.Node
 	var pods []corev1.Pod
-	var waitInterval time.Duration
-	if stabilizeInterval > 10*time.Minute {
-		waitInterval = 4 * time.Minute
-	} else {
+	var waitInterval = 4 * time.Minute
+
+	//FIXME: hacky crap
+	if len(pods) < 300 {
 		waitInterval = 40 * time.Second
+	} else if len(pods) < 1000 {
+		waitInterval = 2 * time.Minute
+	} else {
+		waitInterval = 4 * time.Minute
 	}
-	timeout := time.After(stabilizeInterval)
 	waitNum := 0
 	signalFilePath := "/tmp/ca-scale-up-done.txt"
 	_ = os.Remove(signalFilePath)
@@ -1387,22 +1355,19 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 			}
 			return
 		}
-		slog.Info("waitAndCheckVirtualScaling waiting for unscheduledPods to be scheduled.", "waitNum", waitNum, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "waitInterval", waitInterval, "stabilizeInterval", stabilizeInterval, "replayCount", replayCount)
+		slog.Info("waitAndCheckVirtualScaling waiting for unscheduledPods to be scheduled.", "waitNum", waitNum, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "waitInterval", waitInterval, "replayCount", replayCount)
 		select {
-		case <-timeout:
-			slog.Warn("waitAndCheckVirtualScaling exceeded stabilizeInterval but still unscheduledPods", "waitNum", waitNum, "stabilizeInterval", stabilizeInterval, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames))
-			return
 		case <-time.After(waitInterval):
 			slog.Info("waitAndCheckVirtualScaling finished wait.", "waitNum", waitNum, "waitInterval", waitInterval, "numVirtualScaledNodeNames", len(virtualScaledNodeNames), "replayCount", replayCount)
 			var data []byte
 			data, err = os.ReadFile(signalFilePath)
 			if data != nil {
 				message := string(data)
-				slog.Warn("waitForVirtualCASignal obtained break signal.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath)
+				slog.Warn("waitForVirtualCARefresh obtained done signal.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath)
 				return
 			}
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				slog.Warn("waitForVirtualCASignal encountered error reading signal", "waitNum", waitNum, "error", err, "signalFilePath", signalFilePath)
+				slog.Warn("waitForVirtualCARefresh encountered error reading signal", "waitNum", waitNum, "error", err, "signalFilePath", signalFilePath)
 			}
 			waitNum++
 		case <-ctx.Done():

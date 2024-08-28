@@ -5,8 +5,10 @@ import (
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/replayer"
+	"k8s.io/utils/env"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -22,6 +24,20 @@ func GetDuration(name string, defVal time.Duration) time.Duration {
 		os.Exit(1)
 	}
 	return duration
+}
+
+func GetBool(name string, defVal bool) bool {
+	valStr := os.Getenv(name)
+	if valStr == "" {
+		slog.Warn("env not set, assuming default", "name", name, "default", defVal)
+		return defVal
+	}
+	val, err := strconv.ParseBool(valStr)
+	if err != nil {
+		slog.Error("cannot parse the env val as boolean", "name", name, "val", valStr)
+		os.Exit(1)
+	}
+	return val
 }
 
 func main() {
@@ -50,7 +66,11 @@ func main() {
 		slog.Error("VIRTUAL_AUTOSCALER_CONFIG env is not set - Assuming path.", "virtualAutoscalerConfig", virtualAutoscalerConfig)
 	}
 
-	stabilizeInterval := GetDuration("STABILIZE_INTERVAL", replayer.DefaultStabilizeInterval)
+	deployParallel, err := env.GetInt("DEPLOY_PARALLEL", 0)
+	if err != nil {
+		slog.Error("cannot parse the env val as int", "name", "DEPLOY_PARALLEL", "error", err)
+		os.Exit(1)
+	}
 	replayInterval := GetDuration("REPLAY_INTERVAL", replayer.DefaultReplayInterval)
 
 	//recurConfigUpdateBool := os.Getenv("RECUR_CONFIG_UPDATE")
@@ -69,7 +89,7 @@ func main() {
 		ReportDir:                    reportDir,
 		VirtualAutoScalerConfigPath:  virtualAutoscalerConfig,
 		VirtualClusterKubeConfigPath: virtualClusterKubeConfig,
-		StabilizeInterval:            stabilizeInterval,
+		DeployParallel:               deployParallel,
 		ReplayInterval:               replayInterval,
 		//RecurConfigUpdate:            recurConfigUpdate,
 	})
