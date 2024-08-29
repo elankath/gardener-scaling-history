@@ -454,17 +454,21 @@ func writeAutoscalerConfigAndWaitForSignal(ctx context.Context, id string, asCon
 		err = fmt.Errorf("cannot write autoscaler config for snapshot %q to path %q: %w", id, asConfigWritePath, err)
 		return err
 	}
-	err = waitForVirtualCARefresh(ctx, asConfig.SuccessSignalPath, asConfig.ErrorSignalPath)
+	err = waitForVirtualCARefresh(ctx, len(asConfig.ExistingNodes), asConfig.SuccessSignalPath, asConfig.ErrorSignalPath)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func waitForVirtualCARefresh(ctx context.Context, successSignalPath string, errorSignalPath string) error {
+func waitForVirtualCARefresh(ctx context.Context, numNodes int, successSignalPath string, errorSignalPath string) error {
 	slog.Info("waitForVirtualCARefresh entered..", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath)
 	waitInterval := 20 * time.Second
-	timeout := 10 * time.Minute
+	timeout := 5 * time.Minute
+	computedTimeout := time.Duration(3*numNodes) * time.Second
+	if computedTimeout > timeout {
+		timeout = computedTimeout
+	}
 	timeoutCh := time.After(timeout)
 	for {
 		select {
