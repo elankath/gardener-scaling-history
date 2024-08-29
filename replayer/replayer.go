@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/elankath/gardener-scaling-common/resutil"
 	"io"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"log/slog"
 	"net/http"
 	"os"
@@ -1145,6 +1146,7 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 func adjustNodeTemplates(nodeTemplates map[string]gsc.NodeTemplate, kubeSystemResources corev1.ResourceList) {
 	for ngName, nodeTemplate := range nodeTemplates {
 		nodeTemplate.Allocatable = resutil.ComputeRevisedResources(nodeTemplate.Capacity, kubeSystemResources)
+		nodeTemplate.Allocatable[corev1.ResourcePods] = resource.MustParse("110")
 		nodeTemplates[ngName] = nodeTemplate
 	}
 }
