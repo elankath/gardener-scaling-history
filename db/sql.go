@@ -185,7 +185,7 @@ const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT 
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
                 GROUP BY Name;`
 const SelectLatestPodsBeforeCreationTimestamp = `SELECT * FROM pod_info WHERE
-                CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)   GROUP BY pod_info.UID HAVING max(RowID);`
+                CreationTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  GROUP BY pod_info.UID HAVING max(SnapshotTimestamp);`
 
 const CreatePriorityClassInfoTable = `CREATE TABLE IF NOT EXISTS pc_info (
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
