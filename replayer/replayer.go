@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/elankath/gardener-scaling-common/resutil"
 	"io"
 	"log/slog"
 	"net/http"
@@ -463,7 +464,7 @@ func writeAutoscalerConfigAndWaitForSignal(ctx context.Context, id string, asCon
 func waitForVirtualCARefresh(ctx context.Context, successSignalPath string, errorSignalPath string) error {
 	slog.Info("waitForVirtualCARefresh entered..", "successSignalPath", successSignalPath, "errorSignalPath", errorSignalPath)
 	waitInterval := 20 * time.Second
-	timeout := 5 * time.Minute
+	timeout := 10 * time.Minute
 	timeoutCh := time.After(timeout)
 	for {
 		select {
@@ -1100,6 +1101,9 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 	allPods, err := r.dataAccess.GetLatestPodInfosBeforeCreationTime(runEndTime)
 	apputil.SortPodInfosForReadability(allPods)
 
+	kubeSystemResources := resutil.ComputeKubeSystemResources(allPods)
+	adjustNodeTemplates(cs.AutoscalerConfig.NodeTemplates, kubeSystemResources)
+
 	cs.AutoscalerConfig.CASettings, err = r.dataAccess.LoadCASettingsBefore(runEndTime)
 	if err != nil {
 		return
@@ -1132,6 +1136,13 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Hash = cs.GetHash()
 	return
+}
+
+func adjustNodeTemplates(nodeTemplates map[string]gsc.NodeTemplate, kubeSystemResources corev1.ResourceList) {
+	for ngName, nodeTemplate := range nodeTemplates {
+		nodeTemplate.Allocatable = resutil.ComputeRevisedResources(nodeTemplate.Capacity, kubeSystemResources)
+		nodeTemplates[ngName] = nodeTemplate
+	}
 }
 
 func (r *defaultReplayer) GetParams() gsh.ReplayerParams {

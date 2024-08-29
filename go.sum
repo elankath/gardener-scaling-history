@@ -8,6 +8,12 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/elankath/gardener-scaling-common v0.0.0-20240827120232-c7c44b2746d8 h1:8h/FAaAlKaPTacY9Kegm7XF1JFl1YRNuETty8qkP+Zc=
 github.com/elankath/gardener-scaling-common v0.0.0-20240827120232-c7c44b2746d8/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
+github.com/elankath/gardener-scaling-common v0.0.0-20240829081853-38fbd9df3641 h1:Q+Yq4fsetuyDboADT715WjhPAbJYhKUQZCouGv5O6n8=
+github.com/elankath/gardener-scaling-common v0.0.0-20240829081853-38fbd9df3641/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
+github.com/elankath/gardener-scaling-common v0.0.0-20240829084412-a716b28ebad5 h1:IiaaA3s6NStU3jll1ymH6T1T6aBfh2GPygqYvoxIKO8=
+github.com/elankath/gardener-scaling-common v0.0.0-20240829084412-a716b28ebad5/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
+github.com/elankath/gardener-scaling-common v0.0.0-20240829090248-4619410b8017 h1:W33SJChobczjCpiOweBjQa4wnSdlGDPNNz2l4duOVus=
+github.com/elankath/gardener-scaling-common v0.0.0-20240829090248-4619410b8017/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
 github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
 github.com/emicklei/go-restful/v3 v3.11.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/evanphx/json-patch v4.12.0+incompatible h1:4onqiflcdA9EOZ4RxV643DvftH5pOlLGNtQ5lPWQu84=
