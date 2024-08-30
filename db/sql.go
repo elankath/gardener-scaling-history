@@ -40,7 +40,7 @@ const InsertWorkerPoolInfo = `INSERT INTO worker_pool_info(
 	Hash
 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-const SelectWorkerPoolInfoBefore = `SELECT * FROM worker_pool_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(RowID)`
+const SelectWorkerPoolInfoBefore = `SELECT * FROM worker_pool_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(RowID)`
 const SelectAllWorkerPoolInfoHashes = "SELECT RowID, Name, SnapshotTimestamp, Hash FROM worker_pool_info ORDER BY RowID desc"
 
 const CreateMCDInfoTable = `CREATE TABLE IF NOT EXISTS mcd_info(
@@ -73,7 +73,7 @@ const InsertMCDInfo = `INSERT INTO mcd_info(
 	Labels,
 	Taints,
 	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectLatestMCDInfoBefore = `SELECT * FROM mcd_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(RowID)`
+const SelectLatestMCDInfoBefore = `SELECT * FROM mcd_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(RowID) ORDER BY RowID ASC`
 const UpdateMCDInfoDeletionTimestamp = `UPDATE mcd_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCDInfoHash = "SELECT Hash FROM mcd_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCDInfo = "SELECT * FROM mcd_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
@@ -104,7 +104,7 @@ const InsertMCCInfo = `INSERT INTO mcc_info(
 	Labels,
 	Capacity,
 	Hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-const SelectLatestMCCInfoBefore = `SELECT * FROM mcc_info where CreationTimestamp <= ?  GROUP BY Name HAVING max(RowID)`
+const SelectLatestMCCInfoBefore = `SELECT * FROM mcc_info where SnapshotTimestamp <= ?  GROUP BY Name HAVING max(RowID) ORDER BY RowID ASC`
 const UpdateMCCInfoDeletionTimestamp = `UPDATE mcc_info SET DeletionTimestamp = ? where Name = ?`
 const SelectMCCInfoHash = "SELECT Hash FROM mcc_info WHERE name=? ORDER BY RowID desc LIMIT 1"
 const SelectLatestMCCInfo = "SELECT * FROM mcc_info WHERE name=? ORDER BY RowID DESC LIMIT 1"
@@ -138,11 +138,10 @@ const InsertNodeInfo = `INSERT INTO node_info(
 	Hash) 
 	VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
-// `SELECT * FROM node_info WHERE CreationTimestamp < ? ORDER BY CreationTimestamp DESC`
 const SelectNodeInfoBefore = `SELECT * FROM node_info 
-	WHERE CreationTimestamp <= ?
+	WHERE SnapshotTimestamp <= ?
 	AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)
-	GROUP BY node_info.Name HAVING max(RowID)`
+	GROUP BY node_info.Name HAVING max(RowID) ORDER BY RowID ASC`
 
 const SelectNodeCountWithNameAndHash = "SELECT COUNT(*) from node_info where Name=? and Hash=?"
 const UpdateNodeInfoDeletionTimestamp = `UPDATE node_info SET DeletionTimestamp = ? where Name = ?`
@@ -184,8 +183,8 @@ const SelectUnscheduledPodsBeforeSnapshotTimestamp = `SELECT * FROM (SELECT * fr
 const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT * FROM pod_info WHERE (ScheduleStatus = 1)  
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
                 GROUP BY Name;`
-const SelectLatestPodsBeforeCreationTimestamp = `SELECT * FROM pod_info WHERE
-                SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  GROUP BY pod_info.UID HAVING max(SnapshotTimestamp);`
+const SelectLatestPodsBeforeSnapshotTimestamp = `SELECT * FROM pod_info WHERE
+                SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  GROUP BY pod_info.UID HAVING max(RowID) ORDER BY RowID ASC;`
 
 const CreatePriorityClassInfoTable = `CREATE TABLE IF NOT EXISTS pc_info (
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -276,4 +275,4 @@ const InsertCASettingsInfo = `INSERT INTO ca_settings_info (
 
 const SelectLatestCASettingsBefore = `SELECT * from ca_settings_info WHERE SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC LIMIT 1`
 const SelectLatestNodesBeforeAndNotDeleted = `SELECT * from (select * from node_info where node_info.CreationTimestamp <= ? and node_info.DeletionTimestamp = 0 order by RowID DESC) GROUP by Name`
-const SelectTriggerScaleUpEvents = `SELECT * FROM event_info where Reason = 'TriggeredScaleUp' group by Message`
+const SelectTriggerScaleUpEvents = `SELECT * FROM event_info where Reason = 'TriggeredScaleUp' order by EventTime asc`

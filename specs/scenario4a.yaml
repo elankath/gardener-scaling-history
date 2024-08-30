@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scenario4a
+  labels:
+    app: demoa
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: demoa
+  template:
+    metadata:
+      labels:
+        app: demoa
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: demoa
+        minDomains: 3
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 5Gi

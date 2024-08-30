@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strconv"
 )
 
 func main() {
@@ -27,6 +28,12 @@ func main() {
 		slog.Warn("no scaling events in db.", "dbPath", dbPath)
 		return
 	}
+	for i, e := range scalingEvents {
+		slog.Info(strconv.Itoa(i), "eventTimeUnixNanos", e.EventTime.UTC().UnixNano(), "reason", e.Reason, "msg", e.Message)
+	}
+	if true {
+		return
+	}
 	markTime := scalingEvents[0].EventTime.UTC()
 	markTimeNano := markTime.UnixNano()
 	slog.Info("Choosing markTime from scaling event.", "markTime", markTime, "markTimeNano", markTimeNano, "event", scalingEvents[0])
@@ -40,13 +47,10 @@ func main() {
 	for _, n := range nodes {
 		slog.Info("node", "nodeName", n.Name, "nodeSnapshotTimestamp", n.SnapshotTimestamp, "markTime", markTime, "markTimeNano", markTimeNano)
 	}
-	pods, err := dataAccess.GetLatestPodInfosBeforeCreationTime(markTime)
+	pods, err := dataAccess.GetLatestPodInfosBeforeSnapshotTimestamp(markTime)
 	if err != nil {
 		return
 	}
-	slices.SortFunc(pods, func(a, b gsc.PodInfo) int {
-		return a.CreationTimestamp.Compare(b.CreationTimestamp)
-	})
 	for _, p := range pods {
 		podDeleted := !p.DeletionTimestamp.IsZero()
 		slog.Info("pod info.", "podName", p.Name, "podCreationTimestamp", p.CreationTimestamp, "podSnapshotTimestamp", p.SnapshotTimestamp, "podRequests", gsc.ResourcesAsString(p.Requests))

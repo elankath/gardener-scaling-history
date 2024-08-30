@@ -6,4 +6,5 @@
 #live,hc-ap11,prod-orc
 #live,hc-eu20,prod-az-haas
 #live,hc-eu20,prod-az-orc
-dev,i034796,g2
+#dev,i034796,g2
+dev,i544000,tsc

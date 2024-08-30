@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prework
+  labels:
+    app: prework
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: prework
+  template:
+    metadata:
+      labels:
+        app: prework
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: demoa
+        minDomains: 3
+      containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 2.5Gi

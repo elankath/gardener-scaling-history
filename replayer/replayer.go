@@ -62,7 +62,7 @@ type defaultReplayer struct {
 	reportPath               string
 	nextScaleUpRunBeginIndex int
 	scaleUpEvents            []gsc.EventInfo
-	scaleUpEventCounter      int
+	currentEventIndex        int
 	lastScalingRun           ScalingRun
 	inputScenarios           []gsh.Scenario
 	lastScenario             gsh.Scenario
@@ -882,14 +882,43 @@ func (r *defaultReplayer) applyDeltaWorkOld(ctx context.Context, clusterSnapshot
 	return
 }
 
+func eventTimeDiffGreaterThan(a, b gsc.EventInfo, span time.Duration) bool {
+	return isDifferenceGreaterThan(a.EventTime, b.EventTime, span)
+}
+
+func isDifferenceGreaterThan(t1, t2 time.Time, d time.Duration) bool {
+	// Calculate the absolute difference between the two times
+	difference := t1.Sub(t2)
+	if difference < 0 {
+		difference = -difference
+	}
+
+	// Check if the absolute difference is greater than the given duration
+	return difference > d
+}
+
 func (r *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time) {
-	if r.scaleUpEventCounter >= len(r.scaleUpEvents) {
+	numEvents := len(r.scaleUpEvents)
+	if r.currentEventIndex >= numEvents {
 		slog.Info("getNextReplayMarkTime could find no more scale-up events")
 		return
 	}
-	nextScaleUpEvent := r.scaleUpEvents[r.scaleUpEventCounter]
-	r.scaleUpEventCounter++
-	replayTime = nextScaleUpEvent.EventTime.UTC()
+	span := 12 * time.Second
+	currEvent := r.scaleUpEvents[r.currentEventIndex]
+
+	// e0, e1, e2
+	for i := r.currentEventIndex + 1; i < numEvents; i++ {
+		se := r.scaleUpEvents[i]
+		if eventTimeDiffGreaterThan(currEvent, se, span) {
+			replayTime = se.EventTime.UTC()
+			r.currentEventIndex = i
+			return
+		}
+	}
+	r.currentEventIndex = numEvents - 1 // last event if there is a contiguous sequence of events within span till the end.
+	currEvent = r.scaleUpEvents[r.currentEventIndex]
+	replayTime = currEvent.EventTime.UTC()
+	r.currentEventIndex++
 	return
 }
 
@@ -1103,7 +1132,13 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 		return
 	}
 
-	allPods, err := r.dataAccess.GetLatestPodInfosBeforeCreationTime(runEndTime)
+	allPods, err := r.dataAccess.GetLatestPodInfosBeforeSnapshotTimestamp(runEndTime)
+	slices.SortFunc(allPods, func(a, b gsc.PodInfo) int {
+		return b.SnapshotTimestamp.Compare(a.SnapshotTimestamp) // most recent first
+	})
+	allPods = lo.UniqBy(allPods, func(p gsc.PodInfo) string {
+		return p.Name
+	})
 	apputil.SortPodInfosForReadability(allPods)
 
 	kubeSystemResources := resutil.ComputeKubeSystemResources(allPods)
@@ -1384,7 +1419,7 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 				return
 			}
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				slog.Warn("waitForVirtualCARefresh encountered error reading signal", "waitNum", waitNum, "error", err, "signalFilePath", signalFilePath)
+				slog.Warn("waitAndCheckVirtualScaling encountered error reading signal", "waitNum", waitNum, "error", err, "signalFilePath", signalFilePath)
 			}
 			waitNum++
 		case <-ctx.Done():
