@@ -8,6 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"log/slog"
 	"reflect"
 	"time"
 )
@@ -117,10 +118,25 @@ func MachineDeploymentInfoFromUnstructured(mcd *unstructured.Unstructured, snaps
 	if found {
 		for _, tv := range taintsVal {
 			tvMap := tv.(map[string]any)
+			tKey, ok := tvMap["key"]
+			if !ok {
+				slog.Warn("no taint key found for taint inside mcd.", "mcdName", mcdName, "taintValueMap", tvMap)
+				continue
+			}
+			tVal, ok := tvMap["value"]
+			if !ok {
+				slog.Warn("no taint 'value' found for taint inside mcd.", "mcdName", mcdName, "taintKey", tKey, "taintValueMap", tvMap)
+				continue
+			}
+			tEffect, ok := tvMap["effect"]
+			if !ok {
+				slog.Warn("no taint effect found for taint inside mcd.", "mcdName", mcdName, "taintKey", tKey, "taintValueMap", tvMap)
+				continue
+			}
 			taints = append(taints, corev1.Taint{
-				Key:       tvMap["key"].(string),
-				Value:     tvMap["value"].(string),
-				Effect:    corev1.TaintEffect(tvMap["effect"].(string)),
+				Key:       tKey.(string),
+				Value:     tVal.(string),
+				Effect:    corev1.TaintEffect(tEffect.(string)),
 				TimeAdded: nil,
 			})
 		}

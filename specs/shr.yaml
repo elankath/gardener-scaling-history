@@ -3,22 +3,20 @@ kind: PersistentVolumeClaim
 metadata:
   labels:
     app.kubernetes.io/name: "scaling-history-recorder"
-  name: recorder-pvc
+  name: shr-pvc
   namespace: robot
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 20Gi
+      storage: 30Gi
   storageClassName: default
-
 ---
 
 
 
 ---
-
 apiVersion: v1
 kind: Pod
 metadata:
@@ -42,7 +40,7 @@ spec:
         - containerPort: 8080
       resources:
         limits:
-          memory: 8Gi
+          memory: 10Gi
       env:
         - name: MODE
           value: in-utility-cluster
@@ -58,7 +56,7 @@ spec:
   volumes:
     - name: db-dir
       persistentVolumeClaim:
-        claimName: recorder-pvc
+        claimName: shr-pvc
     - name: robot-gardens
       secret:
         defaultMode: 420
@@ -68,4 +66,3 @@ spec:
         sources:
         - configMap:
             name: scaling-history-recorder-config
-
