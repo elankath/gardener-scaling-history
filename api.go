@@ -8,12 +8,11 @@ import (
 	"time"
 )
 
-type RecorderMode string
+type ExecutionMode string
 
 var (
-	InControlPlaneMode           RecorderMode = "in-control-plane"
-	InUtilityClusterRecorderMode RecorderMode = "in-utility-cluster"
-	LocalRecorderMode            RecorderMode = "local"
+	InUtilityClusterRecorderMode ExecutionMode = "in-utility-cluster"
+	LocalRecorderMode            ExecutionMode = "local"
 )
 
 // Recorder monitors the cluster denoted by given kubeconfig and records events and cluster data into cluster database
@@ -27,7 +26,7 @@ type Recorder interface {
 //Current ClusterInfo in gsc -> ClusterAutoscalerConfig
 
 type RecorderParams struct {
-	Mode                RecorderMode
+	Mode                ExecutionMode
 	Landscape           string
 	ProjectName         string
 	ShootName           string

@@ -119,7 +119,7 @@ func SortPodInfoForDeployment(a, b gsc.PodInfo) int {
 
 //func ListAllNodes(ctx context.Context, clientSet *kubernetes.Clientset)
 
-func CreateLandscapeClient(kubeconfigPath string, mode gsh.RecorderMode) (*kubernetes.Clientset, error) {
+func CreateLandscapeClient(kubeconfigPath string, mode gsh.ExecutionMode) (*kubernetes.Clientset, error) {
 	landscapeConfig, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create client config: %w", err)
@@ -251,7 +251,7 @@ func GetSeedName(ctx context.Context, landscapeClient *kubernetes.Clientset, pro
 
 }
 
-func GetLandscapeKubeconfigs(mode gsh.RecorderMode) (map[string]string, error) {
+func GetLandscapeKubeconfigs(mode gsh.ExecutionMode) (map[string]string, error) {
 	landscapeKubeconfigs := make(map[string]string)
 	if mode == gsh.InUtilityClusterRecorderMode {
 		landscapeKubeconfigs["live"] = "/app/secrets/gardens/garden-live"

@@ -24,7 +24,7 @@ func main() {
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	exitCode = launch(ctx, cancel, gsh.RecorderMode(mode))
+	exitCode = launch(ctx, cancel, gsh.ExecutionMode(mode))
 	if exitCode == 0 {
 		return
 	} else {
@@ -33,7 +33,7 @@ func main() {
 
 }
 
-func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.RecorderMode) int {
+func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.ExecutionMode) int {
 	configDir := os.Getenv("CONFIG_DIR")
 	if len(configDir) == 0 {
 		if mode == gsh.InUtilityClusterRecorderMode {

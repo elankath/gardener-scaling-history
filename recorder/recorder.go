@@ -1398,7 +1398,7 @@ func ComputePodScheduleStatus(pod *corev1.Pod) (scheduleStatus gsc.PodScheduleSt
 	return scheduleStatus
 }
 
-func CreateRecorderParams(ctx context.Context, mode gsh.RecorderMode, configDir string, dbDir string) ([]gsh.RecorderParams, error) {
+func CreateRecorderParams(ctx context.Context, mode gsh.ExecutionMode, configDir string, dbDir string) ([]gsh.RecorderParams, error) {
 	clusterConfigPath := path.Join(configDir, CLUSTERS_CFG_FILE)
 
 	landscapeKubeconfigs, err := apputil.GetLandscapeKubeconfigs(mode)

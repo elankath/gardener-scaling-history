@@ -3,28 +3,29 @@ set -eo pipefail
 
 echoErr() { echo "$@" 1>&2; }
 
-echo "howdy"
+mkdir -p "bin/remote"
 mode="$1"
 if [[ -z "$mode" ]]; then
-  echoErr "$0 needs mode: ('local' or 'remote') to be specified! ie. specify $0 local or $0 remote"
+  echoErr "$0 needs build mode: ('local' or 'remote') to be specified! ie. specify $0 local or $0 remote"
   exit 1
 fi
 
 if [[ "$mode" != "local" && "$mode" != "remote" ]]; then
-  echoErr "Unknown mode $mode. Only 'local' or 'remote supported presently"
+  echoErr "Unknown build mode $mode. Only 'local' or 'remote supported presently"
   exit 1
 fi
 
 if [[ "$mode" == "local" ]]; then
   goos=$(go env GOOS)
   goarch=$(go env GOARCH)
+  binDir="$(realpath bin)"
 else
   goos=linux
   goarch=amd64
+  binDir="$(realpath bin)/$mode"
 fi
 echo "GOOS set to $goos, GOARCH set to $goarch"
-binDir="$(realpath bin)/$mode"
-echo "Will build binaries into $binDir"
+echo "For build mode $mode, will build binaries into $binDir"
 
 if [[ "$mode" == "remote" && -z "$DOCKERHUB_USER" ]]; then
   echoErr "Please export DOCKERHUB_USER var before executing this script and ensure you have logged in using 'docker login'"
