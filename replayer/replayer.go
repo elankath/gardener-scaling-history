@@ -87,7 +87,10 @@ func (sr ScalingRun) Equal(o ScalingRun) bool {
 var _ gsh.Replayer = (*defaultReplayer)(nil)
 
 func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
-	// Load kubeconfig file
+	err := launchKvcl()
+	if err != nil {
+		return nil, err
+	}
 	config, err := clientcmd.BuildConfigFromFlags("", params.VirtualClusterKubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("cannot create client config: %w", err)
@@ -355,8 +358,10 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			return ctx.Err()
 		default:
 			loopNum++
-			replayMarkTime := r.getNextReplayMarkTime()
+			replayEvent := r.getNextReplayEvent()
+			replayMarkTime := replayEvent.EventTime.UTC()
 			replayMarkTimeNanos := replayMarkTime.UnixNano()
+			slog.Info("ReplayFromDB is considering replayEvent.", "replayEvent", replayEvent, "replayMarkTimeNanos", replayMarkTimeNanos)
 			if replayMarkTime.IsZero() {
 				slog.Info("no more scale ups to be replayed. Exiting", "loopNum", loopNum)
 				return nil
@@ -599,18 +604,12 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 		slog.Info("Replayer started in replayFromDB mode")
 		reportFileName := apputil.FilenameWithoutExtension(r.params.InputDataPath) + "-db-replay.json"
 		r.reportPath = path.Join(r.params.ReportDir, reportFileName)
-
-		// Launch the KVCL
-		err = launchKvcl()
-		if err != nil {
-			return err
-		}
 		// Launch the VCA using the saved arguments.
 		caSettings, err := r.dataAccess.LoadCASettingsBefore(time.Now().UTC())
 		if err != nil {
 			return err
 		}
-		err = launchCA(caSettings) // must launch CA in go-routine and return processId and error
+		err = launchCA(ctx, r.clientSet, r.params.VirtualClusterKubeConfigPath, caSettings) // must launch CA in go-routine and return processId and error
 		if err != nil {
 			return err
 		}
@@ -702,7 +701,30 @@ func killStaleKvcl() error {
 	return nil
 }
 
-func launchCA(settings gsc.CASettingsInfo) error {
+func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPath string, settings gsc.CASettingsInfo) error {
+	if settings.Expander == "priority" {
+		settings.Priorities = strings.TrimSpace(settings.Priorities)
+		if settings.Priorities == "" {
+			return fmt.Errorf("launchCA found that settings.Expander is priority yet there are no persisted priorities")
+		}
+		// deploy the priority config map
+		cmName := "cluster-autoscaler-priority-expander"
+		cm := corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      cmName,
+				Namespace: "kube-system",
+			},
+			Data: map[string]string{
+				"priorities": settings.Priorities,
+			},
+			BinaryData: nil,
+		}
+		createdCm, err := clientSet.CoreV1().ConfigMaps("kube-system").Create(ctx, &cm, metav1.CreateOptions{})
+		if err != nil {
+			return fmt.Errorf("cannot create %q config map: %w", cmName, err)
+		}
+		slog.Info("Created ConfigMap", "name", cmName, "obj", createdCm)
+	}
 	// TODO: change to using Start and Wait with graceful termination later
 	settings.IgnoreDaemonSetUtilization = true
 	var args []string
@@ -713,7 +735,7 @@ func launchCA(settings gsc.CASettingsInfo) error {
 		args = append(args, arg)
 	}
 	expanderArg := fmt.Sprintf("--expander=%s", settings.Expander)
-	args = append(args, "--kubeconfig=/tmp/kvcl.yaml")
+	args = append(args, "--kubeconfig="+kubeconfigPath)
 	args = append(args, expanderArg)
 	args = append(args, fmt.Sprintf("--ignore-daemonsets-utilization=%t", settings.IgnoreDaemonSetUtilization))
 	args = append(args, fmt.Sprintf("--max-graceful-termination-sec=%d", settings.MaxGracefulTerminationSeconds))
@@ -726,8 +748,6 @@ func launchCA(settings gsc.CASettingsInfo) error {
 	args = append(args, "--expendable-pods-priority-cutoff=-10")
 
 	caCmd := exec.Command("bin/cluster-autoscaler", args...)
-	//caCmd.Env = append(os.Environ(), fmt.Sprintf("KUBECONFIG=%s", "/tmp/kvcl.yaml"))
-	//	var stdout, stderr bytes.Buffer
 	caCmd.Stdout = os.Stdout
 	caCmd.Stderr = os.Stdin
 	slog.Info("Launching virtual bin/cluster-autoscaler with args.", "args", args)
@@ -1038,27 +1058,25 @@ func isDifferenceGreaterThan(t1, t2 time.Time, d time.Duration) bool {
 	return difference > d
 }
 
-func (r *defaultReplayer) getNextReplayMarkTime() (replayTime time.Time) {
+func (r *defaultReplayer) getNextReplayEvent() (currEvent gsc.EventInfo) {
 	numEvents := len(r.scaleUpEvents)
 	if r.currentEventIndex >= numEvents {
-		slog.Info("getNextReplayMarkTime could find no more scale-up events")
+		slog.Info("getNextReplayEvent could find no more scale-up events")
 		return
 	}
 	span := 12 * time.Second
-	currEvent := r.scaleUpEvents[r.currentEventIndex]
+	currEvent = r.scaleUpEvents[r.currentEventIndex]
 
 	// e0, e1, e2
 	for i := r.currentEventIndex + 1; i < numEvents; i++ {
 		se := r.scaleUpEvents[i]
 		if eventTimeDiffGreaterThan(currEvent, se, span) {
-			replayTime = se.EventTime.UTC()
 			r.currentEventIndex = i
 			return
 		}
 	}
 	r.currentEventIndex = numEvents - 1 // last event if there is a contiguous sequence of events within span till the end.
 	currEvent = r.scaleUpEvents[r.currentEventIndex]
-	replayTime = currEvent.EventTime.UTC()
 	r.currentEventIndex++
 	return
 }
@@ -1520,6 +1538,7 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 	waitNum := 0
 	signalFilePath := "/tmp/ca-scale-up-done.txt"
 	_ = os.Remove(signalFilePath)
+	doneCount := 0
 	for {
 		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
 		virtualScaledNodeNames := lo.FilterMap(nodes, func(n corev1.Node, _ int) (nodeName string, ok bool) {
@@ -1556,8 +1575,13 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 			data, err = os.ReadFile(signalFilePath)
 			if data != nil {
 				message := string(data)
-				slog.Warn("waitForVirtualCARefresh obtained done signal.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath)
-				return
+				slog.Warn("waitForVirtualCARefresh obtained done signal.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath, "doneCount", doneCount)
+				if doneCount >= 1 {
+					return
+				} else {
+					doneCount++
+					_ = os.Remove(signalFilePath)
+				}
 			}
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				slog.Warn("waitAndCheckVirtualScaling encountered error reading signal", "waitNum", waitNum, "error", err, "signalFilePath", signalFilePath)

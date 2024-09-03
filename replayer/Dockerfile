@@ -1,7 +1,7 @@
 FROM ubuntu:latest
 WORKDIR /
-COPY bin/replayer /replayer
-RUN chmod +x recorder
+COPY bin/remote /bin
+RUN chmod +x /bin
 #EXPOSE 8080
-ENTRYPOINT ["/recorder"]
-#CMD ["/bin/bash", "-c", "/conntest || true; while true; do sleep 1000; done"]
+#ENTRYPOINT ["/bin/replayer"]
+CMD ["/bin/bash", "-c", "while true; do sleep 1000; done"]

@@ -76,19 +76,17 @@ GOOS=$goos GOARCH=$goarch go build -o "$binDir/cluster-autoscaler" main.go
 chmod +x "$binDir/cluster-autoscaler"
 popd
 
-echo "Build done. Please check binaries in $binDir"
+echo "Building replayer..."
 
-#echo "Please ensure that Docker Desktop is started."
-#mkdir -p bin
-#if [[ -f bin/recorder ]]; then
-#  echo "Removing existing binary."
-#  rm bin/recorder
-#fi
-#echo "Building recorder for linux/amd64..."
-#GOOS=linux GOARCH=amd64 go build -v -o bin/recorder cmd/recorder/main.go
-#chmod +x bin/recorder
-#GSH_IMAGE_TAG="$DOCKERHUB_USER/scaling-history-recorder:latest"
-#export GSH_IMAGE_TAG
-#
-#echo "Building and pushing to $GSH_IMAGE_TAG..."
-#docker buildx build --push --platform linux/amd64 --tag "$GSH_IMAGE_TAG" .
+echo "Build done. Please check binaries in $binDir"
+GOOS=$goos GOARCH=$goarch go build -v -o "$binDir/replayer" cmd/replayer/main.go
+
+
+echo "NOTE: Please ensure that Docker Desktop is started."
+chmod +x "$binDir"/replayer
+REPLAYER_IMAGE_TAG="$DOCKERHUB_USER/scaling-history-replayer:latest"
+export REPLAYER_IMAGE_TAG
+
+echo "Building and pushing to $REPLAYER_IMAGE_TAG..."
+#docker buildx build --push --platform linux/amd64 --tag "$REPLAYER_IMAGE_TAG" .
+docker buildx build -f replayer/Dockerfile --tag "$REPLAYER_IMAGE_TAG" .

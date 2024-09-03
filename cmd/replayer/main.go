@@ -46,18 +46,18 @@ func main() {
 		slog.Error("INPUT_DATA_PATH env MUST be set. Must be either a scenario .json file or a recorded .db path")
 		os.Exit(1)
 	}
-	virtualClusterKubeConfig := os.Getenv("KUBECONFIG")
-	if len(virtualClusterKubeConfig) == 0 {
-		virtualClusterKubeConfig = "/tmp/kvcl.yaml"
-		slog.Warn("KUBECONFIG env must be set. Assuming path.", "virtualClusterKubeConfig", virtualClusterKubeConfig)
-		if !apputil.FileExists(virtualClusterKubeConfig) {
-			slog.Error("virtualClusterKubeConfig does not exist. Exiting")
-			os.Exit(1)
-		}
-	}
+	//virtualClusterKubeConfig := os.Getenv("KUBECONFIG")
+	//if len(virtualClusterKubeConfig) == 0 {
+	//	virtualClusterKubeConfig = "/tmp/kvcl.yaml"
+	//	slog.Warn("KUBECONFIG env must be set. Assuming path.", "virtualClusterKubeConfig", virtualClusterKubeConfig)
+	//	if !apputil.FileExists(virtualClusterKubeConfig) {
+	//		slog.Error("virtualClusterKubeConfig does not exist. Exiting")
+	//		os.Exit(1)
+	//	}
+	//}
 	autoScalerBinaryPath := "bin/cluster-autoscaler"
 	if !apputil.FileExists(autoScalerBinaryPath) {
-		slog.Error("Virtual Autoscaler binary is expected at relative path.", "autoScalerBinaryPath", autoScalerBinaryPath)
+		slog.Error("Virtual Autoscaler binary is expected at relative path. Kindly execute ./hack/build-replayer.sh .", "autoScalerBinaryPath", autoScalerBinaryPath)
 		os.Exit(2)
 	}
 	reportDir := os.Getenv("REPORT_DIR")
@@ -93,7 +93,7 @@ func main() {
 		InputDataPath:                inputDataPath,
 		ReportDir:                    reportDir,
 		VirtualAutoScalerConfigPath:  virtualAutoscalerConfig,
-		VirtualClusterKubeConfigPath: virtualClusterKubeConfig,
+		VirtualClusterKubeConfigPath: "/tmp/kvcl.yaml",
 		DeployParallel:               deployParallel,
 		ReplayInterval:               replayInterval,
 		//RecurConfigUpdate:            recurConfigUpdate,
