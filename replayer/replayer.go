@@ -13,10 +13,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	gsc "github.com/elankath/gardener-scaling-common"
@@ -581,10 +583,7 @@ func clearPods(ctx context.Context, c *kubernetes.Clientset) error {
 }
 
 func (r *defaultReplayer) Start(ctx context.Context) error {
-	err := r.CleanCluster(ctx)
-	if err != nil {
-		return err
-	}
+	var err error
 	if r.replayMode == ReplayFromDBMode {
 		err = r.dataAccess.Init()
 		if err != nil {
@@ -601,6 +600,20 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 		reportFileName := apputil.FilenameWithoutExtension(r.params.InputDataPath) + "-db-replay.json"
 		r.reportPath = path.Join(r.params.ReportDir, reportFileName)
 
+		// Launch the KVCL
+		err = launchKvcl()
+		if err != nil {
+			return err
+		}
+		// Launch the VCA using the saved arguments.
+		caSettings, err := r.dataAccess.LoadCASettingsBefore(time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		err = launchCA(caSettings) // must launch CA in go-routine and return processId and error
+		if err != nil {
+			return err
+		}
 	} else {
 		sBytes, err := os.ReadFile(r.params.InputDataPath)
 		if err != nil {
@@ -621,7 +634,135 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 		reportFileName := strings.TrimSuffix(fileNameWithoutExtension, "-db-replay") + "-report-replay.json"
 		r.reportPath = path.Join(r.params.ReportDir, reportFileName)
 	}
+	err = r.CleanCluster(ctx)
+	if err != nil {
+		return err
+	}
 	return nil
+}
+
+func launchKvcl() error {
+	// TODO: change to using Start and Wait with graceful termination later
+	err := killStaleKvcl()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command("bin/kvcl")
+	cmd.Env = append(os.Environ(), fmt.Sprintf("BINARY_ASSETS_DIR=%s", "bin"))
+	slog.Info("Launching kvcl", "cmd", cmd)
+	go func() {
+		err := cmd.Run()
+		if err != nil {
+			slog.Error("Failed to launch kvcl.", "error", err, "cmd", cmd)
+			os.Exit(9)
+		}
+	}()
+	waitSecs := 8
+	slog.Info("Waiting  for bin/kvcl to start", "waitSecs", waitSecs)
+	<-time.After(time.Duration(waitSecs) * time.Second)
+	return nil
+}
+
+func killStaleKvcl() error {
+	listStaleProcCmd := exec.Command("pgrep", "-f", "envtest")
+	slog.Info("Listing stale kvcl processes using command.", "listStaleProcCmd", listStaleProcCmd)
+	var stdout, stderr bytes.Buffer
+	listStaleProcCmd.Stdout = &stdout
+	listStaleProcCmd.Stderr = &stderr
+	err := listStaleProcCmd.Run()
+	if listStaleProcCmd.ProcessState != nil && listStaleProcCmd.ProcessState.ExitCode() == 1 {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	procListStr := strings.TrimSpace(stdout.String())
+	if procListStr == "" {
+		slog.Info("There are NO stale kvcl processes to kill.")
+		return nil
+	}
+	pidStrings := strings.FieldsFunc(procListStr, func(r rune) bool {
+		return r == '\n' || r == '\r'
+	})
+	for _, pStr := range pidStrings {
+		pid, err := strconv.Atoi(pStr)
+		if err != nil {
+			return fmt.Errorf("launchKvcl cannot kill process with bad pid %s: %w", pStr, err)
+		}
+		process, err := os.FindProcess(pid)
+		if err != nil {
+			return fmt.Errorf("launchKvcl cannot find  process with pid %d: %w", pid, err)
+		}
+		err = process.Signal(syscall.SIGKILL)
+		if err != nil {
+			return fmt.Errorf("launchKvcl unable to signal SIGKILL to proces %d: %w", pid, err)
+		}
+		slog.Info("Sent SIGKILL to process with pid.", "pid", pid)
+	}
+	return nil
+}
+
+func launchCA(settings gsc.CASettingsInfo) error {
+	// TODO: change to using Start and Wait with graceful termination later
+	settings.IgnoreDaemonSetUtilization = true
+	var args []string
+	for ngName, mm := range settings.NodeGroupsMinMax {
+		// --nodes=1:3:shoot--i034796--g2.shoot--i034796--g2-p1-z1
+		arg := fmt.Sprintf("--nodes=%d:%d:%s", mm.Min, mm.Max, ngName)
+		slog.Info("Adding --nodes arg to VCA.", "arg", arg)
+		args = append(args, arg)
+	}
+	expanderArg := fmt.Sprintf("--expander=%s", settings.Expander)
+	args = append(args, "--kubeconfig=/tmp/kvcl.yaml")
+	args = append(args, expanderArg)
+	args = append(args, fmt.Sprintf("--ignore-daemonsets-utilization=%t", settings.IgnoreDaemonSetUtilization))
+	args = append(args, fmt.Sprintf("--max-graceful-termination-sec=%d", settings.MaxGracefulTerminationSeconds))
+	args = append(args, fmt.Sprintf("--max-empty-bulk-delete=%d", settings.MaxEmptyBulkDelete))
+	args = append(args, "--balance-similar-node-groups=true")
+	args = append(args, "--new-pod-scale-up-delay=0s")
+	args = append(args, "--max-nodes-total=4096")
+	args = append(args, "--scale-down-enabled=false")
+	args = append(args, "--v=2")
+	args = append(args, "--expendable-pods-priority-cutoff=-10")
+
+	caCmd := exec.Command("bin/cluster-autoscaler", args...)
+	//caCmd.Env = append(os.Environ(), fmt.Sprintf("KUBECONFIG=%s", "/tmp/kvcl.yaml"))
+	//	var stdout, stderr bytes.Buffer
+	caCmd.Stdout = os.Stdout
+	caCmd.Stderr = os.Stdin
+	slog.Info("Launching virtual bin/cluster-autoscaler with args.", "args", args)
+	//err := caCmd.Start()
+	//if err != nil {
+	//	output, err := caCmd.Output()
+	//	if err != nil {
+	//		slog.Error("Cannot get output of bin/cluster-autoscaler with args.", "error", err, "args", args)
+	//		return err
+	//	}
+	//	slog.Error("Cannot launch bin/cluster-autoscaler with args.", "error", err, "output", output)
+	//	os.Exit(9)
+	//}
+	go func() {
+		err := caCmd.Run()
+		if err != nil {
+			slog.Error("bin/cluster-autoscaler ran into error", "error", err)
+			os.Exit(9)
+		}
+	}()
+	waitSecs := 8
+	slog.Info("Waiting  for virtual bin/cluster-autoscaler to start", "waitSecs", waitSecs)
+	<-time.After(time.Duration(waitSecs) * time.Second)
+	return nil
+	//err := caCmd.Start()
+	//if err != nil {
+	//	slog.Error("Cannot launch bin/cluster-autoscaler with args.", "error", err, "args", args)
+	//	return err
+	//}
+	//slog.Info("Invoked start of bin/cluster-autoscaler", "args", args)
+	//go func() {
+	//	err = caCmd.Wait()
+	//	slog.Error("got error running virtual bin/cluster-autoscaler. Exiting", "error", err)
+	//	os.Exit(9)
+	//}()
 }
 
 type PodWork struct {

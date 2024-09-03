@@ -55,6 +55,11 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	autoScalerBinaryPath := "bin/cluster-autoscaler"
+	if !apputil.FileExists(autoScalerBinaryPath) {
+		slog.Error("Virtual Autoscaler binary is expected at relative path.", "autoScalerBinaryPath", autoScalerBinaryPath)
+		os.Exit(2)
+	}
 	reportDir := os.Getenv("REPORT_DIR")
 	if len(reportDir) == 0 {
 		reportDir = "/tmp"
@@ -98,7 +103,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	//TODO listen for shutdown and call cancel Fn
+	// TODO: refactor this code, context.WithCancel should be created by replayer implementation and not by caller.
 	ctx, cancelFn := context.WithCancel(context.Background())
 	err = defaultReplayer.Start(ctx)
 	if err != nil {
