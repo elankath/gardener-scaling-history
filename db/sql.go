@@ -273,6 +273,6 @@ const InsertCASettingsInfo = `INSERT INTO ca_settings_info (
     Hash
 ) VALUES (? ,? , ? ,?, ?, ?, ? , ? , ? , ? , ?, ?)`
 
-const SelectLatestCASettingsBefore = `SELECT * from ca_settings_info WHERE SnapshotTimestamp <= ? ORDER BY SnapshotTimestamp DESC LIMIT 1`
+const SelectLatestCASettingsBefore = `SELECT * from ca_settings_info WHERE SnapshotTimestamp <= ? ORDER BY RowID DESC LIMIT 1`
 const SelectLatestNodesBeforeAndNotDeleted = `SELECT * from (select * from node_info where node_info.CreationTimestamp <= ? and node_info.DeletionTimestamp = 0 order by RowID DESC) GROUP by Name`
 const SelectTriggerScaleUpEvents = `SELECT * FROM event_info where Reason = 'TriggeredScaleUp' order by EventTime asc`

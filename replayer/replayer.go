@@ -657,7 +657,7 @@ func launchKvcl() error {
 			os.Exit(9)
 		}
 	}()
-	waitSecs := 8
+	waitSecs := 6
 	slog.Info("Waiting  for bin/kvcl to start", "waitSecs", waitSecs)
 	<-time.After(time.Duration(waitSecs) * time.Second)
 	return nil
