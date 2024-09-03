@@ -4,17 +4,6 @@ set -eo pipefail
 echoErr() { echo "$@" 1>&2; }
 
 echo "howdy"
-#if command -v "gum" > /dev/null 2>&1; then
-#        echo "The command '$1' is available."
-#        exit 0
-#    else
-#        echo "The command '$1' is not available."
-#        return 1
-#fi
-#if  ! command -v "gum" ; then
-#  echo "Installing Gum..."
-#  brew install gum
-#fi
 mode="$1"
 if [[ -z "$mode" ]]; then
   echoErr "$0 needs mode: ('local' or 'remote') to be specified! ie. specify $0 local or $0 remote"
@@ -41,6 +30,20 @@ if [[ "$mode" == "remote" && -z "$DOCKERHUB_USER" ]]; then
   echoErr "Please export DOCKERHUB_USER var before executing this script and ensure you have logged in using 'docker login'"
   exit 1
 fi
+
+printf "Installing setup-envtest...\n"
+go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+envTestSetupCmd="setup-envtest --os $goos --arch $goarch use -p path"
+printf "Executing: %s\n" "$envTestSetupCmd"
+binaryAssetsDir=$(eval "$envTestSetupCmd")
+errorCode="$?"
+if [[ "$errorCode" -gt 0 ]]; then
+      echoErr "EC: $errorCode. Error in executing $envTestSetupCmd. Exiting!"
+      exit 1
+fi
+echo "setup-envtest downloaded binaries into $binaryAssetsDir"
+cp -fv "$binaryAssetsDir"/* "$binDir"
+echo "Copied binaries into $binDir"
 
 if [[ -z "$KVCL_DIR" ]]; then
   KVCL_DIR="$GOPATH/src/github.com/unmarshall/kvcl"
