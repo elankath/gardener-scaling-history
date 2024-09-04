@@ -49,6 +49,8 @@ spec:
         - name: DB_DIR
           value: /db
       volumeMounts:
+        - mountPath: /reports
+          name: reports-dir
         - mountPath: /db
           name: db-dir
         - mountPath: /app/secrets/gardens
@@ -59,6 +61,9 @@ spec:
     - name: db-dir
       persistentVolumeClaim:
         claimName: shr-pvc
+    - name: reports-dir
+      persistentVolumeClaim:
+        claimName: shr-reports
     - name: robot-gardens
       secret:
         defaultMode: 420

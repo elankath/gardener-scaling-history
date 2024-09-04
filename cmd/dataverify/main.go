@@ -36,11 +36,11 @@ func main() {
 	var eventIndex int
 	for {
 		eventIndex, replayEvent = replayer.GetNextReplayEvent(scalingEvents, eventIndex)
-		slog.Info("ReplayScalingEvent", "eventIndex", eventIndex, "eventTimeUnixNanos", replayEvent.EventTime.UTC().UnixNano(), "reason", replayEvent.Reason, "msg", replayEvent.Message)
-		if replayEvent.EventTime.IsZero() {
+		if eventIndex == -1 {
 			slog.Info("No more scaling events")
 			break
 		}
+		slog.Info("ReplayScalingEvent", "eventIndex", eventIndex, "eventTimeUnixNanos", replayEvent.EventTime.UTC().UnixNano(), "reason", replayEvent.Reason, "msg", replayEvent.Message)
 		/*
 			1725101735	e5b611b9-562c-4a84-8766-702875ff2a34	2024-08-31 10:55:35+00:00	TriggeredScaleUp	pod triggered scale-up: [{shoot--hc-eu30--prod-gc-haas-default-z2 7->8 (max: 200)}]	thanos-compactor-6c9c7dbcc9-bv992
 			1725144986	dffd240b-4cba-4307-92a7-fda5f40fde89	2024-08-31 22:56:26+00:00	TriggeredScaleUp	pod triggered scale-up: [{shoot--hc-eu30--prod-gc-haas-default-z2 7->8 (max: 200)}]	thanos-compactor-6c9c7dbcc9-wt9dn

@@ -82,9 +82,14 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Executi
 			return 6
 		}
 	}
+	reportDir := os.Getenv("REPORT_DIR")
+	if len(reportDir) == 0 {
+		reportDir = "/tmp"
+		slog.Warn("REPORT_DIR not set. Assuming tmp dir", "reportDir", reportDir)
+	}
 	//launch engine in a goroutine
 	go func() {
-		err := recorder.LaunchFileServer(ctx, dbDir)
+		err := recorder.LaunchFileServer(ctx, dbDir, reportDir)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
 				slog.Info("recorder fileserver was cancelled", "error", err)

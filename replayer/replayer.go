@@ -1061,6 +1061,7 @@ func GetNextReplayEvent(events []gsc.EventInfo, currEventIndex int) (nextEventIn
 	numEvents := len(events)
 	if currEventIndex >= numEvents-1 {
 		slog.Info("GetNextReplayEvent could find no more scale-up events")
+		nextEventIndex = -1
 		return
 	}
 	span := 12 * time.Second
@@ -1068,6 +1069,9 @@ func GetNextReplayEvent(events []gsc.EventInfo, currEventIndex int) (nextEventIn
 
 	for i := currEventIndex + 1; i < numEvents; i++ {
 		nextEvent = events[i]
+		if nextEvent.Message == currEvent.Message {
+			continue
+		}
 		if eventTimeDiffGreaterThan(nextEvent, currEvent, span) {
 			nextEventIndex = i
 			nextEvent = events[nextEventIndex]

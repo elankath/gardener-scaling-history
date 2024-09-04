@@ -16,9 +16,10 @@ type FileServer struct {
 	httpServer *http.Server
 	mux        *http.ServeMux
 	dbDir      string
+	reportDir  string
 }
 
-func LaunchFileServer(ctx context.Context, dbDir string) error {
+func LaunchFileServer(ctx context.Context, dbDir string, reportDir string) error {
 	mux := http.NewServeMux()
 
 	httpServer := http.Server{
@@ -30,10 +31,13 @@ func LaunchFileServer(ctx context.Context, dbDir string) error {
 		httpServer: &httpServer,
 		mux:        mux,
 		dbDir:      dbDir,
+		reportDir:  reportDir,
 	}
 
 	fileServer.mux.HandleFunc("GET /db", fileServer.ListDatabases)
 	fileServer.mux.HandleFunc("GET /db/{dbName}", fileServer.GetDatabase)
+	fileServer.mux.HandleFunc("GET /reports", fileServer.ListReports)
+	fileServer.mux.HandleFunc("GET /reports/{reportName}", fileServer.GetReport)
 
 	fileServer.httpServer.Handler = fileServer.mux
 	defer fileServer.httpServer.Shutdown(ctx)
@@ -76,4 +80,37 @@ func (f *FileServer) GetDatabase(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+dbName+"\"")
 	http.ServeFile(w, r, dbFile)
+}
+
+func (f *FileServer) ListReports(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain")
+	entries, err := os.ReadDir(f.reportDir)
+	if err != nil {
+		slog.Error("ListReports could not list files in reportDir", "error", err, "reportDir", f.reportDir)
+		http.Error(w, fmt.Sprintf("could not list files in reportDir %q", f.reportDir), 500)
+		return
+	}
+	for _, e := range entries {
+		entryName := e.Name()
+		if !strings.HasSuffix(entryName, ".json") {
+			continue
+		}
+		_, _ = fmt.Fprintln(w, entryName)
+	}
+}
+func (f *FileServer) GetReport(w http.ResponseWriter, r *http.Request) {
+	reportName := r.PathValue("reportName")
+	if len(reportName) == 0 {
+		http.Error(w, "reportName must not be empty", 400)
+		return
+	}
+	reportFile := path.Join(f.reportDir, reportName)
+	if !apputil.FileExists(reportFile) {
+		http.Error(w, fmt.Sprintf("reportFile %q not found", reportFile), 400)
+		return
+	}
+	slog.Info("Serving DB.", "reportFile", reportFile)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+reportName+"\"")
+	http.ServeFile(w, r, reportFile)
 }
