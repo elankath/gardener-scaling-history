@@ -300,7 +300,7 @@ func (r *defaultRecorder) onAddPod(obj any) {
 		return
 	}
 	podNew := obj.(*corev1.Pod)
-	slog.Info("onAddPod.", "podName", podNew.Name, "podNew.UID", podNew.UID, "podNew.UID", podNew.UID, "shootLabel", r.params.ShootLabel())
+	slog.Debug("onAddPod.", "podName", podNew.Name, "podNew.UID", podNew.UID, "podNew.UID", podNew.UID, "shootLabel", r.params.ShootLabel())
 	err := r.processPod(nil, podNew)
 	if err != nil {
 		slog.Error("onAddPod failed", "error", err, "recorderParams", r.params)
@@ -376,9 +376,8 @@ func (r *defaultRecorder) onUpdatePod(old, new any) {
 		return
 	}
 	podNew := new.(*corev1.Pod)
-	slog.Debug("Pod obj changed.", "podNew", podNew.GetName(), "podNew.ResourceVersion", podNew.GetResourceVersion())
 	podOld := old.(*corev1.Pod)
-	slog.Info("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID, "shootLabel", r.params.ShootLabel())
+	slog.Debug("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID, "shootLabel", r.params.ShootLabel())
 	err := r.processPod(podOld, podNew)
 	if err != nil {
 		slog.Error("onUpdatePod failed", "error", err, "recorderParams", r.params)
@@ -638,6 +637,7 @@ func (r *defaultRecorder) processPod(podOld, podNew *corev1.Pod) error {
 		slog.Error("could not execute pod_info insert", "error", err, "pod.Name", podInfo.Name, "pod.UID", podInfo.UID, "pod.CreationTimestamp", podInfo.CreationTimestamp, "pod.Hash", podInfo.Hash)
 		return err
 	}
+	slog.Info("processPod stored pod.", "pod.Name", podInfo.Name, "pod.UID", podInfo.UID, "pod.CreationTimestamp", podInfo.CreationTimestamp, "shootLabel", r.params.ShootLabel())
 	return nil
 }
 
