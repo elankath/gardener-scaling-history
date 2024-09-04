@@ -87,19 +87,6 @@ func (sr ScalingRun) Equal(o ScalingRun) bool {
 var _ gsh.Replayer = (*defaultReplayer)(nil)
 
 func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
-	err := launchKvcl()
-	if err != nil {
-		return nil, err
-	}
-	config, err := clientcmd.BuildConfigFromFlags("", params.VirtualClusterKubeConfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("cannot create client config: %w", err)
-	}
-	// Create clientset
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("cannot create clientset: %w", err)
-	}
 	var replayMode ReplayMode
 	var dataAccess *db.DataAccess
 	if strings.HasSuffix(params.InputDataPath, ".db") {
@@ -109,6 +96,22 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 		replayMode = ReplayFromReportMode
 	} else {
 		return nil, fmt.Errorf("invalid DB path for DB-report %q", params.InputDataPath)
+	}
+
+	if replayMode == ReplayFromDBMode {
+		err := launchKvcl()
+		if err != nil {
+			return nil, err
+		}
+	}
+	config, err := clientcmd.BuildConfigFromFlags("", params.VirtualClusterKubeConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create client config: %w", err)
+	}
+	// Create clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create clientset: %w", err)
 	}
 	return &defaultReplayer{
 		dataAccess: dataAccess,
