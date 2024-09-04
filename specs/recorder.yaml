@@ -48,6 +48,8 @@ spec:
           value: in-utility-cluster
         - name: DB_DIR
           value: /db
+        - name: REPORT_DIR
+          value: /reports
       volumeMounts:
         - mountPath: /reports
           name: reports-dir
