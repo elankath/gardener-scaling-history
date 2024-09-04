@@ -57,7 +57,7 @@ fi
 replayerJobYaml="/tmp/scaling-history-replayer.yaml"
 envsubst < specs/replayer.yaml > "$replayerJobYaml"
 echo "Substituted env variables in specs/replayer.yaml and wrote to $replayerJobYaml"
-kubectl delete job -n robot scaling-history-replayer || echo "scaling-history-replayer JOB not yet deployed."
+#kubectl delete job -n robot scaling-history-replayer || echo "scaling-history-replayer JOB not yet deployed."
 sleep 1
 echo "Starting Replayer Job..."
 kubectl apply -f  "$replayerJobYaml"
