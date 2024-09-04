@@ -31,9 +31,9 @@ Repository providers 2 apps:
 1. Run `./hack/build-recorder.sh`
 1. Run `./hack/build-recorder.sh`
 
-### Download Recorder Databases
+## Download Recorder Databases
 
-### Download Automatically into /tmp dir
+### Download Automatically into gen dir
 
 1. Ensure you have garden live landscape access.
 1. Kindly run the script `./hack/download-db.sh`
@@ -67,7 +67,7 @@ to the recorded DB Path which can also be a generated scenario json.
 
 In either case it generates another scenario report.
 
-### Launch Replayer to generate scenario from recorded DB
+### Launch Replayer locally to generate scenario from recorded DB
 
 1. Launch the virtual cluster: KVCL. 
 1. Export `INPUT_DATA_PATH`. Ex: `export  INPUT_DATA_PATH=dev_i034796_g2.db`
@@ -75,3 +75,22 @@ In either case it generates another scenario report.
 1. (optional) You may also optionally change default of `/tmp` for the scenario `REPORT_DIR`. Ex: `REPORT_DIR=/tmp`
 1. (optional) You may also optionally change default of `/tmp/kvcl.yaml` for the virtual `KUBECONFIG`. Ex: `KUBECONFIG=cfg/virtual-kubeconfig.yaml`
 1. Execute replayer:  `go run cmd/replayer/main.go`
+
+### Launch Replayer remotely
+
+1. Login into `utility-int` cluster `gardenctl target --garden sap-landscape-live --project garden-ops --shoot utility-int`
+1. Export your docker hub username: `export DOCKERHUB_USER=<dockerHubUser>`
+1. Login into Docker Hub: `docker login -u $DOCKERHUB_USER -p <dockerHubPass>`
+1. Ensure you are at the base dir of the gardener-scaling-history
+1. Run `./hack/build-replayer.sh remote`
+1. Run `./hack/replay-db.sh`
+   1. This will list all db's available
+   1. Choose the db you want to run the replayer with
+
+
+## Download reports
+
+### Download reports into /tmp dir
+
+1. Ensure you have garden live landscape access.
+1. Kindly run the script `./hack/download-reports.sh`
