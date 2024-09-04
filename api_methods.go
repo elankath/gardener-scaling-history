@@ -18,6 +18,14 @@ func header(prefix string, meta gsc.SnapshotMeta) string {
 		prefix, meta.RowID, meta.CreationTimestamp, meta.SnapshotTimestamp, meta.Name, meta.Namespace)
 }
 
+func (rp RecorderParams) ShootLabel() string {
+	if rp.shootLabel != "" {
+		return rp.shootLabel
+	}
+	rp.shootLabel = fmt.Sprintf("%s:%s:%s", rp.Landscape, rp.ProjectName, rp.ShootName)
+	return rp.shootLabel
+}
+
 func (m MachineClassInfo) String() string {
 	metaStr := header("MachineClass", m.SnapshotMeta)
 	return fmt.Sprintf("%s, InstanceType=%s, PoolName=%s, Region=%s, Zone=%s, Labels=%s, Capacity=%s, Hash=%s)",

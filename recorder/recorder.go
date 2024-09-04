@@ -300,7 +300,7 @@ func (r *defaultRecorder) onAddPod(obj any) {
 		return
 	}
 	podNew := obj.(*corev1.Pod)
-	slog.Info("onAddPod.", "podName", podNew.Name, "podNew.UID", podNew.UID, "podNew.UID", podNew.UID)
+	slog.Info("onAddPod.", "podName", podNew.Name, "podNew.UID", podNew.UID, "podNew.UID", podNew.UID, "shootLabel", r.params.ShootLabel())
 	err := r.processPod(nil, podNew)
 	if err != nil {
 		slog.Error("onAddPod failed", "error", err, "recorderParams", r.params)
@@ -376,9 +376,9 @@ func (r *defaultRecorder) onUpdatePod(old, new any) {
 		return
 	}
 	podNew := new.(*corev1.Pod)
-	slog.Info("Pod obj changed.", "podNew", podNew.GetName(), "podNew.ResourceVersion", podNew.GetResourceVersion())
+	slog.Debug("Pod obj changed.", "podNew", podNew.GetName(), "podNew.ResourceVersion", podNew.GetResourceVersion())
 	podOld := old.(*corev1.Pod)
-	slog.Info("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID)
+	slog.Info("onUpdatePod.", "podName", podOld.Name, "podOld.UID", podOld.UID, "podNew.UID", podNew.UID, "shootLabel", r.params.ShootLabel())
 	err := r.processPod(podOld, podNew)
 	if err != nil {
 		slog.Error("onUpdatePod failed", "error", err, "recorderParams", r.params)
@@ -454,7 +454,7 @@ func (r *defaultRecorder) processNode(old any, new any) {
 			slog.Error("could not store node info.", "node.Name", nodeNew.Name, "error", err, "recorderParams", r.params)
 			return nil
 		}
-		slog.Info("processNode stored node", "node.Name", nodeNewInfo.Name, "allocatableVolumes", allocatableVolumes, "node.Hash", nodeNewInfo.Hash)
+		slog.Info("processNode stored node", "node.Name", nodeNewInfo.Name, "allocatableVolumes", allocatableVolumes, "node.Hash", nodeNewInfo.Hash, "shootLabel", r.params.ShootLabel())
 		return nil
 	})
 }

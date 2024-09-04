@@ -35,6 +35,7 @@ type RecorderParams struct {
 	ShootKubeConfigPath string
 	SeedKubeConfigPath  string
 	DBDir               string
+	shootLabel          string
 }
 
 type ReplayerParams struct {
