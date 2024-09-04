@@ -43,11 +43,11 @@ spec:
       containers:
         - name: replayer
           image: ${DOCKERHUB_USER}/scaling-history-replayer:latest
-#          ports:
-#            - containerPort: 8080
-          resources:
-            limits:
-              memory: 4Gi
+##          ports:
+##            - containerPort: 8080
+#          resources:
+#            limits:
+#              memory: 3Gi
           env:
             - name: INPUT_DATA_PATH
               value: ${INPUT_DATA_PATH}

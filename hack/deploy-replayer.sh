@@ -12,7 +12,7 @@ if [[ ! -f specs/replayer.yaml ]]; then
   echoErr "Please ensure that you are in the base dir of the gardener-scaling-history repo before running this script"
   exit 2
 fi
-export INPUT_DATA_PATH="/db/live_hc-eu30_prod-gc-orc.db"
+export INPUT_DATA_PATH="/db/live_hc-eu30_prod-gc-haas.db"
 echo "Please ensure you have used gardenctl to log into the right shoot cluster"
 replayerJobYaml="/tmp/scaling-history-replayer.yaml"
 envsubst < specs/replayer.yaml > "$replayerJobYaml"
