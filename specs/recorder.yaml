@@ -21,7 +21,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: scaling-history-recorder
-  namespace: robot #TODO
+  namespace: robot
   labels:
     app.kubernetes.io/name: "scaling-history-recorder"
     networking.gardener.cloud/to-dns: allowed
@@ -39,6 +39,8 @@ spec:
       ports:
         - containerPort: 8080
       resources:
+        requests:
+          memory: 8Gi
         limits:
           memory: 10Gi
       env:

@@ -1,0 +1,67 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app.kubernetes.io/name: "scaling-history-replayer"
+  name: shr-reports
+  namespace: robot
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 30Gi
+  storageClassName: default
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: scaling-history-replayer
+  namespace: robot
+  labels:
+    app.kubernetes.io/name: "scaling-history-replayer"
+    networking.gardener.cloud/to-dns: allowed
+    networking.gardener.cloud/to-runtime-apiserver: allowed
+    networking.resources.gardener.cloud/to-kube-apiserver-tcp-443: allowed
+    role: cluster-autoscaler
+    app: kubernetes
+    gardener.cloud/role: controlplane
+spec:
+  template:
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key:  "app.kubernetes.io/name"
+                    operator: In
+                    values:
+                      - "scaling-history-recorder"
+              topologyKey: "kubernetes.io/hostname"
+      restartPolicy: Never
+      containers:
+        - name: replayer
+          image: ${DOCKERHUB_USER}/scaling-history-replayer:latest
+#          ports:
+#            - containerPort: 8080
+          resources:
+            limits:
+              memory: 4Gi
+          env:
+            - name: INPUT_DATA_PATH
+              value: ${INPUT_DATA_PATH}
+            - name: REPORT_DIR
+              value: /reports
+          volumeMounts:
+            - mountPath: /reports
+              name: reports-dir
+            - mountPath: /db
+              name: db-dir
+      volumes:
+        - name: reports-dir
+          persistentVolumeClaim:
+            claimName: shr-reports
+        - name: db-dir
+          persistentVolumeClaim:
+            claimName: shr-pvc

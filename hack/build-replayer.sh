@@ -10,6 +10,11 @@ if [[ -z "$mode" ]]; then
   exit 1
 fi
 
+if [[ ! -f cfg/clusters.csv ]]; then
+  echoErr "Please ensure that you are in the base dir of the gardener-scaling-history repo before running this script"
+  exit 2
+fi
+
 if [[ "$mode" != "local" && "$mode" != "remote" ]]; then
   echoErr "Unknown build mode $mode. Only 'local' or 'remote supported presently"
   exit 1
@@ -88,5 +93,5 @@ REPLAYER_IMAGE_TAG="$DOCKERHUB_USER/scaling-history-replayer:latest"
 export REPLAYER_IMAGE_TAG
 
 echo "Building and pushing to $REPLAYER_IMAGE_TAG..."
-#docker buildx build --push --platform linux/amd64 --tag "$REPLAYER_IMAGE_TAG" .
-docker buildx build -f replayer/Dockerfile --tag "$REPLAYER_IMAGE_TAG" .
+docker buildx build -f replayer/Dockerfile --push --platform linux/amd64 --tag "$REPLAYER_IMAGE_TAG" .
+#docker buildx build -f replayer/Dockerfile --tag "$REPLAYER_IMAGE_TAG" .

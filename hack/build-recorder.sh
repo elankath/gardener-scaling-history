@@ -21,8 +21,8 @@ fi
 echo "Building recorder for linux/amd64..."
 GOOS=linux GOARCH=amd64 go build -v -o bin/recorder cmd/recorder/main.go
 chmod +x bin/recorder
-GSH_IMAGE_TAG="$DOCKERHUB_USER/scaling-history-recorder:latest"
-export GSH_IMAGE_TAG
+RECORDER_IMAGE_TAG="$DOCKERHUB_USER/scaling-history-recorder:latest"
+export RECORDER_IMAGE_TAG
 
-echo "Building and pushing to $GSH_IMAGE_TAG..."
-docker buildx build --push --platform linux/amd64 --tag "$GSH_IMAGE_TAG" .
+echo "Building and pushing to $RECORDER_IMAGE_TAG..."
+docker buildx build -f recorder/Dockerfile --push --platform linux/amd64 --tag "$RECORDER_IMAGE_TAG" .
