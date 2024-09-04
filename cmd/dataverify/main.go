@@ -3,6 +3,7 @@ package main
 import (
 	gsc "github.com/elankath/gardener-scaling-common"
 	"github.com/elankath/gardener-scaling-history/db"
+	"github.com/elankath/gardener-scaling-history/replayer"
 	"log/slog"
 	"os"
 	"slices"
@@ -29,8 +30,28 @@ func main() {
 		return
 	}
 	for i, e := range scalingEvents {
-		slog.Info(strconv.Itoa(i), "eventTimeUnixNanos", e.EventTime.UTC().UnixNano(), "reason", e.Reason, "msg", e.Message)
+		slog.Info("ScalingEvent", "eventIndex", strconv.Itoa(i), "eventTimeUnixNanos", e.EventTime.UTC().UnixNano(), "reason", e.Reason, "msg", e.Message)
 	}
+	var replayEvent gsc.EventInfo
+	var eventIndex int
+	for {
+		eventIndex, replayEvent = replayer.GetNextReplayEvent(scalingEvents, eventIndex)
+		slog.Info("ReplayScalingEvent", "eventIndex", eventIndex, "eventTimeUnixNanos", replayEvent.EventTime.UTC().UnixNano(), "reason", replayEvent.Reason, "msg", replayEvent.Message)
+		if replayEvent.EventTime.IsZero() {
+			slog.Info("No more scaling events")
+			break
+		}
+		/*
+			1725101735	e5b611b9-562c-4a84-8766-702875ff2a34	2024-08-31 10:55:35+00:00	TriggeredScaleUp	pod triggered scale-up: [{shoot--hc-eu30--prod-gc-haas-default-z2 7->8 (max: 200)}]	thanos-compactor-6c9c7dbcc9-bv992
+			1725144986	dffd240b-4cba-4307-92a7-fda5f40fde89	2024-08-31 22:56:26+00:00	TriggeredScaleUp	pod triggered scale-up: [{shoot--hc-eu30--prod-gc-haas-default-z2 7->8 (max: 200)}]	thanos-compactor-6c9c7dbcc9-wt9dn
+			1725188247	311ca729-b350-4362-a5d9-46b640a83e7b	2024-09-01 10:57:27+00:00	TriggeredScaleUp	pod triggered scale-up: [{shoot--hc-eu30--prod-gc-haas-default-z2 7->8 (max: 200)}]	thanos-compactor-6c9c7dbcc9-8rpd4
+
+		*/
+	}
+	if true {
+		os.Exit(0)
+	}
+
 	if true {
 		return
 	}

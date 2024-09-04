@@ -1053,33 +1053,56 @@ func isDifferenceGreaterThan(t1, t2 time.Time, d time.Duration) bool {
 	if difference < 0 {
 		difference = -difference
 	}
-
-	// Check if the absolute difference is greater than the given duration
+	// Check if the absolute difference is lesss than the given duration
 	return difference > d
 }
 
-func (r *defaultReplayer) getNextReplayEvent() (currEvent gsc.EventInfo) {
-	numEvents := len(r.scaleUpEvents)
-	if r.currentEventIndex >= numEvents {
-		slog.Info("getNextReplayEvent could find no more scale-up events")
+func GetNextReplayEvent(events []gsc.EventInfo, currEventIndex int) (nextEventIndex int, nextEvent gsc.EventInfo) {
+	numEvents := len(events)
+	if currEventIndex >= numEvents-1 {
+		slog.Info("GetNextReplayEvent could find no more scale-up events")
 		return
 	}
 	span := 12 * time.Second
-	currEvent = r.scaleUpEvents[r.currentEventIndex]
+	currEvent := events[currEventIndex]
 
-	// e0, e1, e2
-	for i := r.currentEventIndex + 1; i < numEvents; i++ {
-		se := r.scaleUpEvents[i]
-		if eventTimeDiffGreaterThan(currEvent, se, span) {
-			r.currentEventIndex = i
-			currEvent = r.scaleUpEvents[r.currentEventIndex]
+	for i := currEventIndex + 1; i < numEvents; i++ {
+		nextEvent = events[i]
+		if eventTimeDiffGreaterThan(nextEvent, currEvent, span) {
+			nextEventIndex = i
+			nextEvent = events[nextEventIndex]
 			return
 		}
 	}
-	r.currentEventIndex = numEvents - 1 // last event if there is a contiguous sequence of events within span till the end.
-	currEvent = r.scaleUpEvents[r.currentEventIndex]
-	r.currentEventIndex++
+	nextEventIndex = numEvents - 1 // last event if there is a contiguous sequence of events within span till the end.
+	nextEvent = events[nextEventIndex]
 	return
+}
+
+func (r *defaultReplayer) getNextReplayEvent() (nextEvent gsc.EventInfo) {
+	r.currentEventIndex, nextEvent = GetNextReplayEvent(r.scaleUpEvents, r.currentEventIndex)
+	return
+	//numEvents := len(r.scaleUpEvents)
+	//if r.currentEventIndex >= numEvents {
+	//	slog.Info("getNextReplayEvent could find no more scale-up events")
+	//	return
+	//}
+	//span := 12 * time.Second
+	//currEvent = r.scaleUpEvents[r.currentEventIndex]
+	//
+	//// e0, e1, e2
+	//for i := r.currentEventIndex + 1; i < numEvents; i++ {
+	//	se := r.scaleUpEvents[i]
+	//	if eventTimeDiffGreaterThan(currEvent, se, span) {
+	//		r.currentEventIndex = i
+	//		currEvent = r.scaleUpEvents[r.currentEventIndex]
+	//		return
+	//	}
+	//}
+	//r.currentEventIndex = numEvents - 1 // last event if there is a contiguous sequence of events within span till the end.
+	//currEvent = r.scaleUpEvents[r.currentEventIndex]
+	//r.currentEventIndex++
+	//return
 }
 
 func (r *defaultReplayer) getReplayRun() (run ScalingRun) {
