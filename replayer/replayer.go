@@ -1069,9 +1069,9 @@ func GetNextReplayEvent(events []gsc.EventInfo, currEventIndex int) (nextEventIn
 
 	for i := currEventIndex + 1; i < numEvents; i++ {
 		nextEvent = events[i]
-		if nextEvent.Message == currEvent.Message {
-			continue
-		}
+		//if nextEvent.Message == currEvent.Message {
+		//	continue
+		//}
 		if eventTimeDiffGreaterThan(nextEvent, currEvent, span) {
 			nextEventIndex = i
 			nextEvent = events[nextEventIndex]

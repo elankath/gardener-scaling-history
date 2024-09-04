@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: scaling-history-service
+  namespace: robot
+spec:
+  selector:
+    app.kubernetes.io/name: "scaling-history-recorder"
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+  type: LoadBalancer

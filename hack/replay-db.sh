@@ -53,13 +53,22 @@ if [[ -z "$INPUT_DATA_PATH" ]]; then
   echo "INPUT_DATA_PATH has been set to $INPUT_DATA_PATH for replayer job."
 fi
 
+
+replayerDepsYaml="/tmp/scaling-history-replayer-deps.yaml"
+envsubst < specs/replayer-deps.yaml > "$replayerDepsYaml"
+echo "Substituted env variables in specs/replayer-deps.yaml and wrote to $replayerDepsYaml"
+sleep 1
+echo "Applying Replayer dependencies..."
+kubectl apply -f  "$replayerDepsYaml"
+
 #export INPUT_DATA_PATH="/db/live_hc-eu30_prod-gc-haas.db"
-replayerJobYaml="/tmp/scaling-history-replayer.yaml"
-envsubst < specs/replayer.yaml > "$replayerJobYaml"
-echo "Substituted env variables in specs/replayer.yaml and wrote to $replayerJobYaml"
+replayerPodYaml="/tmp/scaling-history-replayer.yaml"
+export NONCE="$(date)"
+envsubst < specs/replayer.yaml > "$replayerPodYaml"
+echo "Substituted env variables in specs/replayer.yaml and wrote to $replayerPodYaml"
 #kubectl delete job -n robot scaling-history-replayer || echo "scaling-history-replayer JOB not yet deployed."
 sleep 1
-echo "Starting Replayer Job..."
-kubectl apply -f  "$replayerJobYaml"
+echo "Starting Replayer Pod..."
+kubectl create -f  "$replayerPodYaml"
 sleep 2
-kubectl get job -n robot
+kubectl get pod -n robot

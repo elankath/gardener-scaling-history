@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -55,10 +56,12 @@ func main() {
 	//		os.Exit(1)
 	//	}
 	//}
-	autoScalerBinaryPath := "bin/cluster-autoscaler"
-	if !apputil.FileExists(autoScalerBinaryPath) {
-		slog.Error("Virtual Autoscaler binary is expected at relative path. Kindly execute ./hack/build-replayer.sh .", "autoScalerBinaryPath", autoScalerBinaryPath)
-		os.Exit(2)
+	if strings.HasSuffix(inputDataPath, ".db") {
+		autoScalerBinaryPath := "bin/cluster-autoscaler"
+		if !apputil.FileExists(autoScalerBinaryPath) {
+			slog.Error("Virtual Autoscaler binary is expected at relative path. Kindly execute ./hack/build-replayer.sh .", "autoScalerBinaryPath", autoScalerBinaryPath)
+			os.Exit(2)
+		}
 	}
 	reportDir := os.Getenv("REPORT_DIR")
 	if len(reportDir) == 0 {

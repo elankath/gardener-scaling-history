@@ -1,23 +1,10 @@
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: Pod
 metadata:
-  labels:
-    app.kubernetes.io/name: "scaling-history-replayer"
-  name: shr-reports
+  generateName: scaling-history-replayer-
   namespace: robot
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 30Gi
-  storageClassName: default
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: scaling-history-replayer
-  namespace: robot
+  annotations:
+    nonce: "${NONCE}"
   labels:
     app.kubernetes.io/name: "scaling-history-replayer"
     networking.gardener.cloud/to-dns: allowed
@@ -27,42 +14,42 @@ metadata:
     app: kubernetes
     gardener.cloud/role: controlplane
 spec:
-  backoffLimit: 0
-  template:
-    spec:
-      affinity:
-        podAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchExpressions:
-                  - key:  "app.kubernetes.io/name"
-                    operator: In
-                    values:
-                      - "scaling-history-recorder"
-              topologyKey: "kubernetes.io/hostname"
-      restartPolicy: Never
-      containers:
-        - name: replayer
-          image: ${DOCKERHUB_USER}/scaling-history-replayer:latest
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key:  "app.kubernetes.io/name"
+                operator: In
+                values:
+                    - "scaling-history-recorder"
+          topologyKey: "kubernetes.io/hostname"
+  restartPolicy: Never
+  containers:
+    - name: replayer
+      image: ${DOCKERHUB_USER}/scaling-history-replayer:latest
 ##          ports:
 ##            - containerPort: 8080
 #          resources:
 #            limits:
 #              memory: 3Gi
-          env:
-            - name: INPUT_DATA_PATH
-              value: ${INPUT_DATA_PATH}
-            - name: REPORT_DIR
-              value: /reports
-          volumeMounts:
-            - mountPath: /reports
-              name: reports-dir
-            - mountPath: /db
-              name: db-dir
-      volumes:
-        - name: reports-dir
-          persistentVolumeClaim:
-            claimName: shr-reports
-        - name: db-dir
-          persistentVolumeClaim:
-            claimName: shr-pvc
+      #envFrom:
+      #  - configMapRef:
+      #      name: scaling-history-replayer-config
+      env:
+        - name: INPUT_DATA_PATH
+          value: ${INPUT_DATA_PATH}
+        - name: REPORT_DIR
+          value: /reports
+      volumeMounts:
+         - mountPath: /reports
+           name: reports-dir
+         - mountPath: /db
+           name: db-dir
+  volumes:
+    - name: reports-dir
+      persistentVolumeClaim:
+        claimName: shr-reports
+    - name: db-dir
+      persistentVolumeClaim:
+        claimName: shr-pvc
