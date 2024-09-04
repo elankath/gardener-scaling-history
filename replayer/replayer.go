@@ -361,7 +361,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			replayEvent := r.getNextReplayEvent()
 			replayMarkTime := replayEvent.EventTime.UTC()
 			replayMarkTimeNanos := replayMarkTime.UnixNano()
-			slog.Info("ReplayFromDB is considering replayEvent.", "replayEvent", replayEvent, "replayMarkTimeNanos", replayMarkTimeNanos)
+			slog.Info("ReplayFromDB is considering replayEvent.", "replayEvent", replayEvent, "replayEventIndex", r.currentEventIndex, "replayMarkTimeNanos", replayMarkTimeNanos)
 			if replayMarkTime.IsZero() {
 				slog.Info("no more scale ups to be replayed. Exiting", "loopNum", loopNum)
 				return nil

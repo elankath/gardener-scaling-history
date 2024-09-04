@@ -27,6 +27,7 @@ metadata:
     app: kubernetes
     gardener.cloud/role: controlplane
 spec:
+  backoffLimit: 0
   template:
     spec:
       affinity:

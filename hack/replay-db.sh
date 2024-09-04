@@ -39,7 +39,7 @@ if [[ -z "$INPUT_DATA_PATH" ]]; then
   echo "Executing  kubectl port-forward -n robot pod/scaling-history-recorder 8080:8080..."
   kubectl port-forward -n robot pod/scaling-history-recorder 8080:8080 &
   pid=$!
-  sleep 4
+  sleep 6
   echo "Started port-forwarding with PID: $pid"
   echo "Downloading db list..."
   dbList=$(curl localhost:8080/db)
@@ -49,7 +49,7 @@ if [[ -z "$INPUT_DATA_PATH" ]]; then
   dbList=$(echo "$dbList" | tr '\n' ' ')
   chosenDb=$(gum choose $dbList)
   echo "You have chosen $chosenDb ! Will run replayer against this DB."
-  INPUT_DATA_PATH="/db/$chosenDb"
+  export INPUT_DATA_PATH="/db/$chosenDb"
   echo "INPUT_DATA_PATH has been set to $INPUT_DATA_PATH for replayer job."
 fi
 
@@ -57,11 +57,9 @@ fi
 replayerJobYaml="/tmp/scaling-history-replayer.yaml"
 envsubst < specs/replayer.yaml > "$replayerJobYaml"
 echo "Substituted env variables in specs/replayer.yaml and wrote to $replayerJobYaml"
-#kubectl delete -f "$replayerJobYaml" || echo "NOTE: recorder pods not already deployed."
-#kubectl delete cm -n robot scaling-history-recorder-config || echo "NOTE: recorder config not already deployed."
-
-#waitSecs=8
-#echo "cleared objects..waiting for $waitSecs seconds before deploying fresh objects..."
-#sleep "$waitSecs"
 kubectl delete job -n robot scaling-history-replayer || echo "scaling-history-replayer JOB not yet deployed."
+sleep 1
+echo "Starting Replayer Job..."
 kubectl apply -f  "$replayerJobYaml"
+sleep 2
+kubectl get job -n robot
