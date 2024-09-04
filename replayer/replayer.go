@@ -1072,6 +1072,7 @@ func (r *defaultReplayer) getNextReplayEvent() (currEvent gsc.EventInfo) {
 		se := r.scaleUpEvents[i]
 		if eventTimeDiffGreaterThan(currEvent, se, span) {
 			r.currentEventIndex = i
+			currEvent = r.scaleUpEvents[r.currentEventIndex]
 			return
 		}
 	}
