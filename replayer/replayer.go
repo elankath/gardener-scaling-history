@@ -1706,7 +1706,7 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 				message := string(data)
 				slog.Info("waitAndCheckVirtualScaling obtained done signal.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath, "doneCount", doneCount)
 				if doneCount >= doneLimit {
-					slog.Warn("waitAndCheckVirtualScaling obtained more than doneLimit done signal, returning.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath, "doneCount", doneCount, "doneLimit", doneLimit)
+					slog.Warn("waitAndCheckVirtualScaling obtained doneCount >= doneLimit done signal, wait finished.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath, "doneCount", doneCount, "doneLimit", doneLimit)
 					return
 				} else {
 					doneCount++
