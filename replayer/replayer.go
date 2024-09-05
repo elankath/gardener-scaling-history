@@ -64,7 +64,7 @@ type defaultReplayer struct {
 	scaleUpEvents            []gsc.EventInfo
 	currentEventIndex        int
 	lastScalingRun           ScalingRun
-	inputScenarios           []gsh.Scenario
+	inputScenario            gsh.Scenario
 	lastScenario             gsh.Scenario
 }
 
@@ -96,11 +96,9 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 		return nil, fmt.Errorf("invalid DB path for DB-report %q", params.InputDataPath)
 	}
 
-	if replayMode == ReplayCAMode {
-		err := launchKvcl()
-		if err != nil {
-			return nil, err
-		}
+	err := launchKvcl()
+	if err != nil {
+		return nil, err
 	}
 	config, err := clientcmd.BuildConfigFromFlags("", params.VirtualClusterKubeConfigPath)
 	if err != nil {
@@ -139,45 +137,46 @@ func (r *defaultReplayer) Replay(ctx context.Context) error {
 	if r.replayMode == ReplayCAMode {
 		return r.ReplayCA(ctx)
 	} else {
-		slog.Info("Running scenario report against scaling-recommender. Please ensure that the scaling-recommender has been started.")
+		// slog.Info("Running scenario report against scaling-recommender. Please ensure that the scaling-recommender has been started.")
 		return r.ReplayScalingRecommender(ctx)
 	}
 }
 
 func (r *defaultReplayer) ReplayScalingRecommender(ctx context.Context) error {
-	for _, s := range r.inputScenarios {
-		err := writeAutoscalerConfig(s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
-		if err != nil {
-			err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", s.ClusterSnapshot.SnapshotTime, r.params.VirtualAutoScalerConfigPath, err)
-			return err
-		}
-		err = syncNodes(ctx, r.clientSet, s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
-		if err != nil {
-			return err
-		}
-		_, err = r.computeAndApplyDeltaWork(ctx, s.ClusterSnapshot, nil)
-		if err != nil {
-			return err
-		}
-		writeClusterSnapshot(s.ClusterSnapshot)
-		if err = postClusterSnapshot(s.ClusterSnapshot); err != nil {
-			return err
-		}
-
-		r.lastClusterSnapshot = s.ClusterSnapshot
-		outputScenario, err := r.createScenario(ctx, s.ClusterSnapshot)
-		if err != nil {
-			if errors.Is(err, ErrNoScenario) {
-				continue
-			} else {
-				return err
-			}
-		}
-		err = r.writeScenario(outputScenario, s.ClusterSnapshot)
-		if err != nil {
-			return err
-		}
+	//for _, s := range r.inputScenario {
+	s := r.inputScenario
+	err := writeAutoscalerConfig(s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
+	if err != nil {
+		err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", s.ClusterSnapshot.SnapshotTime, r.params.VirtualAutoScalerConfigPath, err)
+		return err
 	}
+	err = syncNodes(ctx, r.clientSet, s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
+	if err != nil {
+		return err
+	}
+	_, err = r.computeAndApplyDeltaWork(ctx, s.ClusterSnapshot, nil)
+	if err != nil {
+		return err
+	}
+	writeClusterSnapshot(s.ClusterSnapshot)
+	if err = postClusterSnapshot(s.ClusterSnapshot); err != nil {
+		return err
+	}
+
+	r.lastClusterSnapshot = s.ClusterSnapshot
+	outputScenario, err := r.createScenario(ctx, s.ClusterSnapshot)
+	if err != nil {
+		if errors.Is(err, ErrNoScenario) {
+			//continue
+			slog.Error("No output scenario created by scaling recommender", "err", err)
+		}
+		return err
+	}
+	err = r.writeScenario(outputScenario, s.ClusterSnapshot)
+	if err != nil {
+		return err
+	}
+	//}
 	return nil
 }
 
@@ -620,15 +619,15 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		var inputReport gsh.ReplayReport
-		err = json.Unmarshal(sBytes, &inputReport)
+		//var inputReport gsh.ReplayReport
+		err = json.Unmarshal(sBytes, &r.inputScenario)
 		if err != nil {
-			return err
+			return fmt.Errorf("cannot unmarshal input scenario %q: %w", r.params.InputDataPath, err)
 		}
-		r.inputScenarios = inputReport.Scenarios
-		if len(r.inputScenarios) == 0 {
-			return fmt.Errorf("no scenarios found in the report")
-		}
+		//r.inputScenarios = inputReport.Scenarios
+		//if len(r.inputScenarios) == 0 {
+		//	return fmt.Errorf("no scenarios found in the report")
+		//}
 		slog.Info("Replayer started in replayFromReport mode")
 
 		//reportFileName := strings.TrimSuffix(fileNameWithoutExtension, "_ca-replay") + "-report-replay.json" //OLD format
@@ -637,6 +636,10 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 			return err
 		}
 		r.reportPathFormat = path.Join(r.params.ReportDir, reportFileFormat)
+		err = launchScalingRecommender(r.params.VirtualClusterKubeConfigPath, r.params.InputDataPath) // must launch scaling recommender in go-routine and return processId and error
+		if err != nil {
+			return err
+		}
 	}
 	err = r.CleanCluster(ctx)
 	if err != nil {
@@ -663,6 +666,32 @@ func launchKvcl() error {
 	}()
 	waitSecs := 6
 	slog.Info("Waiting  for bin/kvcl to start", "waitSecs", waitSecs)
+	<-time.After(time.Duration(waitSecs) * time.Second)
+	return nil
+}
+
+func launchScalingRecommender(kubeconfigPath string, inputDataPath string) error {
+	// TODO: change to using Start and Wait with graceful termination later
+	cmd := exec.Command("bin/scaling-recommender")
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stdin
+
+	//FIXME: hack to get provider
+	provider := "aws"
+	if strings.Contains(inputDataPath, "-gc-") {
+		provider = "gcp"
+	}
+	cmd.Args = append(cmd.Args, fmt.Sprintf("--target-kvcl-kubeconfig=%s", kubeconfigPath), fmt.Sprintf("--provider=%s", provider), fmt.Sprintf("--binary-assets-path=%s", "/Users/i544000/go/src/github.com/elankath/gardener-scaling-history/bin"))
+	slog.Info("Launching scaling recommender", "cmd", cmd)
+	go func() {
+		err := cmd.Run()
+		if err != nil {
+			slog.Error("Failed to launch scaling-recommender.", "error", err, "cmd", cmd)
+			os.Exit(9)
+		}
+	}()
+	waitSecs := 6
+	slog.Info("Waiting  for bin/scaling-recommender to start", "waitSecs", waitSecs)
 	<-time.After(time.Duration(waitSecs) * time.Second)
 	return nil
 }
