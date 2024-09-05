@@ -801,6 +801,8 @@ func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPa
 	args = append(args, "--scale-down-enabled=false")
 	args = append(args, "--v=2")
 	args = append(args, "--expendable-pods-priority-cutoff=-10")
+	args = append(args, "--kube-client-qps=30")
+	args = append(args, "--kube-client-burst=20")
 
 	caCmd := exec.Command("bin/cluster-autoscaler", args...)
 	caCmd.Stdout = os.Stdout
@@ -1638,14 +1640,7 @@ func deletePendingUnscheduledPods(ctx context.Context, clientSet *kubernetes.Cli
 func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clientset, replayCount int) (scalingOccurred bool, err error) {
 	var nodes []corev1.Node
 	var pods []corev1.Pod
-	var waitInterval = 4 * time.Minute
-
-	//FIXME: hacky crap
-	if len(pods) < 300 {
-		waitInterval = 50 * time.Second
-	} else {
-		waitInterval = 2 * time.Minute
-	}
+	var waitInterval = 1 * time.Minute
 
 	err = waitForAllPodsToHaveSomeCondition(ctx, clientSet, replayCount, waitInterval)
 	if err != nil {
