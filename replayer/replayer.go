@@ -1651,7 +1651,7 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 	signalFilePath := "/tmp/ca-scale-up-done.txt"
 	_ = os.Remove(signalFilePath)
 	doneCount := 0
-	doneLimit := 4
+	doneLimit := 3
 	for {
 		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
 		virtualScaledNodeNames := lo.FilterMap(nodes, func(n corev1.Node, _ int) (nodeName string, ok bool) {
