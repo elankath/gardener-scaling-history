@@ -74,25 +74,15 @@ func main() {
 		slog.Error("VIRTUAL_AUTOSCALER_CONFIG env is not set - Assuming path.", "virtualAutoscalerConfig", virtualAutoscalerConfig)
 	}
 
-	deployParallel, err := env.GetInt("DEPLOY_PARALLEL", 0)
+	deployParallel, err := env.GetInt("DEPLOY_PARALLEL", 15)
 	if err != nil {
 		slog.Error("cannot parse the env val as int", "name", "DEPLOY_PARALLEL", "error", err)
 		os.Exit(1)
 	}
 	replayInterval := GetDuration("REPLAY_INTERVAL", replayer.DefaultReplayInterval)
 
-	//recurConfigUpdateBool := os.Getenv("RECUR_CONFIG_UPDATE")
-	//var recurConfigUpdate bool
-	//if recurConfigUpdateBool != "" {
-	//	var err error
-	//	recurConfigUpdate, err = strconv.ParseBool(recurConfigUpdateBool)
-	//	if err != nil {
-	//		slog.Error("RECUR_CONFIG_UPDATE must be a boolean")
-	//		os.Exit(1)
-	//	}
-	//}
-
-	defaultReplayer, err := replayer.NewDefaultReplayer(gsh.ReplayerParams{
+	ctx, cancelFn := context.WithCancel(context.Background())
+	defaultReplayer, err := replayer.NewDefaultReplayer(ctx, gsh.ReplayerParams{
 		InputDataPath:                inputDataPath,
 		ReportDir:                    reportDir,
 		VirtualAutoScalerConfigPath:  virtualAutoscalerConfig,
@@ -105,22 +95,19 @@ func main() {
 		slog.Error("cannot construct the default replayer", "error", err)
 		os.Exit(1)
 	}
+	go func() {
+		apputil.WaitForSignalAndShutdown(ctx, cancelFn)
+		err = defaultReplayer.Close()
+		if err != nil {
+			slog.Error("problem closing replayer", "error", err)
+		}
+	}()
 
-	// TODO: refactor this code, context.WithCancel should be created by replayer implementation and not by caller.
-	ctx, cancelFn := context.WithCancel(context.Background())
-	err = defaultReplayer.Start(ctx)
+	err = defaultReplayer.Start()
 	if err != nil {
-		slog.Error("cannot start the replayer", "error", err)
+		slog.Error("Replayer had an issue.", "error", err)
 		os.Exit(1)
 	}
-
-	go apputil.WaitForSignalAndShutdown(cancelFn)
-
-	err = defaultReplayer.Replay(ctx)
-	if err != nil {
-		slog.Error("Replay encountered an error", "error", err)
-		os.Exit(3)
-	}
-
 	slog.Info("Replay Successfully Finished")
+
 }

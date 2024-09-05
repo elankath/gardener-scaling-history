@@ -1,7 +1,6 @@
 package gsh
 
 import (
-	"context"
 	"github.com/elankath/gardener-scaling-common"
 	"io"
 	corev1 "k8s.io/api/core/v1"
@@ -82,11 +81,10 @@ type ReplayReport struct {
 
 type Replayer interface {
 	io.Closer
-	Start(context.Context) error
+	Start() error
 	//GetRecordedClusterSnapshot(time.Time) (gsc.ClusterSnapshot, error)
 	GetRecordedClusterSnapshot(runBeginTime, runEndTime time.Time) (gsc.ClusterSnapshot, error)
 	GetParams() ReplayerParams
-	Replay(context.Context) error
 	//input report - scenario report, output report-
 	// mode1 of replayer is produce scneanrio reports off the recorded data - there is a /tmp/replayer-report.json
 	// mode2 - recommender

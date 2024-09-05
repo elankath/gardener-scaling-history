@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/elankath/gardener-scaling-common/resutil"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"log/slog"
@@ -52,6 +53,9 @@ const ReplayCAMode ReplayMode = 0
 const ReplayScalingRecommenderMode ReplayMode = 1
 
 type defaultReplayer struct {
+	ctx                      context.Context
+	kvclCancelFn             context.CancelFunc
+	scalerCancelFn           context.CancelFunc
 	replayMode               ReplayMode
 	dataAccess               *db.DataAccess
 	clientSet                *kubernetes.Clientset
@@ -84,7 +88,7 @@ func (sr ScalingRun) Equal(o ScalingRun) bool {
 
 var _ gsh.Replayer = (*defaultReplayer)(nil)
 
-func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
+func NewDefaultReplayer(ctx context.Context, params gsh.ReplayerParams) (gsh.Replayer, error) {
 	var replayMode ReplayMode
 	var dataAccess *db.DataAccess
 	if strings.HasSuffix(params.InputDataPath, ".db") {
@@ -95,25 +99,32 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 	} else {
 		return nil, fmt.Errorf("invalid DB path for DB-report %q", params.InputDataPath)
 	}
-
-	err := launchKvcl()
+	kvclCtx, kvclCancelFn := context.WithCancel(ctx)
+	err := launchKvcl(kvclCtx)
 	if err != nil {
+		kvclCancelFn()
 		return nil, err
 	}
 	config, err := clientcmd.BuildConfigFromFlags("", params.VirtualClusterKubeConfigPath)
 	if err != nil {
+		kvclCancelFn()
 		return nil, fmt.Errorf("cannot create client config: %w", err)
 	}
 	// Create clientset
+	config.QPS = 20
+	config.Burst = 30
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
+		kvclCancelFn()
 		return nil, fmt.Errorf("cannot create clientset: %w", err)
 	}
 	return &defaultReplayer{
-		dataAccess: dataAccess,
-		replayMode: replayMode,
-		clientSet:  clientset,
-		params:     params,
+		ctx:          ctx,
+		kvclCancelFn: kvclCancelFn,
+		dataAccess:   dataAccess,
+		replayMode:   replayMode,
+		clientSet:    clientset,
+		params:       params,
 	}, nil
 }
 
@@ -133,16 +144,16 @@ func writeAutoscalerConfig(id string, autoscalerConfig gsc.AutoscalerConfig, pat
 	return nil
 }
 
-func (r *defaultReplayer) Replay(ctx context.Context) error {
+func (r *defaultReplayer) Replay() error {
 	if r.replayMode == ReplayCAMode {
-		return r.ReplayCA(ctx)
+		return r.ReplayCA()
 	} else {
 		// slog.Info("Running scenario report against scaling-recommender. Please ensure that the scaling-recommender has been started.")
-		return r.ReplayScalingRecommender(ctx)
+		return r.ReplayScalingRecommender()
 	}
 }
 
-func (r *defaultReplayer) ReplayScalingRecommender(ctx context.Context) error {
+func (r *defaultReplayer) ReplayScalingRecommender() error {
 	//for _, s := range r.inputScenario {
 	s := r.inputScenario
 	err := writeAutoscalerConfig(s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
@@ -150,11 +161,11 @@ func (r *defaultReplayer) ReplayScalingRecommender(ctx context.Context) error {
 		err = fmt.Errorf("cannot write autoscaler config at time %q to path %q: %w", s.ClusterSnapshot.SnapshotTime, r.params.VirtualAutoScalerConfigPath, err)
 		return err
 	}
-	err = syncNodes(ctx, r.clientSet, s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
+	err = syncNodes(r.ctx, r.clientSet, s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig.ExistingNodes)
 	if err != nil {
 		return err
 	}
-	_, err = r.computeAndApplyDeltaWork(ctx, s.ClusterSnapshot, nil)
+	_, err = r.computeAndApplyDeltaWork(r.ctx, s.ClusterSnapshot, nil)
 	if err != nil {
 		return err
 	}
@@ -164,7 +175,7 @@ func (r *defaultReplayer) ReplayScalingRecommender(ctx context.Context) error {
 	}
 
 	r.lastClusterSnapshot = s.ClusterSnapshot
-	outputScenario, err := r.createScenario(ctx, s.ClusterSnapshot)
+	outputScenario, err := r.createScenario(r.ctx, s.ClusterSnapshot)
 	if err != nil {
 		if errors.Is(err, ErrNoScenario) {
 			//continue
@@ -349,13 +360,12 @@ func buildReadyConditions() []corev1.NodeCondition {
 	}
 }
 
-func (r *defaultReplayer) ReplayCA(ctx context.Context) error {
+func (r *defaultReplayer) ReplayCA() error {
 	loopNum := 0
 	for {
 		select {
-		case <-ctx.Done():
-			slog.Warn("context is cancelled/done, exiting re-player")
-			return ctx.Err()
+		case <-r.ctx.Done():
+			return r.ctx.Err()
 		default:
 			loopNum++
 			replayEvent := r.getNextReplayEvent()
@@ -400,7 +410,7 @@ func (r *defaultReplayer) ReplayCA(ctx context.Context) error {
 			// Before writing autoscaler config, I must delete any unscheduled Pods .
 			// Other-wise CA will call VirtualNodeGroup.IncreaseSize just after AutoScalerConfig is written
 			// which isn't good since we want VirtualNodeGroup.IncreaseSize to be called only AFTER computeAndApplyDeltaWork
-			deletedPendingPods, err = deletePendingUnscheduledPods(ctx, r.clientSet)
+			deletedPendingPods, err = deletePendingUnscheduledPods(r.ctx, r.clientSet)
 			if err != nil {
 				err = fmt.Errorf("cannot delete pendign unscheduled pods: %w", err)
 				return err
@@ -411,7 +421,7 @@ func (r *defaultReplayer) ReplayCA(ctx context.Context) error {
 				slog.Info("RESET autoscaler config hash to clear virtual scaled nodes", "loopNum", loopNum, "replayCount", r.replayCount)
 				clusterSnapshot.AutoscalerConfig.Hash = rand.String(6)
 			}
-			deltaWork, err := computeDeltaWork(ctx, r.clientSet, clusterSnapshot, deletedPendingPods)
+			deltaWork, err := computeDeltaWork(r.ctx, r.clientSet, clusterSnapshot, deletedPendingPods)
 			if err != nil {
 				return err
 			}
@@ -422,25 +432,25 @@ func (r *defaultReplayer) ReplayCA(ctx context.Context) error {
 			}
 			if r.lastClusterSnapshot.AutoscalerConfig.Hash != clusterSnapshot.AutoscalerConfig.Hash {
 				slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
-				err = writeAutoscalerConfigAndWaitForSignal(ctx, clusterSnapshot.ID, clusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
+				err = writeAutoscalerConfigAndWaitForSignal(r.ctx, clusterSnapshot.ID, clusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
 				if err != nil {
 					return err
 				}
 			} else {
 				slog.Info("skip writeAutoscalerConfigAndWaitForSignal since hash unchanged", "hash", clusterSnapshot.AutoscalerConfig.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
 			}
-			err = applyDeltaWork(ctx, r.clientSet, deltaWork)
+			err = applyDeltaWork(r.ctx, r.clientSet, deltaWork)
 			if err != nil {
 				return err
 			}
 			r.replayCount++
 			r.lastClusterSnapshot = clusterSnapshot
-			scalingOccurred, err := waitAndCheckVirtualScaling(ctx, r.clientSet, r.replayCount)
+			scalingOccurred, err := waitAndCheckVirtualScaling(r.ctx, r.clientSet, r.replayCount)
 			if !scalingOccurred {
 				slog.Info("No virtual-scaling occurred while replaying real scaling event", "replayCount", r.replayCount, "dbPath", r.params.InputDataPath, "replayEvent", replayEvent)
 				continue
 			}
-			scenario, err := r.createScenario(ctx, clusterSnapshot)
+			scenario, err := r.createScenario(r.ctx, clusterSnapshot)
 			if err != nil {
 				if errors.Is(err, ErrNoScenario) {
 					continue
@@ -588,7 +598,7 @@ func clearPods(ctx context.Context, c *kubernetes.Clientset) error {
 	return err
 }
 
-func (r *defaultReplayer) Start(ctx context.Context) error {
+func (r *defaultReplayer) Start() error {
 	var err error
 	if r.replayMode == ReplayCAMode {
 		err = r.dataAccess.Init()
@@ -610,10 +620,13 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		err = launchCA(ctx, r.clientSet, r.params.VirtualClusterKubeConfigPath, caSettings) // must launch CA in go-routine and return processId and error
+		caCtx, caCancelFn := context.WithCancel(r.ctx)
+		err = launchCA(caCtx, r.clientSet, r.params.VirtualClusterKubeConfigPath, caSettings) // must launch CA in go-routine and return processId and error
 		if err != nil {
+			caCancelFn()
 			return err
 		}
+		r.scalerCancelFn = caCancelFn
 	} else {
 		sBytes, err := os.ReadFile(r.params.InputDataPath)
 		if err != nil {
@@ -635,26 +648,33 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		srCtx, srCancelFn := context.WithCancel(r.ctx)
 		r.reportPathFormat = path.Join(r.params.ReportDir, reportFileFormat)
-		err = launchScalingRecommender(r.params.VirtualClusterKubeConfigPath, r.params.InputDataPath) // must launch scaling recommender in go-routine and return processId and error
+		err = launchScalingRecommender(srCtx, r.params.VirtualClusterKubeConfigPath, r.params.InputDataPath) // must launch scaling recommender in go-routine and return processId and error
 		if err != nil {
+			srCancelFn()
 			return err
 		}
+		r.scalerCancelFn = srCancelFn
 	}
-	err = r.CleanCluster(ctx)
+	err = r.CleanCluster(r.ctx)
 	if err != nil {
 		return err
 	}
-	return nil
+	return r.Replay()
 }
 
-func launchKvcl() error {
+func launchKvcl(ctx context.Context) error {
 	// TODO: change to using Start and Wait with graceful termination later
-	err := killStaleKvcl()
+	err := killProcessByName("kube-apiserver")
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("bin/kvcl")
+	err = killProcessByName("etcd")
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "bin/kvcl")
 	cmd.Env = append(os.Environ(), fmt.Sprintf("BINARY_ASSETS_DIR=%s", "bin"))
 	slog.Info("Launching kvcl", "cmd", cmd)
 	go func() {
@@ -664,15 +684,15 @@ func launchKvcl() error {
 			os.Exit(9)
 		}
 	}()
-	waitSecs := 6
+	waitSecs := 7
 	slog.Info("Waiting  for bin/kvcl to start", "waitSecs", waitSecs)
 	<-time.After(time.Duration(waitSecs) * time.Second)
 	return nil
 }
 
-func launchScalingRecommender(kubeconfigPath string, inputDataPath string) error {
+func launchScalingRecommender(ctx context.Context, kubeconfigPath string, inputDataPath string) error {
 	// TODO: change to using Start and Wait with graceful termination later
-	cmd := exec.Command("bin/scaling-recommender")
+	cmd := exec.CommandContext(ctx, "bin/scaling-recommender")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stdin
 
@@ -696,9 +716,9 @@ func launchScalingRecommender(kubeconfigPath string, inputDataPath string) error
 	return nil
 }
 
-func killStaleKvcl() error {
-	listStaleProcCmd := exec.Command("pgrep", "-f", "envtest")
-	slog.Info("Listing stale kvcl processes using command.", "listStaleProcCmd", listStaleProcCmd)
+func killProcessByName(name string) error {
+	listStaleProcCmd := exec.Command("pgrep", "-f", name)
+	slog.Info("Listing stale processes using command.", "listStaleProcCmd", listStaleProcCmd)
 	var stdout, stderr bytes.Buffer
 	listStaleProcCmd.Stdout = &stdout
 	listStaleProcCmd.Stderr = &stderr
@@ -711,12 +731,13 @@ func killStaleKvcl() error {
 	}
 	procListStr := strings.TrimSpace(stdout.String())
 	if procListStr == "" {
-		slog.Info("There are NO stale kvcl processes to kill.")
+		slog.Info("No processes found with name.", "name", name)
 		return nil
 	}
-	pidStrings := strings.FieldsFunc(procListStr, func(r rune) bool {
-		return r == '\n' || r == '\r'
-	})
+	pidStrings := strings.Fields(procListStr)
+	if len(pidStrings) == 0 {
+		slog.Info("No processes found with name.", "name", name)
+	}
 	for _, pStr := range pidStrings {
 		pid, err := strconv.Atoi(pStr)
 		if err != nil {
@@ -958,13 +979,25 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 	// deploy kube-system pods and pods that have assigned Node names first.
 	slices.SortFunc(podsToDeploy, apputil.SortPodInfoForDeployment)
 
-	for i, podInfo := range podsToDeploy {
-		pod := getCorePodFromPodInfo(podInfo)
-		deployCount := i + 1
-		err = doDeploy(ctx, clientSet, replayCount, deployCount, pod)
-		if err != nil {
+	chunks := lo.Chunk(podsToDeploy, deltaWork.DeployParallel)
+	var deployCount = 0
+	for j, chunk := range chunks {
+		var g errgroup.Group
+		for _, podInfo := range chunk {
+			pod := getCorePodFromPodInfo(podInfo)
+			deployCount++
+			g.Go(func() error { //Note: for loop lambdas were fixed in Go 1.22 https://tip.golang.org/doc/go1.22#language
+				err = doDeployPod(ctx, clientSet, replayCount, deployCount, pod)
+				if err != nil {
+					return err
+				}
+				return nil
+			})
+		}
+		if err := g.Wait(); err != nil {
 			return err
 		}
+		slog.Info("applyDeltaWork finished deploying pod chunk", "chunkIndex", j, "deployCount", deployCount)
 	}
 
 	err = deleteNamespaces(ctx, clientSet, deltaWork.NamespaceWork.ToDelete.UnsortedList()...)
@@ -975,19 +1008,19 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 	return nil
 }
 
-func doDeploy(ctx context.Context, clientSet *kubernetes.Clientset, replayCount int, deployCount int, pod corev1.Pod) error {
-	slog.Info("applyDeltaWork is deploying pod", "replayCount", replayCount, "deployCount", deployCount, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
+func doDeployPod(ctx context.Context, clientSet *kubernetes.Clientset, replayCount int, deployCount int, pod corev1.Pod) error {
 	podNew, err := clientSet.CoreV1().Pods(pod.Namespace).Create(ctx, &pod, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("applyDeltaWork cannot create the pod  %s: %w", pod.Name, err)
+		return fmt.Errorf("doDeployPod cannot create the pod  %s: %w", pod.Name, err)
 	}
 	if podNew.Spec.NodeName != "" {
 		podNew.Status.Phase = corev1.PodRunning
 		_, err = clientSet.CoreV1().Pods(pod.Namespace).UpdateStatus(ctx, podNew, metav1.UpdateOptions{})
 		if err != nil {
-			return fmt.Errorf("applyDeltaWork cannot change the pod Phase to Running for %s: %w", pod.Name, err)
+			return fmt.Errorf("doDeployPod cannot change the pod Phase to Running for %s: %w", pod.Name, err)
 		}
 	}
+	slog.Info("doDeployPod finished.", "replayCount", replayCount, "deployCount", deployCount, "pod.Name", pod.Name, "pod.Namespace", pod.Namespace, "pod.NodeName", pod.Spec.NodeName)
 	return nil
 }
 
@@ -1319,6 +1352,14 @@ func getPodNamesNotAssignedToNodes(ctx context.Context, clientSet *kubernetes.Cl
 
 func (r *defaultReplayer) Close() error {
 	// TODO: clean up cluster can be done here.
+	if r.kvclCancelFn != nil {
+		slog.Info("Cancelling kvcl...")
+		r.kvclCancelFn()
+	}
+	if r.scalerCancelFn != nil {
+		slog.Info("Cancelling scaler proces...")
+		r.scalerCancelFn()
+	}
 	return r.dataAccess.Close()
 }
 
@@ -1380,10 +1421,9 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 		err = fmt.Errorf("no existingNodes available before markTime %q", runBeginTime)
 		return
 	}
-	//adjustNodes(nodes, allPods)
-	cs.Nodes = nodes
+	cs.Nodes = filterNodeInfos(nodes)
 	cs.Pods = filterAppPods(allPods)
-	cs.AutoscalerConfig.ExistingNodes = nodes
+	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
 	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
 	if err != nil {
 		return
@@ -1397,6 +1437,22 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Hash = cs.GetHash()
 	return
+}
+
+// filterNodeInfos filters the nodes given nodes removing nodes that have the CA NoSchedule taints like`ToBeDeletedByClusterAutoscaler`
+// We do not filter CA `DeletionCandidateOfClusterAutoscaler` since the latter has PreferNoSchedule
+func filterNodeInfos(nodes []gsc.NodeInfo) []gsc.NodeInfo {
+	return lo.Filter(nodes, func(n gsc.NodeInfo, _ int) bool {
+		if len(n.Taints) == 0 {
+			return true
+		}
+		for _, t := range n.Taints {
+			if t.Key == "ToBeDeletedByClusterAutoscaler" {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 func adjustNodeTemplates(nodeTemplates map[string]gsc.NodeTemplate, kubeSystemResources corev1.ResourceList) {
@@ -1590,10 +1646,6 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 	} else {
 		waitInterval = 2 * time.Minute
 	}
-	signalFilePath := "/tmp/ca-scale-up-done.txt"
-	_ = os.Remove(signalFilePath)
-	doneCount := 0
-	doneLimit := 2
 
 	err = waitForAllPodsToHaveSomeCondition(ctx, clientSet, replayCount, waitInterval)
 	if err != nil {
@@ -1601,6 +1653,10 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 	}
 
 	waitNum := 0
+	signalFilePath := "/tmp/ca-scale-up-done.txt"
+	_ = os.Remove(signalFilePath)
+	doneCount := 0
+	doneLimit := 3
 	for {
 		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
 		virtualScaledNodeNames := lo.FilterMap(nodes, func(n corev1.Node, _ int) (nodeName string, ok bool) {
@@ -1618,8 +1674,16 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 		if err != nil {
 			return
 		}
-		unscheduledPods := lo.Filter(pods, func(item corev1.Pod, index int) bool {
-			return item.Spec.NodeName == ""
+		unscheduledPods := lo.Filter(pods, func(pod corev1.Pod, index int) bool {
+			//return item.Spec.NodeName == ""
+			_, scheduledCondition := apputil.GetPodCondition(&pod.Status, corev1.PodScheduled)
+			if scheduledCondition == nil {
+				return false
+			}
+			if scheduledCondition.Status != corev1.ConditionFalse || scheduledCondition.Reason != "Unschedulable" {
+				return false
+			}
+			return true
 		})
 		if len(unscheduledPods) == 0 {
 			if scalingOccurred {
