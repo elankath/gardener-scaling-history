@@ -1656,7 +1656,7 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 	signalFilePath := "/tmp/ca-scale-up-done.txt"
 	_ = os.Remove(signalFilePath)
 	doneCount := 0
-	doneLimit := 3
+	doneLimit := 4
 	for {
 		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
 		virtualScaledNodeNames := lo.FilterMap(nodes, func(n corev1.Node, _ int) (nodeName string, ok bool) {
@@ -1675,15 +1675,15 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 			return
 		}
 		unscheduledPods := lo.Filter(pods, func(pod corev1.Pod, index int) bool {
-			//return item.Spec.NodeName == ""
-			_, scheduledCondition := apputil.GetPodCondition(&pod.Status, corev1.PodScheduled)
-			if scheduledCondition == nil {
-				return false
-			}
-			if scheduledCondition.Status != corev1.ConditionFalse || scheduledCondition.Reason != "Unschedulable" {
-				return false
-			}
-			return true
+			return pod.Spec.NodeName == ""
+			//_, scheduledCondition := apputil.GetPodCondition(&pod.Status, corev1.PodScheduled)
+			//if scheduledCondition == nil {
+			//	return false
+			//}
+			//if scheduledCondition.Status != corev1.ConditionFalse || scheduledCondition.Reason != "Unschedulable" {
+			//	return false
+			//}
+			//return true
 		})
 		if len(unscheduledPods) == 0 {
 			if scalingOccurred {
