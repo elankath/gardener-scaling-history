@@ -41,6 +41,24 @@ func main() {
 			break
 		}
 		slog.Info("ReplayScalingEvent", "eventIndex", eventIndex, "eventTimeUnixNanos", replayEvent.EventTime.UTC().UnixNano(), "reason", replayEvent.Reason, "msg", replayEvent.Message)
+		nodes, err := dataAccess.LoadNodeInfosBefore(replayEvent.EventTime.UTC())
+		if err != nil {
+			slog.Error("cant load nodes.", "error", err)
+			return
+		}
+		for _, n := range nodes {
+			nodeLabels := n.Labels
+			_, ok := nodeLabels["topology.kubernetes.io/zone"]
+			if ok {
+				continue
+			}
+			_, ok = nodeLabels["topology.gke.io/zone"]
+			if ok {
+				continue
+			}
+			slog.Error("Cannot find gke zone for node.", "nodeInfo.RowID", n.RowID, "nodeName", n.Name, "nodeLabels", nodeLabels)
+			os.Exit(1)
+		}
 		/*
 			1725101735	e5b611b9-562c-4a84-8766-702875ff2a34	2024-08-31 10:55:35+00:00	TriggeredScaleUp	pod triggered scale-up: [{shoot--hc-eu30--prod-gc-haas-default-z2 7->8 (max: 200)}]	thanos-compactor-6c9c7dbcc9-bv992
 			1725144986	dffd240b-4cba-4307-92a7-fda5f40fde89	2024-08-31 22:56:26+00:00	TriggeredScaleUp	pod triggered scale-up: [{shoot--hc-eu30--prod-gc-haas-default-z2 7->8 (max: 200)}]	thanos-compactor-6c9c7dbcc9-wt9dn

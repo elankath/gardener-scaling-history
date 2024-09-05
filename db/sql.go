@@ -139,7 +139,7 @@ const InsertNodeInfo = `INSERT INTO node_info(
 	VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 const SelectNodeInfoBefore = `SELECT * FROM node_info 
-	WHERE SnapshotTimestamp <= ?
+	WHERE node_info.CreationTimestamp <= ?
 	AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)
 	GROUP BY node_info.Name HAVING max(RowID) ORDER BY RowID ASC`
 
