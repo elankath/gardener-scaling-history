@@ -69,6 +69,15 @@ if [[ -z "$VCA_DIR" ]]; then
   fi
 fi
 
+if [[ -z "$SR_DIR" ]]; then
+  SR_DIR="$GOPATH/src/github.com/unmarshall/scaling-recommender"
+  echo "SR_DIR (scaling recommender) is not set. Assuming default: $SR_DIR"
+  if [[ ! -d "$SR_DIR" ]]; then
+    echoErr "Default dir assumption of SR_DIR: $SR_DIR doesn't exist. Kindly check out at this path or explicitly set SR_DIR before invoking this script"
+    exit 2
+  fi
+fi
+
 echo "Building kvcl..."
 pushd "$KVCL_DIR" > /dev/null
 GOOS=$goos GOARCH=$goarch go build -o "$binDir/kvcl" cmd/main.go
@@ -79,13 +88,22 @@ echo "Building virtual cluster autoscaler..."
 pushd "$VCA_DIR/cluster-autoscaler" > /dev/null
 GOOS=$goos GOARCH=$goarch go build -o "$binDir/cluster-autoscaler" main.go
 chmod +x "$binDir/cluster-autoscaler"
+
+popd > /dev/null
+echo "Building scaling recommender..."
+pushd "$SR_DIR" > /dev/null
+GOOS=$goos GOARCH=$goarch go build -o "$binDir/scaling-recommender" main.go
+chmod +x "$binDir/scaling-recommender"
 popd
 
 echo "Building replayer..."
 
-echo "Build done. Please check binaries in $binDir"
 GOOS=$goos GOARCH=$goarch go build -v -o "$binDir/replayer" cmd/replayer/main.go
+echo "Build done. Please check binaries in $binDir"
 
+if [[ "$mode" == "local" ]]; then
+  exit 0
+fi
 
 echo "NOTE: Please ensure that Docker Desktop is started."
 chmod +x "$binDir"/replayer
