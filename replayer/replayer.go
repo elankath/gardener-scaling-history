@@ -111,8 +111,8 @@ func NewDefaultReplayer(ctx context.Context, params gsh.ReplayerParams) (gsh.Rep
 		return nil, fmt.Errorf("cannot create client config: %w", err)
 	}
 	// Create clientset
-	config.QPS = 20
-	config.Burst = 30
+	config.QPS = 30
+	config.Burst = 20
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		kvclCancelFn()

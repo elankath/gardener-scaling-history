@@ -74,7 +74,7 @@ func main() {
 		slog.Error("VIRTUAL_AUTOSCALER_CONFIG env is not set - Assuming path.", "virtualAutoscalerConfig", virtualAutoscalerConfig)
 	}
 
-	deployParallel, err := env.GetInt("DEPLOY_PARALLEL", 15)
+	deployParallel, err := env.GetInt("DEPLOY_PARALLEL", 20)
 	if err != nil {
 		slog.Error("cannot parse the env val as int", "name", "DEPLOY_PARALLEL", "error", err)
 		os.Exit(1)
