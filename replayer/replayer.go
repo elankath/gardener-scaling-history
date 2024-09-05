@@ -39,7 +39,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-	"k8s.io/klog/v2"
 	"k8s.io/utils/pointer"
 )
 
@@ -245,7 +244,7 @@ func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, snapshotID 
 			return fmt.Errorf("%s | cannot delete the virtual node %q: %w", snapshotID, vn.Name, err)
 		}
 		//delete(virtualNodesMap, vn.Name)
-		klog.V(3).Infof("%s | synchronizeNodes deleted the virtual node %q", snapshotID, vn.Name)
+		slog.Info("%s | synchronizeNodes deleted the virtual node %q", snapshotID, vn.Name)
 	}
 
 	for _, nodeInfo := range nodeInfos {
@@ -277,15 +276,15 @@ func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, snapshotID 
 		if !exists {
 			_, err = clientSet.CoreV1().Nodes().Create(context.Background(), &node, metav1.CreateOptions{})
 			if apierrors.IsAlreadyExists(err) {
-				klog.Warningf("%s | synchronizeNodes: node already exists. updating node %q", snapshotID, node.Name)
+				slog.Warn("synchronizeNodes: node already exists. updating node %q", "snapshotID", snapshotID, "nodeName", node.Name)
 				_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
 			}
 			if err == nil {
-				klog.V(3).Infof("%s | synchronizeNodes created node %q", snapshotID, node.Name)
+				slog.Info(" synchronizeNodes CREATED node.", "snapshotID", snapshotID, "nodeName", node.Name)
 			}
 		} else {
 			_, err = clientSet.CoreV1().Nodes().Update(context.Background(), &node, metav1.UpdateOptions{})
-			klog.V(3).Infof("%s | synchronizeNodes updated node %q", snapshotID, node.Name)
+			slog.Info(" synchronizeNodes UPDATED node.", "snapshotID", snapshotID, "nodeName", node.Name)
 		}
 		if err != nil {
 			return fmt.Errorf("synchronizeNodes cannot create/update node with name %q: %w", node.Name, err)
@@ -439,6 +438,7 @@ func (r *defaultReplayer) ReplayCA(ctx context.Context) error {
 			r.lastClusterSnapshot = clusterSnapshot
 			scalingOccurred, err := waitAndCheckVirtualScaling(ctx, r.clientSet, r.replayCount)
 			if !scalingOccurred {
+				slog.Info("No virtual-scaling occurred while replaying real scaling event", "replayCount", r.replayCount, "dbPath", r.params.InputDataPath, "replayEvent", replayEvent)
 				continue
 			}
 			scenario, err := r.createScenario(ctx, clusterSnapshot)
@@ -1557,16 +1557,21 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 
 	//FIXME: hacky crap
 	if len(pods) < 300 {
-		waitInterval = 40 * time.Second
-	} else if len(pods) < 1000 {
-		waitInterval = 2 * time.Minute
+		waitInterval = 50 * time.Second
 	} else {
-		waitInterval = 4 * time.Minute
+		waitInterval = 2 * time.Minute
 	}
-	waitNum := 0
 	signalFilePath := "/tmp/ca-scale-up-done.txt"
 	_ = os.Remove(signalFilePath)
 	doneCount := 0
+	doneLimit := 2
+
+	err = waitForAllPodsToHaveSomeCondition(ctx, clientSet, replayCount, waitInterval)
+	if err != nil {
+		return
+	}
+
+	waitNum := 0
 	for {
 		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
 		virtualScaledNodeNames := lo.FilterMap(nodes, func(n corev1.Node, _ int) (nodeName string, ok bool) {
@@ -1595,16 +1600,20 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 			}
 			return
 		}
-		slog.Info("waitAndCheckVirtualScaling waiting for unscheduledPods to be scheduled.", "waitNum", waitNum, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "waitInterval", waitInterval, "replayCount", replayCount)
+		slog.Info("waitAndCheckVirtualScaling waiting for unscheduledPods to be scheduled.", "replayCount", replayCount, "waitNum", waitNum, "numUnscheduledPods", len(unscheduledPods), "numVirtualScaledNodes", len(virtualScaledNodeNames), "waitInterval", waitInterval, "replayCount", replayCount, "doneCount", doneCount, "doneLimit", doneLimit)
 		select {
+		case <-ctx.Done():
+			slog.Warn("waitAndCheckVirtualScaling received context cancelled or timed out:", "waitNum", waitNum, "error", ctx.Err(), "replayCount", replayCount)
+			err = ctx.Err()
 		case <-time.After(waitInterval):
-			slog.Info("waitAndCheckVirtualScaling finished wait.", "waitNum", waitNum, "waitInterval", waitInterval, "numVirtualScaledNodeNames", len(virtualScaledNodeNames), "replayCount", replayCount)
+			slog.Debug("waitAndCheckVirtualScaling finished wait.", "replayCount", replayCount, "waitNum", waitNum, "waitInterval", waitInterval, "numVirtualScaledNodeNames", len(virtualScaledNodeNames), "replayCount", replayCount)
 			var data []byte
 			data, err = os.ReadFile(signalFilePath)
 			if data != nil {
 				message := string(data)
-				slog.Warn("waitForVirtualCARefresh obtained done signal.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath, "doneCount", doneCount)
-				if doneCount >= 1 {
+				slog.Info("waitAndCheckVirtualScaling obtained done signal.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath, "doneCount", doneCount)
+				if doneCount >= doneLimit {
+					slog.Warn("waitAndCheckVirtualScaling obtained more than doneLimit done signal, returning.", "waitNum", waitNum, "message", message, "signalFilePath", signalFilePath, "doneCount", doneCount, "doneLimit", doneLimit)
 					return
 				} else {
 					doneCount++
@@ -1615,11 +1624,49 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 				slog.Warn("waitAndCheckVirtualScaling encountered error reading signal", "waitNum", waitNum, "error", err, "signalFilePath", signalFilePath)
 			}
 			waitNum++
-		case <-ctx.Done():
-			slog.Warn("waitAndCheckVirtualScaling received context cancelled or timed out:", "waitNum", waitNum, "error", ctx.Err(), "replayCount", replayCount)
-			err = ctx.Err()
 		}
 	}
+}
+
+func waitForAllPodsToHaveSomeCondition(ctx context.Context, clientSet *kubernetes.Clientset, replayCount int, waitInterval time.Duration) (err error) {
+	// first wait till until all deployed Pods have a Pod condition.
+	conditionWaitTimedoutCh := time.After(10 * time.Minute)
+	var allPods []corev1.Pod
+	waitNum := 0
+outer:
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Warn("waitForAllPodsToHaveSomeCondition received context cancelled or timed out:", "waitNum", waitNum, "error", ctx.Err(), "replayCount", replayCount)
+			err = ctx.Err()
+			return
+		case <-conditionWaitTimedoutCh:
+			slog.Error("waitForAllPodsToHaveSomeCondition timedout waiting for all deployed Pods to have a Pod Condition.", "replayCount", replayCount, "waitNum", waitNum, "waitInterval", waitInterval)
+			err = fmt.Errorf("timed out waiting for all deployed Pdos to have a Pod condition for replay %d", replayCount)
+			return
+		case <-time.After(waitInterval):
+			allPods, err = clientutil.ListAllPods(ctx, clientSet)
+			if err != nil {
+				return
+			}
+			numPods := len(allPods)
+			numPodsWithoutConditions := 0
+			for _, p := range allPods {
+				if len(p.Status.Conditions) == 0 {
+					numPodsWithoutConditions++
+				}
+			}
+			if numPodsWithoutConditions > 0 {
+				slog.Info("waitForAllPodsToHaveSomeCondition saw that some pods don't have conditions, waiting....", "numPodsWithoutConditions", numPodsWithoutConditions, "numPods", numPods)
+				<-time.After(waitInterval)
+				continue
+			} else {
+				slog.Info("waitForAllPodsToHaveSomeCondition saw that all pods have conditions.", "numPods", numPods)
+				break outer
+			}
+		}
+	}
+	return
 }
 
 func filterAppPods(pods []gsc.PodInfo) []gsc.PodInfo {
