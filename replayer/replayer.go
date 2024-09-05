@@ -49,8 +49,8 @@ var ErrNoScenario = errors.New("no-scenario")
 
 type ReplayMode int
 
-const ReplayFromDBMode ReplayMode = 0
-const ReplayFromReportMode ReplayMode = 1
+const ReplayCAMode ReplayMode = 0
+const ReplayScalingRecommenderMode ReplayMode = 1
 
 type defaultReplayer struct {
 	replayMode               ReplayMode
@@ -60,8 +60,7 @@ type defaultReplayer struct {
 	snapshotCount            int
 	replayCount              int
 	lastClusterSnapshot      gsc.ClusterSnapshot
-	report                   *gsh.ReplayReport
-	reportPath               string
+	reportPathFormat         string
 	nextScaleUpRunBeginIndex int
 	scaleUpEvents            []gsc.EventInfo
 	currentEventIndex        int
@@ -90,15 +89,15 @@ func NewDefaultReplayer(params gsh.ReplayerParams) (gsh.Replayer, error) {
 	var replayMode ReplayMode
 	var dataAccess *db.DataAccess
 	if strings.HasSuffix(params.InputDataPath, ".db") {
-		replayMode = ReplayFromDBMode
+		replayMode = ReplayCAMode
 		dataAccess = db.NewDataAccess(params.InputDataPath)
 	} else if strings.HasSuffix(params.InputDataPath, ".json") {
-		replayMode = ReplayFromReportMode
+		replayMode = ReplayScalingRecommenderMode
 	} else {
 		return nil, fmt.Errorf("invalid DB path for DB-report %q", params.InputDataPath)
 	}
 
-	if replayMode == ReplayFromDBMode {
+	if replayMode == ReplayCAMode {
 		err := launchKvcl()
 		if err != nil {
 			return nil, err
@@ -138,15 +137,15 @@ func writeAutoscalerConfig(id string, autoscalerConfig gsc.AutoscalerConfig, pat
 }
 
 func (r *defaultReplayer) Replay(ctx context.Context) error {
-	if r.replayMode == ReplayFromDBMode {
-		return r.ReplayFromDB(ctx)
+	if r.replayMode == ReplayCAMode {
+		return r.ReplayCA(ctx)
 	} else {
 		slog.Info("Running scenario report against scaling-recommender. Please ensure that the scaling-recommender has been started.")
-		return r.ReplayFromReport(ctx)
+		return r.ReplayScalingRecommender(ctx)
 	}
 }
 
-func (r *defaultReplayer) ReplayFromReport(ctx context.Context) error {
+func (r *defaultReplayer) ReplayScalingRecommender(ctx context.Context) error {
 	for _, s := range r.inputScenarios {
 		err := writeAutoscalerConfig(s.ClusterSnapshot.ID, s.ClusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
 		if err != nil {
@@ -175,7 +174,7 @@ func (r *defaultReplayer) ReplayFromReport(ctx context.Context) error {
 				return err
 			}
 		}
-		err = r.appendScenario(outputScenario, s.ClusterSnapshot)
+		err = r.writeScenario(outputScenario, s.ClusterSnapshot)
 		if err != nil {
 			return err
 		}
@@ -352,7 +351,7 @@ func buildReadyConditions() []corev1.NodeCondition {
 	}
 }
 
-func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
+func (r *defaultReplayer) ReplayCA(ctx context.Context) error {
 	loopNum := 0
 	for {
 		select {
@@ -364,7 +363,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 			replayEvent := r.getNextReplayEvent()
 			replayMarkTime := replayEvent.EventTime.UTC()
 			replayMarkTimeNanos := replayMarkTime.UnixNano()
-			slog.Info("ReplayFromDB is considering replayEvent.", "replayEvent", replayEvent, "replayEventIndex", r.currentEventIndex, "replayMarkTimeNanos", replayMarkTimeNanos)
+			slog.Info("ReplayCA is considering replayEvent.", "replayEvent", replayEvent, "replayEventIndex", r.currentEventIndex, "replayMarkTimeNanos", replayMarkTimeNanos)
 			if replayMarkTime.IsZero() {
 				slog.Info("no more scale ups to be replayed. Exiting", "loopNum", loopNum)
 				return nil
@@ -451,7 +450,7 @@ func (r *defaultReplayer) ReplayFromDB(ctx context.Context) error {
 				}
 			}
 			r.lastScenario = scenario
-			err = r.appendScenario(scenario, clusterSnapshot)
+			err = r.writeScenario(scenario, clusterSnapshot)
 			if err != nil {
 				return err
 			}
@@ -592,7 +591,7 @@ func clearPods(ctx context.Context, c *kubernetes.Clientset) error {
 
 func (r *defaultReplayer) Start(ctx context.Context) error {
 	var err error
-	if r.replayMode == ReplayFromDBMode {
+	if r.replayMode == ReplayCAMode {
 		err = r.dataAccess.Init()
 		if err != nil {
 			return err
@@ -605,8 +604,8 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 			return fmt.Errorf("no TriggeredScaleUp events found in recorded data")
 		}
 		slog.Info("Replayer started in replayFromDB mode")
-		reportFileName := apputil.FilenameWithoutExtension(r.params.InputDataPath) + "-db-replay.json"
-		r.reportPath = path.Join(r.params.ReportDir, reportFileName)
+		reportFileFormat := apputil.FilenameWithoutExtension(r.params.InputDataPath) + "_ca-replay-%d.json"
+		r.reportPathFormat = path.Join(r.params.ReportDir, reportFileFormat)
 		// Launch the VCA using the saved arguments.
 		caSettings, err := r.dataAccess.LoadCASettingsBefore(time.Now().UTC())
 		if err != nil {
@@ -632,9 +631,12 @@ func (r *defaultReplayer) Start(ctx context.Context) error {
 		}
 		slog.Info("Replayer started in replayFromReport mode")
 
-		fileNameWithoutExtension := apputil.FilenameWithoutExtension(r.params.InputDataPath)
-		reportFileName := strings.TrimSuffix(fileNameWithoutExtension, "-db-replay") + "-report-replay.json"
-		r.reportPath = path.Join(r.params.ReportDir, reportFileName)
+		//reportFileName := strings.TrimSuffix(fileNameWithoutExtension, "_ca-replay") + "-report-replay.json" //OLD format
+		reportFileFormat, err := GetReplayScalingRecommenderReportFormat(r.params.InputDataPath)
+		if err != nil {
+			return err
+		}
+		r.reportPathFormat = path.Join(r.params.ReportDir, reportFileFormat)
 	}
 	err = r.CleanCluster(ctx)
 	if err != nil {
@@ -1393,24 +1395,19 @@ func getNodeGroupsByPoolZone(nodeGroupsByName map[string]gsc.NodeGroupInfo) map[
 	return poolZoneMap
 }
 
-func (r *defaultReplayer) appendScenario(scenario gsh.Scenario, clusterSnapshot gsc.ClusterSnapshot) error {
-	if r.report == nil {
-		r.report = &gsh.ReplayReport{
-			StartTime: clusterSnapshot.SnapshotTime,
-			Scenarios: make([]gsh.Scenario, 0),
-		}
-	}
-	r.report.Scenarios = append(r.report.Scenarios, scenario)
-	slog.Info("appended scenario for", "snapshotTime", clusterSnapshot.SnapshotTime, "scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
-	rBytes, err := json.Marshal(r.report)
+func (r *defaultReplayer) writeScenario(scenario gsh.Scenario, clusterSnapshot gsc.ClusterSnapshot) error {
+	reportPath := fmt.Sprintf(r.reportPathFormat, clusterSnapshot.Number)
+	//slog.Info("appended scenario for", "snapshotTime", clusterSnapshot.SnapshotTime, "scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
+	rBytes, err := json.Marshal(scenario)
 	if err != nil {
-		return fmt.Errorf("cannot marshal the scenario report: %w", err)
+		return fmt.Errorf("cannot marshal the scenario report for snapshot %d: %w", clusterSnapshot.Number, err)
 	}
-
-	err = os.WriteFile(r.reportPath, rBytes, 0666)
+	err = os.WriteFile(reportPath, rBytes, 0666)
 	if err != nil {
-		return fmt.Errorf("cannot write to report to file %q: %w", r.reportPath, err)
+		return fmt.Errorf("cannot write to report to file %q: %w", r.reportPathFormat, err)
 	}
+	slog.Info("Wrote scenario report.", "reportPath", reportPath, "snapshotTime", clusterSnapshot.SnapshotTime,
+		"scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
 	return nil
 }
 
@@ -1671,5 +1668,17 @@ func GetNextScalingRun(scaleUpEvents []gsc.EventInfo, lastRun ScalingRun, runInt
 		"run.EndIndex", run.EndIndex,
 		"run.BeginEvent", scaleUpEvents[run.BeginIndex],
 		"run.EndEvent", scaleUpEvents[run.EndIndex])
+	return
+}
+
+func GetReplayScalingRecommenderReportFormat(replayCAReportPath string) (reportFormat string, err error) {
+	fileNameWithoutExtension := apputil.FilenameWithoutExtension(replayCAReportPath)
+	idx := strings.LastIndex(fileNameWithoutExtension, "_")
+	if idx == -1 {
+		err = fmt.Errorf("invalid CA replay report %q", replayCAReportPath)
+	}
+	fullClusterName := fileNameWithoutExtension[0:idx]
+	reportFormat = fullClusterName + "_replay-sr-%d.json"
+	//.strings.TrimSuffix(fileNameWithoutExtension, "_ca-replay") + "-report-replay.json"
 	return
 }

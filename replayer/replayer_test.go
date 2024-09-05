@@ -72,3 +72,16 @@ func TestIncrementMap(t *testing.T) {
 	mp["a"]++
 	assert.Equal(t, 2, mp["a"])
 }
+
+func TestGetReplayScalingRecommenderReportFormat(t *testing.T) {
+	replayCAReportPath := "/tmp/live_hc-eu30_prod-gc-haas_ca-replay-1.json"
+	replaySRReportFmt, err := GetReplayScalingRecommenderReportFormat(replayCAReportPath)
+	if err != nil {
+		return
+	}
+	assert.Nil(t, err)
+	t.Logf("replayCAReportPath: %q", replaySRReportFmt)
+	assert.Equal(t, "live_hc-eu30_prod-gc-haas_replay-sr-%d.json", replaySRReportFmt)
+}
+
+//
