@@ -1425,6 +1425,10 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 	}
 	cs.Nodes = filterNodeInfos(nodes)
 	cs.Pods = filterAppPods(allPods)
+	nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
+		return n.Name
+	})
+	clearNodeNamesNotIn(cs.Pods, nodeNames)
 	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
 	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
 	if err != nil {
@@ -1439,6 +1443,16 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Hash = cs.GetHash()
 	return
+}
+
+func clearNodeNamesNotIn(pods []gsc.PodInfo, nodeNames []string) {
+	nameSet := sets.New(nodeNames...)
+	for i := range pods {
+		if !nameSet.Has(pods[i].Spec.NodeName) {
+			pods[i].NodeName = ""
+			pods[i].Spec.NodeName = ""
+		}
+	}
 }
 
 // filterNodeInfos filters the nodes given nodes removing nodes that have the CA NoSchedule taints like`ToBeDeletedByClusterAutoscaler`
