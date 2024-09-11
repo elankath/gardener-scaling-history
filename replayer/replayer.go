@@ -153,6 +153,12 @@ func (r *defaultReplayer) Replay() error {
 	}
 }
 
+func adjustSchedulerName(pods []gsc.PodInfo) {
+	for i := 0; i < len(pods); i++ {
+		pods[i].Spec.SchedulerName = "bin-packing-scheduler"
+	}
+}
+
 func (r *defaultReplayer) ReplayScalingRecommender() error {
 	//for _, s := range r.inputScenario {
 	s := r.inputScenario
@@ -165,6 +171,7 @@ func (r *defaultReplayer) ReplayScalingRecommender() error {
 	if err != nil {
 		return err
 	}
+	adjustSchedulerName(s.ClusterSnapshot.Pods)
 	_, err = r.computeAndApplyDeltaWork(r.ctx, s.ClusterSnapshot, nil)
 	if err != nil {
 		return err
@@ -175,6 +182,11 @@ func (r *defaultReplayer) ReplayScalingRecommender() error {
 	}
 
 	r.lastClusterSnapshot = s.ClusterSnapshot
+	numPods := len(s.ClusterSnapshot.Pods)
+	stabilizeInterval := 5 * time.Second
+	stabilizeInterval = stabilizeInterval + time.Duration(numPods)*100*time.Millisecond
+	slog.Info("waiting for a stabilize interval", "stabilizeInterval", stabilizeInterval)
+	<-time.After(stabilizeInterval)
 	outputScenario, err := r.createScenario(r.ctx, s.ClusterSnapshot)
 	if err != nil {
 		if errors.Is(err, ErrNoScenario) {
@@ -205,7 +217,7 @@ func postClusterSnapshot(cs gsc.ClusterSnapshot) error {
 	}
 	req.Header.Set("Content-Type", "application/json")
 	client := http.Client{
-		Timeout: 5 * time.Minute,
+		Timeout: 0,
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		},
@@ -701,7 +713,8 @@ func launchScalingRecommender(ctx context.Context, kubeconfigPath string, inputD
 	if strings.Contains(inputDataPath, "-gc-") {
 		provider = "gcp"
 	}
-	cmd.Args = append(cmd.Args, fmt.Sprintf("--target-kvcl-kubeconfig=%s", kubeconfigPath), fmt.Sprintf("--provider=%s", provider), fmt.Sprintf("--binary-assets-path=%s", "/Users/i544000/go/src/github.com/elankath/gardener-scaling-history/bin"))
+	//cmd.Args = append(cmd.Args, fmt.Sprintf("--target-kvcl-kubeconfig=%s", kubeconfigPath), fmt.Sprintf("--provider=%s", provider), fmt.Sprintf("--binary-assets-path=%s", "/Users/i544000/go/src/github.com/elankath/gardener-scaling-history/bin"))
+	cmd.Args = append(cmd.Args, fmt.Sprintf("--target-kvcl-kubeconfig=%s", kubeconfigPath), fmt.Sprintf("--provider=%s", provider), fmt.Sprintf("--binary-assets-path=%s", "bin"))
 	slog.Info("Launching scaling recommender", "cmd", cmd)
 	go func() {
 		err := cmd.Run()
@@ -977,6 +990,7 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 	}
 
 	podsToDeploy := deltaWork.PodWork.ToDeploy
+	deltaWork.DeployParallel = 1
 
 	// deploy kube-system pods and pods that have assigned Node names first.
 	slices.SortFunc(podsToDeploy, apputil.SortPodInfoForDeployment)
@@ -1558,7 +1572,8 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 	for _, pod := range pods {
 		podInfo := recorder.PodInfoFromPod(&pod)
 		// FIXME: BUGGY
-		if podInfo.PodScheduleStatus == gsc.PodUnscheduled || podInfo.PodScheduleStatus == gsc.PodSchedulePending {
+		//if podInfo.PodScheduleStatus == gsc.PodUnscheduled || podInfo.PodScheduleStatus == gsc.PodSchedulePending || pod.Spec.NodeName == "" {
+		if pod.Spec.NodeName == "" {
 			scenario.ScalingResult.PendingUnscheduledPods = append(scenario.ScalingResult.PendingUnscheduledPods, podInfo)
 		}
 	}
