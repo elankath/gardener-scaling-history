@@ -177,9 +177,9 @@ func (r *defaultReplayer) ReplayScalingRecommender() error {
 		return err
 	}
 	writeClusterSnapshot(s.ClusterSnapshot)
-	stabilizeInterval := 45 * time.Second
+	stabilizeInterval := 30 * time.Second
 	numPods := len(s.ClusterSnapshot.Pods)
-	stabilizeInterval = stabilizeInterval + time.Duration(numPods)*300*time.Millisecond
+	stabilizeInterval = stabilizeInterval + time.Duration(numPods)*200*time.Millisecond
 	slog.Info("waiting for a stabilize interval before posting cluster snapshot", "stabilizeInterval", stabilizeInterval)
 	<-time.After(stabilizeInterval)
 	if err = postClusterSnapshot(s.ClusterSnapshot); err != nil {
