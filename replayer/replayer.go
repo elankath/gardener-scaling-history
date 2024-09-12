@@ -177,15 +177,17 @@ func (r *defaultReplayer) ReplayScalingRecommender() error {
 		return err
 	}
 	writeClusterSnapshot(s.ClusterSnapshot)
+	stabilizeInterval := 45 * time.Second
+	numPods := len(s.ClusterSnapshot.Pods)
+	stabilizeInterval = stabilizeInterval + time.Duration(numPods)*300*time.Millisecond
+	slog.Info("waiting for a stabilize interval before posting cluster snapshot", "stabilizeInterval", stabilizeInterval)
+	<-time.After(stabilizeInterval)
 	if err = postClusterSnapshot(s.ClusterSnapshot); err != nil {
 		return err
 	}
 
 	r.lastClusterSnapshot = s.ClusterSnapshot
-	numPods := len(s.ClusterSnapshot.Pods)
-	stabilizeInterval := 5 * time.Second
-	stabilizeInterval = stabilizeInterval + time.Duration(numPods)*100*time.Millisecond
-	slog.Info("waiting for a stabilize interval", "stabilizeInterval", stabilizeInterval)
+	slog.Info("waiting for a stabilize interval after posting cluster snapshot", "stabilizeInterval", stabilizeInterval)
 	<-time.After(stabilizeInterval)
 	outputScenario, err := r.createScenario(r.ctx, s.ClusterSnapshot)
 	if err != nil {
@@ -433,15 +435,6 @@ func (r *defaultReplayer) ReplayCA() error {
 				slog.Info("RESET autoscaler config hash to clear virtual scaled nodes", "loopNum", loopNum, "replayCount", r.replayCount)
 				clusterSnapshot.AutoscalerConfig.Hash = rand.String(6)
 			}
-			deltaWork, err := computeDeltaWork(r.ctx, r.clientSet, clusterSnapshot, deletedPendingPods)
-			if err != nil {
-				return err
-			}
-			deltaWork.DeployParallel = r.params.DeployParallel
-			if deltaWork.IsEmpty() {
-				slog.Info("deltaWork is empty. Skipping this loop.", "loopNum", loopNum, "replayCount", r.replayCount)
-				continue
-			}
 			if r.lastClusterSnapshot.AutoscalerConfig.Hash != clusterSnapshot.AutoscalerConfig.Hash {
 				slog.Info("writing autoscaler config", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
 				err = writeAutoscalerConfigAndWaitForSignal(r.ctx, clusterSnapshot.ID, clusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
@@ -451,6 +444,16 @@ func (r *defaultReplayer) ReplayCA() error {
 			} else {
 				slog.Info("skip writeAutoscalerConfigAndWaitForSignal since hash unchanged", "hash", clusterSnapshot.AutoscalerConfig.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
 			}
+			deltaWork, err := computeDeltaWork(r.ctx, r.clientSet, clusterSnapshot, deletedPendingPods)
+			if err != nil {
+				return err
+			}
+			deltaWork.DeployParallel = r.params.DeployParallel
+			if deltaWork.IsEmpty() {
+				slog.Info("deltaWork is empty. Skipping this loop.", "loopNum", loopNum, "replayCount", r.replayCount)
+				continue
+			}
+
 			err = applyDeltaWork(r.ctx, r.clientSet, deltaWork)
 			if err != nil {
 				return err
@@ -1460,12 +1463,12 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 }
 
 func clearNodeNamesNotIn(pods []gsc.PodInfo, nodeNames []string) {
-	nameSet := sets.New(nodeNames...)
+	//nameSet := sets.New(nodeNames...)
 	for i := range pods {
-		if !nameSet.Has(pods[i].Spec.NodeName) {
-			pods[i].NodeName = ""
-			pods[i].Spec.NodeName = ""
-		}
+		//if !nameSet.Has(pods[i].Spec.NodeName) {
+		pods[i].NodeName = ""
+		pods[i].Spec.NodeName = ""
+		//}
 	}
 }
 
