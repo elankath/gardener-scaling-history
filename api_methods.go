@@ -60,6 +60,21 @@ func (rp RecorderParams) String() string {
 	return fmt.Sprintf("(Landscape:%s,ShootNamespace:%s,DBDir:%s)", rp.Landscape, rp.ShootNameSpace, rp.DBDir)
 }
 
+func (sr ScalingResult) GetResourceStat() (stats ResourceStats, err error) {
+	for _, node := range sr.ScaledUpNodes {
+		rl, ok := sr.ScaledUpNodesUtilization[node.Name]
+		if !ok {
+			//err = fmt.Errorf("cannot find utilization for node %s", node.Name)
+			continue
+		}
+		stats.TotalUtilMem.Add(*rl.Memory())
+		stats.TotalUtilCPU.Add(*rl.Cpu())
+		stats.AvailAllocMem.Add(*node.Allocatable.Memory())
+		stats.AvailAllocCPU.Add(*node.Allocatable.Cpu())
+	}
+	return
+}
+
 //import (
 //	"crypto/md5"
 //	"encoding/binary"

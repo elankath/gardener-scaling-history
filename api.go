@@ -4,6 +4,7 @@ import (
 	"github.com/elankath/gardener-scaling-common"
 	"io"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"time"
 )
 
@@ -73,6 +74,13 @@ type Scenario struct {
 	BeginTime       time.Time
 	ClusterSnapshot gsc.ClusterSnapshot
 	ScalingResult   ScalingResult
+}
+
+type ResourceStats struct {
+	TotalUtilCPU  resource.Quantity
+	TotalUtilMem  resource.Quantity
+	AvailAllocCPU resource.Quantity
+	AvailAllocMem resource.Quantity
 }
 
 type ReplayReport struct {

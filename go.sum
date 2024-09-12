@@ -8,6 +8,8 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/elankath/gardener-scaling-common v0.0.0-20240905073535-8f8821aeedaa h1:4J280Kdoz7FIr2AAlBLN/TIlsSJYZ+xk8NyQ2JurXNw=
 github.com/elankath/gardener-scaling-common v0.0.0-20240905073535-8f8821aeedaa/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
+github.com/elankath/gardener-scaling-common v0.0.0-20240912081638-9261758a905e h1:Cq5wOhMK5TMvr4/MFw0XLaklAEwdZKNRrDyqh42cdh8=
+github.com/elankath/gardener-scaling-common v0.0.0-20240912081638-9261758a905e/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
 github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
 github.com/emicklei/go-restful/v3 v3.11.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/evanphx/json-patch v4.12.0+incompatible h1:4onqiflcdA9EOZ4RxV643DvftH5pOlLGNtQ5lPWQu84=
