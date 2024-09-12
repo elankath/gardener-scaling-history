@@ -304,3 +304,14 @@ func GetPodConditionFromList(conditions []corev1.PodCondition, conditionType cor
 	}
 	return -1, nil
 }
+
+func GetClusterName(replayReportPath string) (fullClusterName string, err error) {
+	fileNameWithoutExtension := FilenameWithoutExtension(replayReportPath)
+	idx := strings.LastIndex(fileNameWithoutExtension, "_")
+	if idx == -1 {
+		err = fmt.Errorf("invalid CA replay report %q", replayReportPath)
+		return
+	}
+	fullClusterName = fileNameWithoutExtension[0:idx]
+	return
+}

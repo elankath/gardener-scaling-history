@@ -11,6 +11,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"io"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/utils/set"
 	"log/slog"
 	"net/http"
 	"os"
@@ -174,12 +175,12 @@ func (r *defaultReplayer) ReplayScalingRecommender() error {
 	if err != nil {
 		return err
 	}
-	adjustSchedulerName(s.ClusterSnapshot.Pods)
+	//adjustSchedulerName(s.ClusterSnapshot.Pods)
 	_, err = r.computeAndApplyDeltaWork(r.ctx, s.ClusterSnapshot, nil)
 	if err != nil {
 		return err
 	}
-	writeClusterSnapshot(s.ClusterSnapshot)
+	//writeClusterSnapshot(s.ClusterSnapshot)
 	stabilizeInterval := 30 * time.Second
 	numPods := len(s.ClusterSnapshot.Pods)
 	stabilizeInterval = stabilizeInterval + time.Duration(numPods)*200*time.Millisecond
@@ -411,7 +412,7 @@ func (r *defaultReplayer) ReplayCA() error {
 			//r.lastScalingRun = replayRun
 
 			// UNCOMMENT ME FOR DIAGNOSIS ONLY
-			writeClusterSnapshot(clusterSnapshot)
+			//writeClusterSnapshot(clusterSnapshot)
 
 			if clusterSnapshot.Hash == r.lastClusterSnapshot.Hash {
 				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash, "loopNum", loopNum, "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "replayCount", r.replayCount)
@@ -1551,13 +1552,17 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 	preVirtualNodesMap := lo.KeyBy(clusterSnapshot.Nodes, func(item gsc.NodeInfo) string {
 		return item.Name
 	})
+	var scaledUpNodeNames = make(set.Set[string])
+	var allNodeNames = make(set.Set[string])
 	for _, node := range postVirtualNodes {
+		allNodeNames.Insert(node.Name)
 		_, ok := preVirtualNodesMap[node.Name]
 		if ok {
 			continue
 		}
 		//TODO how to replay csi nodes ?
 		scaledUpNodes = append(scaledUpNodes, gsh.NodeInfoFromNode(&node, 0))
+		scaledUpNodeNames.Insert(node.Name)
 	}
 	if len(scaledUpNodes) == 0 {
 		slog.Warn("NO SCALE-UP in this replay interval, so skipping appending this scenario to report", "snapshotTime", clusterSnapshot.SnapshotTime)
@@ -1582,14 +1587,30 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 		scenario.ScalingResult.ScaledUpNodeGroups[ng.Name]++
 	}
 	pods, err := clientutil.ListAllPods(ctx, r.clientSet)
+	nodeUtilizationMap := make(map[string]corev1.ResourceList)
+	emptyNodeNames := allNodeNames.Clone()
 	for _, pod := range pods {
 		podInfo := recorder.PodInfoFromPod(&pod)
 		// FIXME: BUGGY
 		//if podInfo.PodScheduleStatus == gsc.PodUnscheduled || podInfo.PodScheduleStatus == gsc.PodSchedulePending || pod.Spec.NodeName == "" {
 		if pod.Spec.NodeName == "" {
 			scenario.ScalingResult.PendingUnscheduledPods = append(scenario.ScalingResult.PendingUnscheduledPods, podInfo)
+		} else {
+			emptyNodeNames.Delete(pod.Spec.NodeName)
 		}
+		if !scaledUpNodeNames.Has(pod.Spec.NodeName) {
+			continue
+		}
+		util, ok := nodeUtilizationMap[pod.Spec.NodeName]
+		if !ok {
+			util = make(corev1.ResourceList)
+		}
+		sumPodRequests := gsc.CumulatePodRequests(&pod)
+		util = gsc.SumResources([]corev1.ResourceList{sumPodRequests, util})
+		nodeUtilizationMap[pod.Spec.NodeName] = util
 	}
+	scenario.ScalingResult.ScaledUpNodesUtilization = nodeUtilizationMap
+	scenario.ScalingResult.EmptyNodeNames = emptyNodeNames.SortedList()
 
 	return
 }
@@ -1849,12 +1870,10 @@ func GetNextScalingRun(scaleUpEvents []gsc.EventInfo, lastRun ScalingRun, runInt
 }
 
 func GetReplayScalingRecommenderReportFormat(replayCAReportPath string) (reportFormat string, err error) {
-	fileNameWithoutExtension := apputil.FilenameWithoutExtension(replayCAReportPath)
-	idx := strings.LastIndex(fileNameWithoutExtension, "_")
-	if idx == -1 {
-		err = fmt.Errorf("invalid CA replay report %q", replayCAReportPath)
+	fullClusterName, err := apputil.GetClusterName(replayCAReportPath)
+	if err != nil {
+		return
 	}
-	fullClusterName := fileNameWithoutExtension[0:idx]
 	reportFormat = fullClusterName + "_replay-sr-%d.json"
 	//.strings.TrimSuffix(fileNameWithoutExtension, "_ca-replay") + "-report-replay.json"
 	return

@@ -62,9 +62,11 @@ type ReplayerParams struct {
 //}
 
 type ScalingResult struct {
-	ScaledUpNodeGroups     map[string]int
-	ScaledUpNodes          []gsc.NodeInfo
-	PendingUnscheduledPods []gsc.PodInfo
+	ScaledUpNodeGroups       map[string]int
+	ScaledUpNodes            []gsc.NodeInfo
+	PendingUnscheduledPods   []gsc.PodInfo
+	ScaledUpNodesUtilization map[string]corev1.ResourceList
+	EmptyNodeNames           []string
 }
 
 type Scenario struct {
