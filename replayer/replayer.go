@@ -100,10 +100,12 @@ func NewDefaultReplayer(ctx context.Context, params gsh.ReplayerParams) (gsh.Rep
 		return nil, fmt.Errorf("invalid DB path for DB-report %q", params.InputDataPath)
 	}
 	kvclCtx, kvclCancelFn := context.WithCancel(ctx)
-	err := launchKvcl(kvclCtx)
-	if err != nil {
-		kvclCancelFn()
-		return nil, err
+	if os.Getenv("NO_AUTO_LAUNCH") == "" {
+		err := launchKvcl(kvclCtx)
+		if err != nil {
+			kvclCancelFn()
+			return nil, err
+		}
 	}
 	config, err := clientcmd.BuildConfigFromFlags("", params.VirtualClusterKubeConfigPath)
 	if err != nil {
@@ -118,6 +120,7 @@ func NewDefaultReplayer(ctx context.Context, params gsh.ReplayerParams) (gsh.Rep
 		kvclCancelFn()
 		return nil, fmt.Errorf("cannot create clientset: %w", err)
 	}
+
 	return &defaultReplayer{
 		ctx:          ctx,
 		kvclCancelFn: kvclCancelFn,
@@ -665,12 +668,16 @@ func (r *defaultReplayer) Start() error {
 		}
 		srCtx, srCancelFn := context.WithCancel(r.ctx)
 		r.reportPathFormat = path.Join(r.params.ReportDir, reportFileFormat)
-		err = launchScalingRecommender(srCtx, r.params.VirtualClusterKubeConfigPath, r.params.InputDataPath) // must launch scaling recommender in go-routine and return processId and error
-		if err != nil {
-			srCancelFn()
-			return err
+		if os.Getenv("NO_AUTO_LAUNCH") == "" {
+			err = launchScalingRecommender(srCtx, r.params.VirtualClusterKubeConfigPath, r.params.InputDataPath) // must launch scaling recommender in go-routine and return processId and error
+			if err != nil {
+				srCancelFn()
+				return err
+			}
+			r.scalerCancelFn = srCancelFn
+		} else {
+			slog.Info("NO_LAUNCH_SR is set. Please launch scaling-recommender separately.")
 		}
-		r.scalerCancelFn = srCancelFn
 	}
 	err = r.CleanCluster(r.ctx)
 	if err != nil {
@@ -1314,6 +1321,9 @@ func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
 			}
 		}
 	}
+	new.Spec.PriorityClassName = ""
+	new.Spec.PreemptionPolicy = nil
+	new.Spec.Priority = nil
 	new.NodeName = ""
 	new.Spec.NodeName = ""
 	return
