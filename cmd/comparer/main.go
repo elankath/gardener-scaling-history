@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/dustin/go-humanize"
 	gsc "github.com/elankath/gardener-scaling-common"
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
@@ -175,9 +176,12 @@ func sumPrices(priceAccess pricing.InstancePricingAccess, nodes []gsc.NodeInfo) 
 }
 
 func PrintStats(sb *strings.Builder, stat gsh.ResourceStats) {
-	fmt.Fprintf(sb, "* TotalAvailAllocCPU: %s\n", stat.AvailAllocCPU.String())
-	fmt.Fprintf(sb, "* TotalUtilCPU: %s\n", stat.TotalUtilCPU.String())
-	avaiAlloc := stat.AvailAllocMem.AsApproximateFloat64() / 1e9
-	fmt.Fprintf(sb, "* TotalAvailAllocMem: %.2fGi\n", avaiAlloc)
-	fmt.Fprintf(sb, "* TotalUtilMem: %s\n", stat.TotalUtilMem.String())
+	_, _ = fmt.Fprintf(sb, "* TotalAvailAllocCPU: %s\n", stat.AvailAllocCPU.String())
+	_, _ = fmt.Fprintf(sb, "* TotalUtilCPU: %s\n", stat.TotalUtilCPU.String())
+	avaiAllocInBytes := stat.AvailAllocMem.Value()
+	avaiAlloc := humanize.Bytes(uint64(avaiAllocInBytes))
+	_, _ = fmt.Fprintf(sb, "* TotalAvailAllocMem: %s\n", avaiAlloc)
+	totalUtilInBytes := stat.TotalUtilMem.Value()
+	totalUtil := humanize.Bytes(uint64(totalUtilInBytes))
+	_, _ = fmt.Fprintf(sb, "* TotalUtilMem: %s\n", totalUtil)
 }
