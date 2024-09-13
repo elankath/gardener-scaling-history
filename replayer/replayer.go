@@ -175,7 +175,7 @@ func (r *defaultReplayer) ReplayScalingRecommender() error {
 	if err != nil {
 		return err
 	}
-	//adjustSchedulerName(s.ClusterSnapshot.Pods)
+	adjustSchedulerName(s.ClusterSnapshot.Pods)
 	_, err = r.computeAndApplyDeltaWork(r.ctx, s.ClusterSnapshot, nil)
 	if err != nil {
 		return err
