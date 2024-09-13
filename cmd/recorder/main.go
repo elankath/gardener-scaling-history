@@ -98,6 +98,6 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Executi
 			}
 		}
 	}()
-	apputil.WaitForSignalAndShutdown(cancelFunc)
+	apputil.WaitForSignalAndShutdown(ctx, cancelFunc)
 	return 0
 }
