@@ -81,17 +81,26 @@ func GenerateReport(providerName string, clusterName string, caScenario, srScena
 	fmt.Fprintf(&sb, "# %s | CA vs SR\n", clusterName)
 
 	fmt.Fprintln(&sb, "## Difference in ScaledUpNodeGroups")
-	ngDiff := cmp.Diff(caScenario.ScalingResult.ScaledUpNodeGroups, srScenario.ScalingResult.ScaledUpNodeGroups)
-	if ngDiff == "" {
-		fmt.Fprintln(&sb, "Identical scale ups")
-		fmt.Fprintln(&sb, "```")
-		fmt.Fprintln(&sb, cmp.Diff(map[string]int{}, caScenario.ScalingResult.ScaledUpNodeGroups))
-		fmt.Fprintln(&sb, "```")
-	} else {
-		fmt.Fprintln(&sb, "```")
-		fmt.Fprintln(&sb, ngDiff)
-		fmt.Fprintln(&sb, "```")
-	}
+	//ngDiff := cmp.Diff(caScenario.ScalingResult.ScaledUpNodeGroups, srScenario.ScalingResult.ScaledUpNodeGroups)
+	//if ngDiff == "" {
+	//	fmt.Fprintln(&sb, "Identical scale ups")
+	//	fmt.Fprintln(&sb, "```")
+	//	fmt.Fprintln(&sb, cmp.Diff(map[string]int{}, caScenario.ScalingResult.ScaledUpNodeGroups))
+	//	fmt.Fprintln(&sb, "```")
+	//} else {
+	//	fmt.Fprintln(&sb, "```")
+	//	fmt.Fprintln(&sb, ngDiff)
+	//	fmt.Fprintln(&sb, "```")
+	//}
+	fmt.Fprintln(&sb, "### VCA ScaledUpNodeGroups")
+	fmt.Fprintln(&sb, "```")
+	fmt.Fprintln(&sb, caScenario.ScalingResult.ScaledUpNodeGroups)
+	fmt.Fprintln(&sb, "```")
+
+	fmt.Fprintln(&sb, "### SR ScaledUpNodeGroups")
+	fmt.Fprintln(&sb, "```")
+	fmt.Fprintln(&sb, srScenario.ScalingResult.ScaledUpNodeGroups)
+	fmt.Fprintln(&sb, "```")
 
 	priceAccess, err := pricing.NewInstancePricingAccess(providerName)
 	if err != nil {
@@ -106,9 +115,14 @@ func GenerateReport(providerName string, clusterName string, caScenario, srScena
 	if err != nil {
 		return err
 	}
+
+	fmt.Fprintln(&sb, "---")
+
 	fmt.Fprintln(&sb, "## Pricing")
 	fmt.Fprintf(&sb, "* CA total price: $%.2f\n", caTotalPrice)
 	fmt.Fprintf(&sb, "* SR total price: $%.2f\n", srTotalPrice)
+
+	fmt.Fprintln(&sb, "---")
 
 	fmt.Fprintln(&sb, "## Utilization")
 
@@ -125,30 +139,58 @@ func GenerateReport(providerName string, clusterName string, caScenario, srScena
 	fmt.Fprintln(&sb, "### SR utilization")
 	PrintStats(&sb, srStats)
 
-	fmt.Fprintln(&sb, "## Difference in PendingUnscheduledPods")
-	caPodNames := lo.Map(caScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
+	fmt.Fprintln(&sb, "---")
+
+	fmt.Fprintln(&sb, "## PendingUnscheduledPods")
+
+	fmt.Fprintln(&sb, "### VCA")
+	fmt.Fprintln(&sb, "* count: ", len(caScenario.ScalingResult.PendingUnscheduledPods))
+	caPodNames1 := lo.Map(caScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
 		fmt.Println(item.Name)
 		return item.Name
 	})
-	slices.Sort(caPodNames)
-	srPodNames := lo.Map(srScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
+	slices.Sort(caPodNames1)
+	fmt.Fprintln(&sb, "```")
+	fmt.Fprintln(&sb, caPodNames1)
+	fmt.Fprintln(&sb, "```")
+
+	fmt.Fprintln(&sb, "### SR")
+	fmt.Fprintln(&sb, "* count: ", len(srScenario.ScalingResult.PendingUnscheduledPods))
+	srPodNames1 := lo.Map(srScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
 		fmt.Println(item.Name)
 		return item.Name
 	})
-	slices.Sort(srPodNames)
-	if len(caScenario.ScalingResult.PendingUnscheduledPods) > 0 || len(srScenario.ScalingResult.PendingUnscheduledPods) > 0 {
-		fmt.Fprintln(&sb, "```")
-		unschPodsDiff := cmp.Diff(caPodNames, srPodNames)
-		if unschPodsDiff == "" {
-			fmt.Fprintln(&sb, "Identical PendingUnscheduledPods")
-			fmt.Fprintln(&sb, caPodNames)
-		} else {
-			fmt.Fprintln(&sb, unschPodsDiff)
-		}
-		fmt.Fprintln(&sb, "```")
-	} else {
-		fmt.Fprintln(&sb, "No pending unscheduled pods")
-	}
+	slices.Sort(srPodNames1)
+	fmt.Fprintln(&sb, "```")
+	fmt.Fprintln(&sb, srPodNames1)
+	fmt.Fprintln(&sb, "```")
+
+	fmt.Fprintln(&sb, "---")
+
+	//fmt.Fprintln(&sb, "## Difference in PendingUnscheduledPods")
+	//caPodNames := lo.Map(caScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
+	//	fmt.Println(item.Name)
+	//	return item.Name
+	//})
+	//slices.Sort(caPodNames)
+	//srPodNames := lo.Map(srScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
+	//	fmt.Println(item.Name)
+	//	return item.Name
+	//})
+	//slices.Sort(srPodNames)
+	//if len(caScenario.ScalingResult.PendingUnscheduledPods) > 0 || len(srScenario.ScalingResult.PendingUnscheduledPods) > 0 {
+	//	fmt.Fprintln(&sb, "```")
+	//	unschPodsDiff := cmp.Diff(caPodNames, srPodNames)
+	//	if unschPodsDiff == "" {
+	//		fmt.Fprintln(&sb, "Identical PendingUnscheduledPods")
+	//		fmt.Fprintln(&sb, caPodNames)
+	//	} else {
+	//		fmt.Fprintln(&sb, unschPodsDiff)
+	//	}
+	//	fmt.Fprintln(&sb, "```")
+	//} else {
+	//	fmt.Fprintln(&sb, "No pending unscheduled pods")
+	//}
 
 	fmt.Println(sb.String())
 
@@ -184,4 +226,8 @@ func PrintStats(sb *strings.Builder, stat gsh.ResourceStats) {
 	totalUtilInBytes := stat.TotalUtilMem.Value()
 	totalUtil := humanize.Bytes(uint64(totalUtilInBytes))
 	_, _ = fmt.Fprintf(sb, "* TotalUtilMem: %s\n", totalUtil)
+	fmt.Fprintln(sb, "```")
+	fmt.Fprintf(sb, "CPU utilization percentage: %.2f\n", 100*stat.TotalUtilCPU.AsApproximateFloat64()/stat.AvailAllocCPU.AsApproximateFloat64())
+	fmt.Fprintf(sb, "Memory utilization percentage: %.2f\n", 100*stat.TotalUtilMem.AsApproximateFloat64()/stat.AvailAllocMem.AsApproximateFloat64())
+	fmt.Fprintln(sb, "```")
 }
