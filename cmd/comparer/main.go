@@ -103,7 +103,7 @@ func GenerateReport(providerName string, clusterName string, caScenario, srScena
 	fmt.Fprintln(&sb, "### SR ScaledUpNodeGroups")
 	fmt.Fprintln(&sb, "```")
 	//fmt.Fprintln(&sb, srScenario.ScalingResult.ScaledUpNodeGroups)
-	for ng, count := range caScenario.ScalingResult.ScaledUpNodeGroups {
+	for ng, count := range srScenario.ScalingResult.ScaledUpNodeGroups {
 		fmt.Fprintln(&sb, ng, " : ", count)
 	}
 	fmt.Fprintln(&sb, "```")
@@ -172,6 +172,11 @@ func GenerateReport(providerName string, clusterName string, caScenario, srScena
 	fmt.Fprintln(&sb, "```")
 
 	fmt.Fprintln(&sb, "---")
+
+	fmt.Fprintln(&sb, "## Test table")
+	fmt.Fprintln(&sb, "|  | VCA | SR |")
+	fmt.Fprintln(&sb, "|-----|----|")
+	fmt.Fprintln(&sb, "| abc | xyz |")
 
 	//fmt.Fprintln(&sb, "## Difference in PendingUnscheduledPods")
 	//caPodNames := lo.Map(caScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
