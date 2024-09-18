@@ -94,12 +94,18 @@ func GenerateReport(providerName string, clusterName string, caScenario, srScena
 	//}
 	fmt.Fprintln(&sb, "### VCA ScaledUpNodeGroups")
 	fmt.Fprintln(&sb, "```")
-	fmt.Fprintln(&sb, caScenario.ScalingResult.ScaledUpNodeGroups)
+	//fmt.Fprintln(&sb, caScenario.ScalingResult.ScaledUpNodeGroups)
+	for ng, count := range caScenario.ScalingResult.ScaledUpNodeGroups {
+		fmt.Fprintln(&sb, ng, " : ", count)
+	}
 	fmt.Fprintln(&sb, "```")
 
 	fmt.Fprintln(&sb, "### SR ScaledUpNodeGroups")
 	fmt.Fprintln(&sb, "```")
-	fmt.Fprintln(&sb, srScenario.ScalingResult.ScaledUpNodeGroups)
+	//fmt.Fprintln(&sb, srScenario.ScalingResult.ScaledUpNodeGroups)
+	for ng, count := range caScenario.ScalingResult.ScaledUpNodeGroups {
+		fmt.Fprintln(&sb, ng, " : ", count)
+	}
 	fmt.Fprintln(&sb, "```")
 
 	priceAccess, err := pricing.NewInstancePricingAccess(providerName)
