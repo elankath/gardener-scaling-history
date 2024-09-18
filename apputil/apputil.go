@@ -99,6 +99,16 @@ func SortPodInfoForDeployment(a, b gsc.PodInfo) int {
 	p2 := b.Spec.Priority
 	c1 := a.CreationTimestamp
 	c2 := b.CreationTimestamp
+	aff1 := a.Spec.Affinity
+	aff2 := b.Spec.Affinity
+
+	// Any pod with an affinity is sorted earlier
+	if aff1 != nil && aff1.NodeAffinity != nil && aff2 == nil {
+		return -1
+	}
+	if aff1 == nil && aff2 != nil && aff2.NodeAffinity != nil {
+		return 1
+	}
 
 	if ns1 == "kube-system" && ns1 != ns2 {
 		return -1

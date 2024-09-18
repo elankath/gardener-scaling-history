@@ -469,6 +469,11 @@ func (r *defaultReplayer) ReplayCA() error {
 				slog.Info("No virtual-scaling occurred while replaying real scaling event", "replayCount", r.replayCount, "dbPath", r.params.InputDataPath, "replayEvent", replayEvent)
 				continue
 			}
+			stabilizeInterval := 30 * time.Second
+			numPods := len(clusterSnapshot.Pods)
+			stabilizeInterval = stabilizeInterval + time.Duration(numPods)*100*time.Millisecond
+			slog.Info("waiting for a stabilize interval after virtual scaling", "stabilizeInterval", stabilizeInterval)
+			<-time.After(stabilizeInterval)
 			scenario, err := r.createScenario(r.ctx, clusterSnapshot)
 			if err != nil {
 				if errors.Is(err, ErrNoScenario) {
@@ -1005,26 +1010,34 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 
 	// deploy kube-system pods and pods that have assigned Node names first.
 	slices.SortFunc(podsToDeploy, apputil.SortPodInfoForDeployment)
-
-	chunks := lo.Chunk(podsToDeploy, deltaWork.DeployParallel)
+	partitionedPods := lo.PartitionBy(podsToDeploy, func(item gsc.PodInfo) string {
+		if item.Spec.Affinity != nil && item.Spec.Affinity.NodeAffinity != nil {
+			return "a"
+		} else {
+			return "b"
+		}
+	})
 	var deployCount = 0
-	for j, chunk := range chunks {
-		var g errgroup.Group
-		for _, podInfo := range chunk {
-			pod := getCorePodFromPodInfo(podInfo)
-			deployCount++
-			g.Go(func() error { //Note: for loop lambdas were fixed in Go 1.22 https://tip.golang.org/doc/go1.22#language
-				err = doDeployPod(ctx, clientSet, replayCount, deployCount, pod)
-				if err != nil {
-					return err
-				}
-				return nil
-			})
+	for _, partition := range partitionedPods {
+		chunks := lo.Chunk(partition, deltaWork.DeployParallel)
+		for j, chunk := range chunks {
+			var g errgroup.Group
+			for _, podInfo := range chunk {
+				pod := getCorePodFromPodInfo(podInfo)
+				deployCount++
+				g.Go(func() error { //Note: for loop lambdas were fixed in Go 1.22 https://tip.golang.org/doc/go1.22#language
+					err = doDeployPod(ctx, clientSet, replayCount, deployCount, pod)
+					if err != nil {
+						return err
+					}
+					return nil
+				})
+			}
+			if err := g.Wait(); err != nil {
+				return err
+			}
+			slog.Info("applyDeltaWork finished deploying pod chunk", "chunkIndex", j, "deployCount", deployCount)
 		}
-		if err := g.Wait(); err != nil {
-			return err
-		}
-		slog.Info("applyDeltaWork finished deploying pod chunk", "chunkIndex", j, "deployCount", deployCount)
 	}
 
 	err = deleteNamespaces(ctx, clientSet, deltaWork.NamespaceWork.ToDelete.UnsortedList()...)
@@ -1275,13 +1288,14 @@ func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapsh
 		return item.Name
 	})
 	podWork.ToDelete, err = getPodNamesNotAssignedToNodes(ctx, clientSet, virtualNodeNames)
-	virtualPods, err := clientutil.ListAllPods(ctx, clientSet)
+	//virtualPods, err := clientutil.ListAllPods(ctx, clientSet)
+	virtualPods, err := clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
 		return
 	}
-	virtualPods = append(virtualPods, pendingPods...)
-	virtualPodsByName := lo.Associate(virtualPods, func(item corev1.Pod) (string, gsc.PodInfo) {
+	virtualPods.Items = append(virtualPods.Items, pendingPods...)
+	virtualPodsByName := lo.Associate(virtualPods.Items, func(item corev1.Pod) (string, gsc.PodInfo) {
 		return item.Name, recorder.PodInfoFromPod(&item)
 	})
 	clusterSnapshotPodsByName := lo.KeyBy(snapshotPods, func(item gsc.PodInfo) string {
@@ -1322,11 +1336,41 @@ func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
 			}
 		}
 	}
+	for i := 0; i < len(new.Spec.Containers); i++ {
+		if new.Spec.Containers[i].Resources.Requests != nil {
+			delete(new.Spec.Containers[i].Resources.Requests, corev1.ResourceEphemeralStorage)
+		}
+		if new.Spec.Containers[i].Resources.Limits != nil {
+			delete(new.Spec.Containers[i].Resources.Limits, corev1.ResourceEphemeralStorage)
+		}
+	}
+	//spec:
+	//affinity:
+	//nodeAffinity:
+	//requiredDuringSchedulingIgnoredDuringExecution:
+	//nodeSelectorTerms:
+	//	- matchFields:
+	//	- key: metadata.name
+	//operator: In
+	//values:
+	//	- shoot--hc-eu30--prod-gc-orc-default-z1-5b99b-4rttc
+	if new.Spec.Affinity != nil && new.Spec.Affinity.NodeAffinity != nil && new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		ns := new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		for _, nsTerm := range ns.NodeSelectorTerms {
+			for _, matchf := range nsTerm.MatchFields {
+				if matchf.Key == "metadata.name" {
+					new.Spec.Affinity.NodeAffinity = nil
+					slog.Info("Clearing NodeAffinity from pod", "podName", new.Name, "nodeAffinity", matchf.Values)
+					break
+				}
+			}
+		}
+	}
 	new.Spec.PriorityClassName = ""
 	new.Spec.PreemptionPolicy = nil
 	new.Spec.Priority = nil
-	//new.NodeName = ""
-	//new.Spec.NodeName = ""
+	new.NodeName = ""
+	new.Spec.NodeName = ""
 	return
 }
 
@@ -1508,12 +1552,12 @@ func findNodeTemplate(nodeTemplates map[string]gsc.NodeTemplate, poolName, zone 
 }
 
 func clearNodeNamesNotIn(pods []gsc.PodInfo, nodeNames []string) {
-	nameSet := sets.New(nodeNames...)
+	//nameSet := sets.New(nodeNames...)
 	for i := range pods {
-		if !nameSet.Has(pods[i].Spec.NodeName) {
-			pods[i].NodeName = ""
-			pods[i].Spec.NodeName = ""
-		}
+		//if !nameSet.Has(pods[i].Spec.NodeName) {
+		pods[i].NodeName = ""
+		pods[i].Spec.NodeName = ""
+		//}
 	}
 }
 
@@ -1620,11 +1664,18 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 		}
 		scenario.ScalingResult.ScaledUpNodeGroups[ng.Name]++
 	}
-	pods, err := clientutil.ListAllPods(ctx, r.clientSet)
+	//pods, err := clientutil.ListAllPods(ctx, r.clientSet)
+	pods, err := r.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
+		return
+	}
 	nodeUtilizationMap := make(map[string]corev1.ResourceList)
 	emptyNodeNames := allNodeNames.Clone()
-	for _, pod := range pods {
+	scenario.ClusterSnapshot.Pods = []gsc.PodInfo{}
+	for _, pod := range pods.Items {
 		podInfo := recorder.PodInfoFromPod(&pod)
+		scenario.ClusterSnapshot.Pods = append(scenario.ClusterSnapshot.Pods, podInfo)
 		// FIXME: BUGGY
 		//if podInfo.PodScheduleStatus == gsc.PodUnscheduled || podInfo.PodScheduleStatus == gsc.PodSchedulePending || pod.Spec.NodeName == "" {
 		if pod.Spec.NodeName == "" {
@@ -1749,7 +1800,7 @@ func waitAndCheckVirtualScaling(ctx context.Context, clientSet *kubernetes.Clien
 	signalFilePath := "/tmp/ca-scale-up-done.txt"
 	_ = os.Remove(signalFilePath)
 	doneCount := 0
-	doneLimit := 3
+	doneLimit := 1
 	for {
 		nodes, err = clientutil.ListAllNodes(ctx, clientSet)
 		virtualScaledNodeNames := lo.FilterMap(nodes, func(n corev1.Node, _ int) (nodeName string, ok bool) {
