@@ -1452,6 +1452,10 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 		return
 	}
 	cs.Nodes = filterNodeInfos(nodes)
+	cs.Nodes, err = modifyNodeAllocatable(cs.AutoscalerConfig.NodeTemplates, cs.Nodes)
+	if err != nil {
+		return
+	}
 	cs.Pods = filterAppPods(allPods)
 	nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
 		return n.Name
@@ -1471,6 +1475,36 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
 	cs.Hash = cs.GetHash()
 	return
+}
+
+func modifyNodeAllocatable(nodeTemplates map[string]gsc.NodeTemplate, nodes []gsc.NodeInfo) ([]gsc.NodeInfo, error) {
+	updatedNodes := make([]gsc.NodeInfo, 0, len(nodes))
+	for _, no := range nodes {
+		zone, ok := gsc.GetZone(no.Labels) //getZonefromNodeLabels(nodeInfo.Labels)
+		if !ok {
+			return nil, fmt.Errorf("cannot find zone for node %q", no.Labels)
+		}
+		nodeTemplate := findNodeTemplate(nodeTemplates, no.Labels["worker.gardener.cloud/pool"], zone)
+		if nodeTemplate == nil {
+			return nil, fmt.Errorf("cannot find the node template for node %q", no.Name)
+		}
+		no.Allocatable = nodeTemplate.Allocatable
+		updatedNodes = append(updatedNodes, no)
+	}
+	return updatedNodes, nil
+}
+
+func findNodeTemplate(nodeTemplates map[string]gsc.NodeTemplate, poolName, zone string) *gsc.NodeTemplate {
+	// shoot--hc-eu30--prod-gc-orc-default-z1-5b99b-cv8ls
+	slog.Info("Parameters passed", "poolName", poolName, "zone", zone)
+	for _, nt := range nodeTemplates {
+		//slog.Info("Node Template zone and labels", "name", nt.Name, "zone", nt.Zone, "labels", nt.Labels)
+		slog.Info("Node capacity", "name", nt.Name, "zone", nt.Zone, "allocatable", nt.Allocatable)
+		if nt.Zone == zone && nt.Labels["worker.gardener.cloud/pool"] == poolName {
+			return &nt
+		}
+	}
+	return nil
 }
 
 func clearNodeNamesNotIn(pods []gsc.PodInfo, nodeNames []string) {
@@ -1804,7 +1838,7 @@ outer:
 			numPods := len(allPods)
 			numPodsWithoutConditions := 0
 			for _, p := range allPods {
-				if len(p.Status.Conditions) == 0 {
+				if len(p.Status.Conditions) == 0 && p.Spec.NodeName == "" {
 					numPodsWithoutConditions++
 				}
 			}
