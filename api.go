@@ -68,6 +68,7 @@ type ScalingResult struct {
 	PendingUnscheduledPods   []gsc.PodInfo
 	ScaledUpNodesUtilization map[string]corev1.ResourceList
 	EmptyNodeNames           []string
+	ScheduledPods            []gsc.PodInfo
 }
 
 type Scenario struct {

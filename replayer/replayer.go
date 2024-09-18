@@ -1325,8 +1325,8 @@ func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
 	new.Spec.PriorityClassName = ""
 	new.Spec.PreemptionPolicy = nil
 	new.Spec.Priority = nil
-	new.NodeName = ""
-	new.Spec.NodeName = ""
+	//new.NodeName = ""
+	//new.Spec.NodeName = ""
 	return
 }
 
@@ -1474,12 +1474,12 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 }
 
 func clearNodeNamesNotIn(pods []gsc.PodInfo, nodeNames []string) {
-	//nameSet := sets.New(nodeNames...)
+	nameSet := sets.New(nodeNames...)
 	for i := range pods {
-		//if !nameSet.Has(pods[i].Spec.NodeName) {
-		pods[i].NodeName = ""
-		pods[i].Spec.NodeName = ""
-		//}
+		if !nameSet.Has(pods[i].Spec.NodeName) {
+			pods[i].NodeName = ""
+			pods[i].Spec.NodeName = ""
+		}
 	}
 }
 
@@ -1596,6 +1596,7 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 		if pod.Spec.NodeName == "" {
 			scenario.ScalingResult.PendingUnscheduledPods = append(scenario.ScalingResult.PendingUnscheduledPods, podInfo)
 		} else {
+			scenario.ScalingResult.ScheduledPods = append(scenario.ScalingResult.ScheduledPods, podInfo)
 			emptyNodeNames.Delete(pod.Spec.NodeName)
 		}
 		if !scaledUpNodeNames.Has(pod.Spec.NodeName) {

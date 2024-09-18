@@ -6,8 +6,6 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
-github.com/elankath/gardener-scaling-common v0.0.0-20240905073535-8f8821aeedaa h1:4J280Kdoz7FIr2AAlBLN/TIlsSJYZ+xk8NyQ2JurXNw=
-github.com/elankath/gardener-scaling-common v0.0.0-20240905073535-8f8821aeedaa/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
 github.com/elankath/gardener-scaling-common v0.0.0-20240912081638-9261758a905e h1:Cq5wOhMK5TMvr4/MFw0XLaklAEwdZKNRrDyqh42cdh8=
 github.com/elankath/gardener-scaling-common v0.0.0-20240912081638-9261758a905e/go.mod h1:fnO2eLHZ5LmmSRXUPZVpfaGOSeTDbDsF8NuerLfoA2g=
 github.com/emicklei/go-restful/v3 v3.11.0 h1:rAQeMHw1c7zTmncogyy8VvRZwtkmkZ4FxERmMY4rD+g=
