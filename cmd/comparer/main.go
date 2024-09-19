@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 )
 
@@ -19,7 +20,6 @@ type config struct {
 	caReportPath string
 	srReportPath string
 	provider     string
-	targetPath   string
 }
 
 func main() {
@@ -43,7 +43,6 @@ func parseArgs() (config, error) {
 	fs.StringVar(&c.provider, "provider", "aws", "cloud provider")
 	fs.StringVar(&c.caReportPath, "ca-report-path", "", "CA report path")
 	fs.StringVar(&c.srReportPath, "sr-report-path", "", "SR report path")
-	fs.StringVar(&c.targetPath, "target-path", "", "target path where the comparison report will be written")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -163,7 +162,8 @@ func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport
 		return err
 	}
 
-	targetFile, err := os.OpenFile(c.targetPath, os.O_CREATE|os.O_WRONLY, 0644)
+	targetPath := filepath.Join("/tmp", fmt.Sprintf("%s.md", clusterName))
+	targetFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
