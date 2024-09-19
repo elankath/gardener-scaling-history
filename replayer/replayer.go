@@ -183,7 +183,7 @@ func (r *defaultReplayer) ReplayScalingRecommender() error {
 	//writeClusterSnapshot(s.ClusterSnapshot)
 	stabilizeInterval := 30 * time.Second
 	numPods := len(s.ClusterSnapshot.Pods)
-	stabilizeInterval = stabilizeInterval + time.Duration(numPods)*200*time.Millisecond
+	stabilizeInterval = stabilizeInterval + time.Duration(numPods)*100*time.Millisecond
 	slog.Info("waiting for a stabilize interval before posting cluster snapshot", "stabilizeInterval", stabilizeInterval)
 	<-time.After(stabilizeInterval)
 	if err = postClusterSnapshot(s.ClusterSnapshot); err != nil {
@@ -1675,7 +1675,10 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 	scenario.ClusterSnapshot.Pods = []gsc.PodInfo{}
 	for _, pod := range pods {
 		podInfo := recorder.PodInfoFromPod(&pod)
-		scenario.ClusterSnapshot.Pods = append(scenario.ClusterSnapshot.Pods, podInfo)
+		podInfoCopy := podInfo
+		podInfoCopy.Spec.NodeName = ""
+		podInfoCopy.NodeName = ""
+		scenario.ClusterSnapshot.Pods = append(scenario.ClusterSnapshot.Pods, podInfoCopy)
 		// FIXME: BUGGY
 		//if podInfo.PodScheduleStatus == gsc.PodUnscheduled || podInfo.PodScheduleStatus == gsc.PodSchedulePending || pod.Spec.NodeName == "" {
 		if pod.Spec.NodeName == "" {
