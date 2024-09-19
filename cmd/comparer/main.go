@@ -19,6 +19,7 @@ type config struct {
 	caReportPath string
 	srReportPath string
 	provider     string
+	targetPath   string
 }
 
 func main() {
@@ -42,6 +43,7 @@ func parseArgs() (config, error) {
 	fs.StringVar(&c.provider, "provider", "aws", "cloud provider")
 	fs.StringVar(&c.caReportPath, "ca-report-path", "", "CA report path")
 	fs.StringVar(&c.srReportPath, "sr-report-path", "", "SR report path")
+	fs.StringVar(&c.targetPath, "target-path", "", "target path where the comparison report will be written")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -161,24 +163,32 @@ func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport
 		return err
 	}
 
-	mkBuilder := md.NewMarkdown(os.Stdout).
+	targetFile, err := os.OpenFile(c.targetPath, os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+
+	mkBuilder := md.NewMarkdown(targetFile).
 		H1("Virtual CA vs Scaling Recommender Comparison Report").
 		PlainTextf("Cluster: %s", clusterName).
 		PlainTextf("Provider: %s", c.provider).
 		H2("Scaled-Up NodeGroups").
 		PlainText("This section compares the node groups that are scaled by Virtual CA and Scaling Recommender").
 		H3("Virtual CA").
+		LF().
 		Table(md.TableSet{
 			Header: []string{"NodeGroup", "Count"},
 			Rows:   mapToRows(caScenarioReport.ScalingResult.ScaledUpNodeGroups),
 		}).
 		H3("Scaling Recommender").
+		LF().
 		Table(md.TableSet{
 			Header: []string{"NodeGroup", "Count"},
 			Rows:   mapToRows(srScenarioReport.ScalingResult.ScaledUpNodeGroups),
 		}).
 		H2("Total Cost of Scaled-Up Nodes").
 		PlainText("This section compares the total cost of the scaled-up nodes by Virtual CA and Scaling Recommender").
+		LF().
 		Table(md.TableSet{
 			Header: []string{"Virtual CA", "Scaling Recommender"},
 			Rows: [][]string{
