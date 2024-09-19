@@ -1288,14 +1288,14 @@ func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapsh
 		return item.Name
 	})
 	podWork.ToDelete, err = getPodNamesNotAssignedToNodes(ctx, clientSet, virtualNodeNames)
-	//virtualPods, err := clientutil.ListAllPods(ctx, clientSet)
-	virtualPods, err := clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	virtualPods, err := clientutil.ListAllPods(ctx, clientSet)
+	//virtualPods, err := clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
 		return
 	}
-	virtualPods.Items = append(virtualPods.Items, pendingPods...)
-	virtualPodsByName := lo.Associate(virtualPods.Items, func(item corev1.Pod) (string, gsc.PodInfo) {
+	virtualPods = append(virtualPods, pendingPods...)
+	virtualPodsByName := lo.Associate(virtualPods, func(item corev1.Pod) (string, gsc.PodInfo) {
 		return item.Name, recorder.PodInfoFromPod(&item)
 	})
 	clusterSnapshotPodsByName := lo.KeyBy(snapshotPods, func(item gsc.PodInfo) string {
@@ -1664,8 +1664,8 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 		}
 		scenario.ScalingResult.ScaledUpNodeGroups[ng.Name]++
 	}
-	//pods, err := clientutil.ListAllPods(ctx, r.clientSet)
-	pods, err := r.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	pods, err := clientutil.ListAllPods(ctx, r.clientSet)
+	//pods, err := r.clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
 		return
@@ -1673,7 +1673,7 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 	nodeUtilizationMap := make(map[string]corev1.ResourceList)
 	emptyNodeNames := allNodeNames.Clone()
 	scenario.ClusterSnapshot.Pods = []gsc.PodInfo{}
-	for _, pod := range pods.Items {
+	for _, pod := range pods {
 		podInfo := recorder.PodInfoFromPod(&pod)
 		scenario.ClusterSnapshot.Pods = append(scenario.ClusterSnapshot.Pods, podInfo)
 		// FIXME: BUGGY
@@ -1749,7 +1749,8 @@ func deriveNodeGroups(mcds []gsc.MachineDeploymentInfo, ngMinMaxMap map[string]g
 		ngName := fmt.Sprintf("%s.%s", mcd.Namespace, mcd.Name)
 		minMax, ok := ngMinMaxMap[ngName]
 		if !ok {
-			err = fmt.Errorf("cannot find NodeGroup with name %q in ngMinMaxMap map %q", ngName, ngMinMaxMap)
+			slog.Warn("cannot find NodeGroup with name", "nodeGroupName", ngName)
+			//err = fmt.Errorf("cannot find NodeGroup with name %q in ngMinMaxMap map %q", ngName, ngMinMaxMap)
 		}
 		nodeGroup := gsc.NodeGroupInfo{
 			Name:       ngName,
