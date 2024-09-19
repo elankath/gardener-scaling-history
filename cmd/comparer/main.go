@@ -96,9 +96,53 @@ func sumInstancePrices(pa pricing.InstancePricingAccess, nodes []gsc.NodeInfo) (
 	return totalPrice, nil
 }
 
+type poolKey struct {
+	poolName string
+	zone     string
+}
+
+func adjustScenario(s *gsh.Scenario) {
+	poolKeyMap := make(map[poolKey]gsc.NodeGroupInfo)
+	for _, ng := range lo.Values(s.ClusterSnapshot.AutoscalerConfig.NodeGroups) {
+		poolKeyMap[poolKey{poolName: ng.PoolName, zone: ng.Zone}] = ng
+	}
+	for _, emptyNodeName := range s.ScalingResult.EmptyNodeNames {
+		node, ok := lo.Find(s.ScalingResult.ScaledUpNodes, func(n gsc.NodeInfo) bool {
+			return n.Name == emptyNodeName
+		})
+		if !ok {
+			continue
+		}
+		zone, zoneFound := gsc.GetZone(node.Labels)
+		poolName, poolNameFound := gsc.GetPoolName(node.Labels)
+		if !zoneFound || !poolNameFound {
+			slog.Error("cannot find zone or pool bane in node labels", "node", node)
+			continue
+		}
+		pk := poolKey{poolName: poolName, zone: zone}
+		ng, ok := poolKeyMap[pk]
+		if !ok {
+			slog.Error("cannot find node group in autoscaler config", "poolKey", pk)
+			continue
+		}
+		count, ok := s.ScalingResult.ScaledUpNodeGroups[ng.Name]
+		if !ok {
+			slog.Error("cannot find node group in scaled up node groups", "nodeGroup", ng.Name)
+			continue
+		}
+		s.ScalingResult.ScaledUpNodeGroups[ng.Name] = count - 1
+		s.ScalingResult.ScaledUpNodes = lo.Reject(s.ScalingResult.ScaledUpNodes, func(n gsc.NodeInfo, _ int) bool {
+			return n.Name == emptyNodeName
+		})
+	}
+}
+
 func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport, srScenarioReport gsh.Scenario) error {
 	clusterName, err := apputil.GetClusterName(c.caReportPath)
 	dieOnError(err, "error getting cluster name from ca report path")
+
+	adjustScenario(&caScenarioReport)
+	adjustScenario(&srScenarioReport)
 
 	vcaTotalScaleupCost, err := sumInstancePrices(pa, caScenarioReport.ScalingResult.ScaledUpNodes)
 	if err != nil {
