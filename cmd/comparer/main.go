@@ -12,8 +12,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 )
 
 type config struct {
@@ -138,6 +140,16 @@ func adjustScenario(s *gsh.Scenario) {
 	}
 }
 
+func getReportIndex(fp string) string {
+	fn := path.Base(fp)
+	filePathWithoutExtension := strings.TrimSuffix(fn, filepath.Ext(fn))
+	index := strings.LastIndex(filePathWithoutExtension, "-")
+	if index == -1 {
+		return "-1"
+	}
+	return filePathWithoutExtension[index+1:]
+}
+
 func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport, srScenarioReport gsh.Scenario) error {
 	clusterName, err := apputil.GetClusterName(c.caReportPath)
 	dieOnError(err, "error getting cluster name from ca report path")
@@ -162,7 +174,7 @@ func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport
 		return err
 	}
 
-	targetPath := filepath.Join("/tmp", fmt.Sprintf("%s.md", clusterName))
+	targetPath := filepath.Join("/tmp", fmt.Sprintf("%s-%s.md", clusterName, getReportIndex(c.caReportPath)))
 	targetFile, err := os.OpenFile(targetPath, os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
