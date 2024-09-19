@@ -1,221 +1,89 @@
 package main
 
 import (
+	"flag"
 	"fmt"
-	"github.com/dustin/go-humanize"
 	gsc "github.com/elankath/gardener-scaling-common"
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/pricing"
-	"github.com/google/go-cmp/cmp"
+	md "github.com/nao1215/markdown"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/json"
 	"log/slog"
 	"os"
-	"path"
 	"slices"
-	"strings"
 )
 
+type config struct {
+	caReportPath string
+	srReportPath string
+	provider     string
+}
+
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: comparer CA_report_path SR_report_path")
+	c, err := parseArgs()
+	dieOnError(err, "error parsing args")
+
+	caScenario, err := unmarshallReport(c.caReportPath)
+	dieOnError(err, "error unmarshalling CA report")
+	srScenario, err := unmarshallReport(c.srReportPath)
+	dieOnError(err, "error unmarshalling SR report")
+	priceAccess, err := pricing.NewInstancePricingAccess(c.provider)
+	dieOnError(err, "error creating instance pricing access")
+
+	dieOnError(generateReport(priceAccess, c, caScenario, srScenario), "error generating report")
+}
+
+func parseArgs() (config, error) {
+	c := config{}
+	args := os.Args[1:]
+	fs := flag.CommandLine
+	fs.StringVar(&c.provider, "provider", "aws", "cloud provider")
+	fs.StringVar(&c.caReportPath, "ca-report-path", "", "CA report path")
+	fs.StringVar(&c.srReportPath, "sr-report-path", "", "SR report path")
+	if err := fs.Parse(args); err != nil {
+		return c, err
+	}
+	return c, nil
+}
+
+func dieOnError(err error, msg string) {
+	if err != nil {
+		slog.Error(msg, err)
 		os.Exit(1)
-	}
-
-	caReportPath := os.Args[1]
-	srReportPath := os.Args[2]
-	if caReportPath == srReportPath {
-		fmt.Println("CA reports are the same as SR reports")
-		os.Exit(1)
-	}
-
-	var caReportScenario, srReportScenario gsh.Scenario
-
-	data, err := os.ReadFile(caReportPath)
-	if err != nil {
-		slog.Error("Error reading CA report", "error", err, "path", caReportPath)
-		os.Exit(2)
-	}
-	err = json.Unmarshal(data, &caReportScenario)
-	if err != nil {
-		slog.Error("Error unmarshalling CA report", "error", err, "path", caReportPath)
-		os.Exit(3)
-	}
-
-	data, err = os.ReadFile(srReportPath)
-	if err != nil {
-		slog.Error("Error reading SR report", "error", err, "path", srReportPath)
-		os.Exit(4)
-	}
-	err = json.Unmarshal(data, &srReportScenario)
-	if err != nil {
-		slog.Error("Error unmarshalling SR report", "error", err, "path", srReportPath)
-		os.Exit(5)
-	}
-	clusterName, err := apputil.GetClusterName(caReportPath)
-	if err != nil {
-		slog.Error("Error getting cluster name from CA report path", "error", err, "path", caReportPath)
-		os.Exit(6)
-	}
-
-	provider := "aws"
-	if strings.Contains(clusterName, "-gc-") {
-		provider = "gcp"
-	}
-
-	err = GenerateReport(provider, clusterName, caReportScenario, srReportScenario)
-	if err != nil {
-		slog.Error("Error generating report", "error", err)
-		os.Exit(7)
 	}
 }
 
-func GenerateReport(providerName string, clusterName string, caScenario, srScenario gsh.Scenario) error {
-	reportPath := path.Join("/tmp", fmt.Sprintf("%s_compare-replay.md", clusterName))
-
-	var sb strings.Builder
-
-	fmt.Println(cmp.Diff(caScenario.ScalingResult.ScaledUpNodeGroups, srScenario.ScalingResult.ScaledUpNodeGroups))
-
-	fmt.Fprintf(&sb, "# %s | CA vs SR\n", clusterName)
-
-	fmt.Fprintln(&sb, "## Difference in ScaledUpNodeGroups")
-	//ngDiff := cmp.Diff(caScenario.ScalingResult.ScaledUpNodeGroups, srScenario.ScalingResult.ScaledUpNodeGroups)
-	//if ngDiff == "" {
-	//	fmt.Fprintln(&sb, "Identical scale ups")
-	//	fmt.Fprintln(&sb, "```")
-	//	fmt.Fprintln(&sb, cmp.Diff(map[string]int{}, caScenario.ScalingResult.ScaledUpNodeGroups))
-	//	fmt.Fprintln(&sb, "```")
-	//} else {
-	//	fmt.Fprintln(&sb, "```")
-	//	fmt.Fprintln(&sb, ngDiff)
-	//	fmt.Fprintln(&sb, "```")
-	//}
-	fmt.Fprintln(&sb, "### VCA ScaledUpNodeGroups")
-	fmt.Fprintln(&sb, "```")
-	//fmt.Fprintln(&sb, caScenario.ScalingResult.ScaledUpNodeGroups)
-	for ng, count := range caScenario.ScalingResult.ScaledUpNodeGroups {
-		fmt.Fprintln(&sb, ng, " : ", count)
-	}
-	fmt.Fprintln(&sb, "```")
-
-	fmt.Fprintln(&sb, "### SR ScaledUpNodeGroups")
-	fmt.Fprintln(&sb, "```")
-	//fmt.Fprintln(&sb, srScenario.ScalingResult.ScaledUpNodeGroups)
-	for ng, count := range srScenario.ScalingResult.ScaledUpNodeGroups {
-		fmt.Fprintln(&sb, ng, " : ", count)
-	}
-	fmt.Fprintln(&sb, "```")
-
-	priceAccess, err := pricing.NewInstancePricingAccess(providerName)
+func unmarshallReport(path string) (gsh.Scenario, error) {
+	var scenario gsh.Scenario
+	reportData, err := os.ReadFile(path)
 	if err != nil {
-		slog.Error("Error creating instance pricing access", "error", err)
-		return err
+		return gsh.Scenario{}, err
 	}
-	caTotalPrice, err := sumPrices(priceAccess, caScenario.ScalingResult.ScaledUpNodes)
-	if err != nil {
-		return err
+	if err = json.Unmarshal(reportData, &scenario); err != nil {
+		return gsh.Scenario{}, err
 	}
-	srTotalPrice, err := sumPrices(priceAccess, srScenario.ScalingResult.ScaledUpNodes)
-	if err != nil {
-		return err
-	}
-
-	fmt.Fprintln(&sb, "---")
-
-	fmt.Fprintln(&sb, "## Pricing")
-	fmt.Fprintf(&sb, "* CA total price: $%.2f\n", caTotalPrice)
-	fmt.Fprintf(&sb, "* SR total price: $%.2f\n", srTotalPrice)
-
-	fmt.Fprintln(&sb, "---")
-
-	fmt.Fprintln(&sb, "## Utilization")
-
-	caStats, err := caScenario.ScalingResult.GetResourceStat()
-	if err != nil {
-		return err
-	}
-	srStats, err := srScenario.ScalingResult.GetResourceStat()
-	if err != nil {
-		return err
-	}
-	fmt.Fprintln(&sb, "### CA utilization")
-	PrintStats(&sb, caStats)
-	fmt.Fprintln(&sb, "### SR utilization")
-	PrintStats(&sb, srStats)
-
-	fmt.Fprintln(&sb, "---")
-
-	fmt.Fprintln(&sb, "## PendingUnscheduledPods")
-
-	fmt.Fprintln(&sb, "### VCA")
-	fmt.Fprintln(&sb, "* count: ", len(caScenario.ScalingResult.PendingUnscheduledPods))
-	caPodNames1 := lo.Map(caScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
-		fmt.Println(item.Name)
-		return item.Name
-	})
-	slices.Sort(caPodNames1)
-	fmt.Fprintln(&sb, "```")
-	fmt.Fprintln(&sb, caPodNames1)
-	fmt.Fprintln(&sb, "```")
-
-	fmt.Fprintln(&sb, "### SR")
-	fmt.Fprintln(&sb, "* count: ", len(srScenario.ScalingResult.PendingUnscheduledPods))
-	srPodNames1 := lo.Map(srScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
-		fmt.Println(item.Name)
-		return item.Name
-	})
-	slices.Sort(srPodNames1)
-	fmt.Fprintln(&sb, "```")
-	fmt.Fprintln(&sb, srPodNames1)
-	fmt.Fprintln(&sb, "```")
-
-	fmt.Fprintln(&sb, "---")
-
-	fmt.Fprintln(&sb, "## Test table")
-	fmt.Fprintln(&sb, "|  | VCA | SR |")
-	fmt.Fprintln(&sb, "|-----|----|")
-	fmt.Fprintln(&sb, "| abc | xyz |")
-
-	//fmt.Fprintln(&sb, "## Difference in PendingUnscheduledPods")
-	//caPodNames := lo.Map(caScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
-	//	fmt.Println(item.Name)
-	//	return item.Name
-	//})
-	//slices.Sort(caPodNames)
-	//srPodNames := lo.Map(srScenario.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
-	//	fmt.Println(item.Name)
-	//	return item.Name
-	//})
-	//slices.Sort(srPodNames)
-	//if len(caScenario.ScalingResult.PendingUnscheduledPods) > 0 || len(srScenario.ScalingResult.PendingUnscheduledPods) > 0 {
-	//	fmt.Fprintln(&sb, "```")
-	//	unschPodsDiff := cmp.Diff(caPodNames, srPodNames)
-	//	if unschPodsDiff == "" {
-	//		fmt.Fprintln(&sb, "Identical PendingUnscheduledPods")
-	//		fmt.Fprintln(&sb, caPodNames)
-	//	} else {
-	//		fmt.Fprintln(&sb, unschPodsDiff)
-	//	}
-	//	fmt.Fprintln(&sb, "```")
-	//} else {
-	//	fmt.Fprintln(&sb, "No pending unscheduled pods")
-	//}
-
-	fmt.Println(sb.String())
-
-	err = os.WriteFile(reportPath, []byte(sb.String()), 0644)
-	if err != nil {
-		slog.Error("Error writing report", "error", err)
-		return err
-	}
-	slog.Info("Generated report", "reportPath", reportPath)
-
-	return nil
+	return scenario, nil
 }
 
-func sumPrices(priceAccess pricing.InstancePricingAccess, nodes []gsc.NodeInfo) (float64, error) {
+func mapToRows(m map[string]int) [][]string {
+	rows := make([][]string, 0, len(m))
+	for k, v := range m {
+		rows = append(rows, []string{k, fmt.Sprint(v)})
+	}
+	return rows
+}
+
+func unscheduledPodNames(s gsh.Scenario) []string {
+	podNames := lo.Map(s.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
+		return item.Name
+	})
+	slices.Sort(podNames)
+	return podNames
+}
+
+func sumInstancePrices(pa pricing.InstancePricingAccess, nodes []gsc.NodeInfo) (float64, error) {
 	var totalPrice float64
 	for _, node := range nodes {
 		machineType, ok := gsc.GetLabelValue(node.Labels, []string{"node.kubernetes.io/instance-type", "beta.kubernetes.io/instance-type"})
@@ -223,22 +91,92 @@ func sumPrices(priceAccess pricing.InstancePricingAccess, nodes []gsc.NodeInfo) 
 			slog.Error("error getting instance type label", "label", node.Labels, "labelValue", node.Labels)
 			return 0, fmt.Errorf("error getting instance type label for node %s", node.Name)
 		}
-		totalPrice = totalPrice + priceAccess.Get3YearReservedPricing(machineType)
+		totalPrice = totalPrice + pa.Get3YearReservedPricing(machineType)
 	}
 	return totalPrice, nil
 }
 
-func PrintStats(sb *strings.Builder, stat gsh.ResourceStats) {
-	_, _ = fmt.Fprintf(sb, "* TotalAvailAllocCPU: %s\n", stat.AvailAllocCPU.String())
-	_, _ = fmt.Fprintf(sb, "* TotalUtilCPU: %s\n", stat.TotalUtilCPU.String())
-	avaiAllocInBytes := stat.AvailAllocMem.Value()
-	avaiAlloc := humanize.Bytes(uint64(avaiAllocInBytes))
-	_, _ = fmt.Fprintf(sb, "* TotalAvailAllocMem: %s\n", avaiAlloc)
-	totalUtilInBytes := stat.TotalUtilMem.Value()
-	totalUtil := humanize.Bytes(uint64(totalUtilInBytes))
-	_, _ = fmt.Fprintf(sb, "* TotalUtilMem: %s\n", totalUtil)
-	fmt.Fprintln(sb, "```")
-	fmt.Fprintf(sb, "CPU utilization percentage: %.2f\n", 100*stat.TotalUtilCPU.AsApproximateFloat64()/stat.AvailAllocCPU.AsApproximateFloat64())
-	fmt.Fprintf(sb, "Memory utilization percentage: %.2f\n", 100*stat.TotalUtilMem.AsApproximateFloat64()/stat.AvailAllocMem.AsApproximateFloat64())
-	fmt.Fprintln(sb, "```")
+func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport, srScenarioReport gsh.Scenario) error {
+	clusterName, err := apputil.GetClusterName(c.caReportPath)
+	dieOnError(err, "error getting cluster name from ca report path")
+
+	vcaTotalScaleupCost, err := sumInstancePrices(pa, caScenarioReport.ScalingResult.ScaledUpNodes)
+	if err != nil {
+		return err
+	}
+	srTotalScaleupCost, err := sumInstancePrices(pa, srScenarioReport.ScalingResult.ScaledUpNodes)
+	if err != nil {
+		return err
+	}
+	caResourceStats, err := caScenarioReport.ScalingResult.GetResourceStat()
+	if err != nil {
+		return err
+	}
+	srResourceStats, err := srScenarioReport.ScalingResult.GetResourceStat()
+	if err != nil {
+		return err
+	}
+
+	mkBuilder := md.NewMarkdown(os.Stdout).
+		H1("Virtual CA vs Scaling Recommender Comparison Report").
+		PlainTextf("Cluster: %s", clusterName).
+		PlainTextf("Provider: %s", c.provider).
+		H2("Scaled-Up NodeGroups").
+		PlainText("This section compares the node groups that are scaled by Virtual CA and Scaling Recommender").
+		H3("Virtual CA").
+		Table(md.TableSet{
+			Header: []string{"NodeGroup", "Count"},
+			Rows:   mapToRows(caScenarioReport.ScalingResult.ScaledUpNodeGroups),
+		}).
+		H3("Scaling Recommender").
+		Table(md.TableSet{
+			Header: []string{"NodeGroup", "Count"},
+			Rows:   mapToRows(srScenarioReport.ScalingResult.ScaledUpNodeGroups),
+		}).
+		H2("Total Cost of Scaled-Up Nodes").
+		PlainText("This section compares the total cost of the scaled-up nodes by Virtual CA and Scaling Recommender").
+		Table(md.TableSet{
+			Header: []string{"Virtual CA", "Scaling Recommender"},
+			Rows: [][]string{
+				{fmt.Sprintf("$%.2f", vcaTotalScaleupCost), fmt.Sprintf("$%.2f", srTotalScaleupCost)},
+			},
+		}).
+		H2("Resource Utilization").
+		PlainText("This section compares the resource utilization by Virtual CA and Scaling Recommender for scaled up nodes").
+		H3("Virtual CA").
+		PlainText(md.Bold("Resource: CPU")).
+		BulletList(
+			fmt.Sprintf("*Total Allocated CPU:* %s", caResourceStats.AvailAllocCPU.String()),
+			fmt.Sprintf("*Total Utilized CPU:* %s", caResourceStats.TotalUtilCPU.String()),
+			fmt.Sprintf("*Total Allocated Memory:* %s", caResourceStats.AvailAllocMem.String()),
+			fmt.Sprintf("*Total Utilized Memory:* %s", caResourceStats.TotalUtilMem.String())).
+		LF().
+		PlainTextf("**CPU Utilization Percentage:** %.2f%%", 100*caResourceStats.TotalUtilCPU.AsApproximateFloat64()/caResourceStats.AvailAllocCPU.AsApproximateFloat64()).
+		PlainTextf("**Memory Utilization Percentage:** %.2f%%", 100*caResourceStats.TotalUtilMem.AsApproximateFloat64()/caResourceStats.AvailAllocMem.AsApproximateFloat64()).
+		H3("Scaling Recommender").
+		PlainText(md.Bold("Resource: CPU")).
+		BulletList(
+			fmt.Sprintf("*Total Allocated CPU:* %s", srResourceStats.AvailAllocCPU.String()),
+			fmt.Sprintf("*Total Utilized CPU:* %s", srResourceStats.TotalUtilCPU.String()),
+			fmt.Sprintf("*Total Allocated Memory:* %s", srResourceStats.AvailAllocMem.String()),
+			fmt.Sprintf("*Total Utilized Memory:* %s", srResourceStats.TotalUtilMem.String())).
+		LF().
+		PlainTextf("**CPU Utilization Percentage:** %.2f%%", 100*srResourceStats.TotalUtilCPU.AsApproximateFloat64()/srResourceStats.AvailAllocCPU.AsApproximateFloat64()).
+		PlainTextf("**Memory Utilization Percentage:** %.2f%%", 100*srResourceStats.TotalUtilMem.AsApproximateFloat64()/srResourceStats.AvailAllocMem.AsApproximateFloat64()).
+		H2("Unscheduled Pods").
+		PlainText("This section compares the unscheduled pods post scaling attempts by Virtual CA and Scaling Recommender").
+		H3("Virtual CA").
+		PlainTextf("*Count:* %d", len(caScenarioReport.ScalingResult.PendingUnscheduledPods))
+
+	if len(caScenarioReport.ScalingResult.PendingUnscheduledPods) > 0 {
+		mkBuilder.BulletList(unscheduledPodNames(caScenarioReport)...)
+	}
+	mkBuilder.H3("Scaling Recommender").
+		PlainTextf("*Count:* %d", len(srScenarioReport.ScalingResult.PendingUnscheduledPods))
+
+	if len(srScenarioReport.ScalingResult.PendingUnscheduledPods) > 0 {
+		mkBuilder.BulletList(unscheduledPodNames(srScenarioReport)...)
+	}
+
+	return mkBuilder.Build()
 }
