@@ -18,7 +18,7 @@ recorderPoYaml="/tmp/scaling-history-recorder.yaml"
 envsubst < specs/recorder.yaml > "$recorderPoYaml"
 echo "Substituted env variables in specs/recorder.yaml and wrote to $recorderPoYaml"
 #kubectl delete -f "$recorderPoYaml" || echo "NOTE: recorder pods not already deployed."
-kubectl delete -n robot po scaling-history-recorder || "NOTE: recorder pod is not already deployed."
+kubectl delete -n robot po scaling-history-recorder || echo "NOTE: recorder pod is not already deployed."
 kubectl delete cm -n robot scaling-history-recorder-config || echo "NOTE: recorder config not already deployed."
 
 waitSecs=4
