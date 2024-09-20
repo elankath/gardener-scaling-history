@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/elankath/gardener-scaling-common/resutil"
-	"golang.org/x/sync/errgroup"
 	"io"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/utils/set"
@@ -1009,36 +1008,58 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 	deltaWork.DeployParallel = 1
 
 	// deploy kube-system pods and pods that have assigned Node names first.
-	slices.SortFunc(podsToDeploy, apputil.SortPodInfoForDeployment)
-	partitionedPods := lo.PartitionBy(podsToDeploy, func(item gsc.PodInfo) string {
-		if item.Spec.Affinity != nil && item.Spec.Affinity.NodeAffinity != nil {
-			return "a"
-		} else {
-			return "b"
+	//slices.SortFunc(podsToDeploy, apputil.SortPodInfoForDeployment)
+	//partitionedPods := lo.PartitionBy(podsToDeploy, func(item gsc.PodInfo) string {
+	//	if item.Spec.Affinity != nil && item.Spec.Affinity.NodeAffinity != nil {
+	//		return "a"
+	//	} else {
+	//		return "b"
+	//	}
+	//})
+	//var deployCount = 0
+	podGroups := lo.GroupBy(podsToDeploy, func(p gsc.PodInfo) string {
+		if p.Spec.NodeName != "" {
+			return "scheduledPod"
 		}
+		return "unscheduledPod"
 	})
-	var deployCount = 0
-	for _, partition := range partitionedPods {
-		chunks := lo.Chunk(partition, deltaWork.DeployParallel)
-		for j, chunk := range chunks {
-			var g errgroup.Group
-			for _, podInfo := range chunk {
-				pod := getCorePodFromPodInfo(podInfo)
-				deployCount++
-				g.Go(func() error { //Note: for loop lambdas were fixed in Go 1.22 https://tip.golang.org/doc/go1.22#language
-					err = doDeployPod(ctx, clientSet, replayCount, deployCount, pod)
-					if err != nil {
-						return err
-					}
-					return nil
-				})
-			}
-			if err := g.Wait(); err != nil {
-				return err
-			}
-			slog.Info("applyDeltaWork finished deploying pod chunk", "chunkIndex", j, "deployCount", deployCount)
+	deployCount := 0
+	for _, pod := range podGroups["scheduledPod"] {
+		deployCount++
+		err = doDeployPod(ctx, clientSet, replayCount, deployCount, getCorePodFromPodInfo(pod))
+		if err != nil {
+			return err
 		}
 	}
+	for _, pod := range podGroups["unscheduledPod"] {
+		deployCount++
+		err = doDeployPod(ctx, clientSet, replayCount, deployCount, getCorePodFromPodInfo(pod))
+		if err != nil {
+			return err
+		}
+	}
+	slog.Info("applyDeltaWork finished deploying pods", "deployCount", deployCount)
+	//for _, partition := range partitionedPods {
+	//	chunks := lo.Chunk(partition, deltaWork.DeployParallel)
+	//	for j, chunk := range chunks {
+	//		var g errgroup.Group
+	//		for _, podInfo := range chunk {
+	//			pod := getCorePodFromPodInfo(podInfo)
+	//			deployCount++
+	//			g.Go(func() error { //Note: for loop lambdas were fixed in Go 1.22 https://tip.golang.org/doc/go1.22#language
+	//				err = doDeployPod(ctx, clientSet, replayCount, deployCount, pod)
+	//				if err != nil {
+	//					return err
+	//				}
+	//				return nil
+	//			})
+	//		}
+	//		if err := g.Wait(); err != nil {
+	//			return err
+	//		}
+	//		slog.Info("applyDeltaWork finished deploying pod chunk", "chunkIndex", j, "deployCount", deployCount)
+	//	}
+	//}
 
 	err = deleteNamespaces(ctx, clientSet, deltaWork.NamespaceWork.ToDelete.UnsortedList()...)
 	if err != nil {
@@ -1354,23 +1375,23 @@ func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
 	//operator: In
 	//values:
 	//	- shoot--hc-eu30--prod-gc-orc-default-z1-5b99b-4rttc
-	if new.Spec.Affinity != nil && new.Spec.Affinity.NodeAffinity != nil && new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
-		ns := new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
-		for _, nsTerm := range ns.NodeSelectorTerms {
-			for _, matchf := range nsTerm.MatchFields {
-				if matchf.Key == "metadata.name" {
-					new.Spec.Affinity.NodeAffinity = nil
-					slog.Info("Clearing NodeAffinity from pod", "podName", new.Name, "nodeAffinity", matchf.Values)
-					break
-				}
-			}
-		}
-	}
+	//if new.Spec.Affinity != nil && new.Spec.Affinity.NodeAffinity != nil && new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+	//	ns := new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+	//	for _, nsTerm := range ns.NodeSelectorTerms {
+	//		for _, matchf := range nsTerm.MatchFields {
+	//			if matchf.Key == "metadata.name" {
+	//				new.Spec.Affinity.NodeAffinity = nil
+	//				slog.Info("Clearing NodeAffinity from pod", "podName", new.Name, "nodeAffinity", matchf.Values)
+	//				break
+	//			}
+	//		}
+	//	}
+	//}
 	new.Spec.PriorityClassName = ""
 	new.Spec.PreemptionPolicy = nil
 	new.Spec.Priority = nil
-	new.NodeName = ""
-	new.Spec.NodeName = ""
+	//new.NodeName = ""
+	//new.Spec.NodeName = ""
 	return
 }
 
@@ -1501,10 +1522,10 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 		return
 	}
 	cs.Pods = filterAppPods(allPods)
-	nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
-		return n.Name
-	})
-	clearNodeNamesNotIn(cs.Pods, nodeNames)
+	//nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
+	//	return n.Name
+	//})
+	//clearNodeNamesNotIn(cs.Pods, nodeNames)
 	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
 	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
 	if err != nil {
@@ -1552,12 +1573,12 @@ func findNodeTemplate(nodeTemplates map[string]gsc.NodeTemplate, poolName, zone 
 }
 
 func clearNodeNamesNotIn(pods []gsc.PodInfo, nodeNames []string) {
-	//nameSet := sets.New(nodeNames...)
+	nameSet := sets.New(nodeNames...)
 	for i := range pods {
-		//if !nameSet.Has(pods[i].Spec.NodeName) {
-		pods[i].NodeName = ""
-		pods[i].Spec.NodeName = ""
-		//}
+		if !nameSet.Has(pods[i].Spec.NodeName) {
+			pods[i].NodeName = ""
+			pods[i].Spec.NodeName = ""
+		}
 	}
 }
 
@@ -1672,13 +1693,13 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 	}
 	nodeUtilizationMap := make(map[string]corev1.ResourceList)
 	emptyNodeNames := allNodeNames.Clone()
-	scenario.ClusterSnapshot.Pods = []gsc.PodInfo{}
+	//scenario.ClusterSnapshot.Pods = []gsc.PodInfo{}
 	for _, pod := range pods {
 		podInfo := recorder.PodInfoFromPod(&pod)
-		podInfoCopy := podInfo
-		podInfoCopy.Spec.NodeName = ""
-		podInfoCopy.NodeName = ""
-		scenario.ClusterSnapshot.Pods = append(scenario.ClusterSnapshot.Pods, podInfoCopy)
+		//podInfoCopy := podInfo
+		//podInfoCopy.Spec.NodeName = ""
+		//podInfoCopy.NodeName = ""
+		//scenario.ClusterSnapshot.Pods = append(scenario.ClusterSnapshot.Pods, podInfoCopy)
 		// FIXME: BUGGY
 		//if podInfo.PodScheduleStatus == gsc.PodUnscheduled || podInfo.PodScheduleStatus == gsc.PodSchedulePending || pod.Spec.NodeName == "" {
 		if pod.Spec.NodeName == "" {
