@@ -1375,18 +1375,18 @@ func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
 	//operator: In
 	//values:
 	//	- shoot--hc-eu30--prod-gc-orc-default-z1-5b99b-4rttc
-	//if new.Spec.Affinity != nil && new.Spec.Affinity.NodeAffinity != nil && new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
-	//	ns := new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
-	//	for _, nsTerm := range ns.NodeSelectorTerms {
-	//		for _, matchf := range nsTerm.MatchFields {
-	//			if matchf.Key == "metadata.name" {
-	//				new.Spec.Affinity.NodeAffinity = nil
-	//				slog.Info("Clearing NodeAffinity from pod", "podName", new.Name, "nodeAffinity", matchf.Values)
-	//				break
-	//			}
-	//		}
-	//	}
-	//}
+	if new.Spec.Affinity != nil && new.Spec.Affinity.NodeAffinity != nil && new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution != nil {
+		ns := new.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		for _, nsTerm := range ns.NodeSelectorTerms {
+			for _, matchf := range nsTerm.MatchFields {
+				if matchf.Key == "metadata.name" {
+					new.Spec.Affinity.NodeAffinity = nil
+					slog.Info("Clearing NodeAffinity from pod", "podName", new.Name, "nodeAffinity", matchf.Values)
+					break
+				}
+			}
+		}
+	}
 	new.Spec.PriorityClassName = ""
 	new.Spec.PreemptionPolicy = nil
 	new.Spec.Priority = nil
@@ -1522,10 +1522,10 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 		return
 	}
 	cs.Pods = filterAppPods(allPods)
-	//nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
-	//	return n.Name
-	//})
-	//clearNodeNamesNotIn(cs.Pods, nodeNames)
+	nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
+		return n.Name
+	})
+	clearNodeNamesNotIn(cs.Pods, nodeNames)
 	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
 	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
 	if err != nil {
@@ -1735,6 +1735,11 @@ func GetNodeGroupNameFromMCCName(namespace, mccName string) string {
 func constructNodeTemplateFromMCC(mcc gsh.MachineClassInfo) gsc.NodeTemplate {
 	mccLabels := maps.Clone(mcc.Labels)
 	mccLabels["node.kubernetes.io/instance-type"] = mcc.InstanceType
+	for k := range mccLabels {
+		if strings.Count(k, "/") > 1 {
+			delete(mccLabels, k)
+		}
+	}
 	return gsc.NodeTemplate{
 		Name:         GetNodeGroupNameFromMCCName(mcc.Namespace, mcc.Name),
 		Capacity:     mcc.Capacity,
