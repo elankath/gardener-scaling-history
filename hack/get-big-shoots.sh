@@ -27,6 +27,10 @@ declare allShootInfos
 for p in "${projectNames[@]}"; do
   echo "Analyzing project $p in landscape $landscapeName..."
   shootInfosFile="/tmp/shoot-infos/${landscapeName}_${p}.json"
+  if [[ "$p" == "agrirouter" ]]; then
+    echo "Skipping $p..."
+    continue
+  fi
   if [[ -f "$shootInfosFile" ]]; then
     echo "Reading $shootInfosFile..."
     shootInfos=$(cat "$shootInfosFile")

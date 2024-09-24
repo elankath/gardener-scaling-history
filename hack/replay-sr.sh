@@ -42,7 +42,7 @@ if [[ -z "$INPUT_DATA_PATH" ]]; then
   sleep 6
   echo "Started port-forwarding with PID: $pid"
   echo "Downloading report list..."
-  reportList=$(curl localhost:8080/reports)
+  reportList=$(curl localhost:8080/api/reports)
   printf ">> Found reports \n: %s" $reportList
   echo
   echo "Kindly Select a report for which to run the recommender to produce report:"

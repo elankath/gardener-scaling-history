@@ -25,10 +25,10 @@ pid=$!
 sleep 7
 echo "Started port-forwarding with PID: $pid"
 echo "Downloading report list..."
-reportList=$(curl localhost:8080/reports)
+reportList=$(curl localhost:8080/api/reports)
 echo "Found reports: $reportList"
 for reportName in ${(f)reportList};  do
-  url="http://localhost:8080/reports/$reportName"
+  url="http://localhost:8080/api/reports/$reportName"
   echo "Downloading report from url $url into tmp ..."
   curl -kL "$url" -o "/tmp/$reportName"
 done

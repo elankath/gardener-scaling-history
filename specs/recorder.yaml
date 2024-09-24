@@ -3,14 +3,14 @@ kind: PersistentVolumeClaim
 metadata:
   labels:
     app.kubernetes.io/name: "scaling-history-recorder"
-  name: shr-pvc
-  namespace: robot
+  name: scaling-history-data
+  namespace: mcm-ca-team
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 30Gi
+      storage: 50Gi
   storageClassName: default
 ---
 
@@ -21,7 +21,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: scaling-history-recorder
-  namespace: robot
+  namespace: mcm-ca-team
   labels:
     app.kubernetes.io/name: "scaling-history-recorder"
     networking.gardener.cloud/to-dns: allowed
@@ -32,7 +32,8 @@ metadata:
     gardener.cloud/role: controlplane
 spec:
   terminationGracePeriodSeconds: 30
-  serviceAccount: "robot"
+  #serviceAccountName: "robot"
+  serviceAccountName: "default"
   containers:
     - name: recorder
       image: ${DOCKERHUB_USER}/scaling-history-recorder:latest
@@ -40,36 +41,36 @@ spec:
         - containerPort: 8080
       resources:
         requests:
-          memory: 12Gi
+          memory: 10Gi
         limits:
           memory: 14Gi
       env:
         - name: MODE
           value: in-utility-cluster
         - name: DB_DIR
-          value: /db
+          value: /data/db
         - name: REPORT_DIR
-          value: /reports
+          value: /data/reports
       volumeMounts:
-        - mountPath: /reports
-          name: reports-dir
-        - mountPath: /db
-          name: db-dir
+#        - mountPath: /reports
+#          name: reports-dir
+        - mountPath: /data
+          name: data-dir
         - mountPath: /app/secrets/gardens
-          name: robot-gardens
+          name: gardens
         - mountPath: /cfg
           name: recorder-config
   volumes:
-    - name: db-dir
+    - name: data-dir
       persistentVolumeClaim:
-        claimName: shr-pvc
-    - name: reports-dir
-      persistentVolumeClaim:
-        claimName: shr-reports
-    - name: robot-gardens
+        claimName: scaling-history-data
+#    - name: reports-dir
+#      persistentVolumeClaim:
+#        claimName: scaling-history-reports
+    - name: gardens
       secret:
         defaultMode: 420
-        secretName: robot-gardens
+        secretName: gardens
     - name: recorder-config
       projected:
         sources:

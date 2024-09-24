@@ -42,7 +42,7 @@ if [[ -z "$INPUT_DATA_PATH" ]]; then
   sleep 6
   echo "Started port-forwarding with PID: $pid"
   echo "Downloading db list..."
-  dbList=$(curl localhost:8080/db)
+  dbList=$(curl localhost:8080/api/db)
   printf ">> Found recorded databases \n: %s" $dbList
   echo
   echo "Kindly Select a DB for which to run the replayer to produce scenario report:"

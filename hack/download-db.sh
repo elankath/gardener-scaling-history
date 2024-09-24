@@ -25,10 +25,10 @@ pid=$!
 sleep 7
 echo "Started port-forwarding with PID: $pid"
 echo "Downloading db list..."
-dbList=$(curl localhost:8080/db)
+dbList=$(curl localhost:8080/api/db)
 echo "Found databases: $dbList"
 for dbName in ${(f)dbList};  do
-  url="http://localhost:8080/db/$dbName"
+  url="http://localhost:8080/api/db/$dbName"
   echo "Downloading DB from url $url into gen ..."
   curl -kL "$url" -o "gen/$dbName"
 done

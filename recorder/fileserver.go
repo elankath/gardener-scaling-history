@@ -37,10 +37,10 @@ func LaunchFileServer(ctx context.Context, dbDir string, reportDir string) error
 		reportDir:  reportDir,
 	}
 
-	fileServer.mux.HandleFunc("GET /db", fileServer.ListDatabases)
-	fileServer.mux.HandleFunc("GET /db/{dbName}", fileServer.GetDatabase)
-	fileServer.mux.HandleFunc("GET /reports", fileServer.ListReports)
-	fileServer.mux.HandleFunc("GET /reports/{reportName}", fileServer.GetReport)
+	fileServer.mux.HandleFunc("GET /api/db", fileServer.ListDatabases)
+	fileServer.mux.HandleFunc("GET /api/db/{dbName}", fileServer.GetDatabase)
+	fileServer.mux.HandleFunc("GET /api/reports", fileServer.ListReports)
+	fileServer.mux.HandleFunc("GET /api/reports/{reportName}", fileServer.GetReport)
 
 	fileServer.httpServer.Handler = fileServer.mux
 	defer fileServer.httpServer.Shutdown(ctx)
