@@ -657,14 +657,18 @@ func (r *defaultReplayer) Start() error {
 		if err != nil {
 			return err
 		}
-		caCtx, caCancelFn := context.WithCancel(r.ctx)
-		caCmd, err := launchCA(caCtx, r.clientSet, r.params.VirtualClusterKubeConfigPath, caSettings) // must launch CA in go-routine and return processId and error
-		if err != nil {
-			caCancelFn()
-			return err
+		if os.Getenv("NO_AUTO_LAUNCH") == "" {
+			caCtx, caCancelFn := context.WithCancel(r.ctx)
+			caCmd, err := launchCA(caCtx, r.clientSet, r.params.VirtualClusterKubeConfigPath, caSettings) // must launch CA in go-routine and return processId and error
+			if err != nil {
+				caCancelFn()
+				return err
+			}
+			r.scalerCmd = caCmd
+			r.scalerCancelFn = caCancelFn
+		} else {
+			slog.Info("NO_AUTO_LAUNCH is set. Please launch gardener-virtual-autoscaler separately.")
 		}
-		r.scalerCmd = caCmd
-		r.scalerCancelFn = caCancelFn
 	} else {
 		sBytes, err := os.ReadFile(r.params.InputDataPath)
 		if err != nil {
@@ -697,7 +701,7 @@ func (r *defaultReplayer) Start() error {
 			r.scalerCmd = scalerCmd
 			r.scalerCancelFn = srCancelFn
 		} else {
-			slog.Info("NO_LAUNCH_SR is set. Please launch scaling-recommender separately.")
+			slog.Info("NO_AUTO_LAUNCH is set. Please launch scaling-recommender separately.")
 		}
 	}
 	err = r.CleanCluster(r.ctx)
@@ -897,7 +901,7 @@ func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPa
 		err := caCmd.Run()
 		if err != nil {
 			slog.Error("bin/cluster-autoscaler ran into error", "error", err)
-			//os.Exit(9)
+			os.Exit(9)
 		}
 	}()
 	waitSecs := 8
@@ -1623,7 +1627,7 @@ func findNodeTemplate(nodeTemplates map[string]gsc.NodeTemplate, poolName, zone 
 	slog.Info("Parameters passed", "poolName", poolName, "zone", zone)
 	for _, nt := range nodeTemplates {
 		//slog.Info("Node Template zone and labels", "name", nt.Name, "zone", nt.Zone, "labels", nt.Labels)
-		slog.Info("Node capacity", "name", nt.Name, "zone", nt.Zone, "allocatable", nt.Allocatable)
+		slog.Debug("Node capacity", "name", nt.Name, "zone", nt.Zone, "allocatable", nt.Allocatable)
 		if nt.Zone == zone && nt.Labels["worker.gardener.cloud/pool"] == poolName {
 			return &nt
 		}

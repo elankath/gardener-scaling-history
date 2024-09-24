@@ -10,6 +10,8 @@ live,abap,prod-eu30-1
 live,abap,abapcp-prod-us30
 live,hc-can-gc,sacdrgcp-dmi
 live,hc-canary,prod-hna1
+live,hc-eu10,prod-haas
+live,hc-eu10,prod-hna0
 #live,hc-ap11,prod-haas
 #live,hc-ap11,prod-hdl
 #live,hc-ap11,prod-orc

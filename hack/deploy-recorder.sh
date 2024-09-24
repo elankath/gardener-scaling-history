@@ -3,10 +3,10 @@ set -eo pipefail
 
 echoErr() { echo "$@" 1>&2; }
 
-#if [[ -z "$DOCKERHUB_USER" ]]; then
-#  echoErr "Please export DOCKERHUB_USER var before executing this script and ensure you have logged in using 'docker login'"
-#  exit 1
-#fi
+if [[ -z "$DOCKERHUB_USER" ]]; then
+  echoErr "Please export DOCKERHUB_USER var before executing this script and ensure you have logged in using 'docker login'"
+  exit 1
+fi
 
 if [[ ! -f specs/recorder.yaml ]]; then
   echoErr "Please ensure that you are in the base dir of the gardener-scaling-history repo before running this script"
@@ -17,7 +17,7 @@ gardenctl target --garden sap-landscape-live --project garden-ops --shoot utilit
 echo "Getting scrt robot-gardens..."
 kubectl get secret -n robot robot-gardens -oyaml > /tmp/robot-gardens.yaml
 echo "Modifying scrt robot-gardens for mcm-ca-team ns..."
-cat /tmp/robot-garden.yaml | sed 's/namespace: robot/namespace: mcm-ca-team/; s/name: robot-gardens/name: gardens/; /resourceVersion/d; /uid/d; /creationTimestamp/d' > /tmp/gardens.yaml
+cat /tmp/robot-gardens.yaml | sed 's/namespace: robot/namespace: mcm-ca-team/; s/name: robot-gardens/name: gardens/; /resourceVersion/d; /uid/d; /creationTimestamp/d' > /tmp/gardens.yaml
 kubectl apply -f /tmp/gardens.yaml
 
 
