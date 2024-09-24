@@ -1300,43 +1300,49 @@ func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clus
 }
 
 func computePodWork(ctx context.Context, clientSet *kubernetes.Clientset, snapshotPods []gsc.PodInfo, pendingPods []corev1.Pod) (podWork PodWork, err error) {
-	virtualNodes, err := clientutil.ListAllNodes(ctx, clientSet)
-	if err != nil {
-		err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
-		return
-	}
-	virtualNodeNames := lo.Map(virtualNodes, func(item corev1.Node, index int) string {
-		return item.Name
-	})
-	podWork.ToDelete, err = getPodNamesNotAssignedToNodes(ctx, clientSet, virtualNodeNames)
+	//virtualNodes, err := clientutil.ListAllNodes(ctx, clientSet)
+	//if err != nil {
+	//	err = fmt.Errorf("cannot list the nodes in virtual cluster: %w", err)
+	//	return
+	//}
+	//virtualNodeNames := lo.Map(virtualNodes, func(item corev1.Node, index int) string {
+	//	return item.Name
+	//})
+	//podWork.ToDelete, err = getPodNamesNotAssignedToNodes(ctx, clientSet, virtualNodeNames)
 	virtualPods, err := clientutil.ListAllPods(ctx, clientSet)
 	//virtualPods, err := clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
 		return
 	}
-	virtualPods = append(virtualPods, pendingPods...)
-	virtualPodsByName := lo.Associate(virtualPods, func(item corev1.Pod) (string, gsc.PodInfo) {
-		return item.Name, recorder.PodInfoFromPod(&item)
-	})
-	clusterSnapshotPodsByName := lo.KeyBy(snapshotPods, func(item gsc.PodInfo) string {
-		return item.Name
-	})
-
-	for _, podInfo := range virtualPodsByName {
-		snapshotPodInfo, ok := clusterSnapshotPodsByName[podInfo.Name]
-		if ok && (snapshotPodInfo.NominatedNodeName == podInfo.NominatedNodeName || snapshotPodInfo.NodeName == podInfo.NodeName) {
-			continue
+	podWork.ToDelete = sets.New(lo.Map(virtualPods, func(p corev1.Pod, _ int) types.NamespacedName {
+		return types.NamespacedName{
+			Namespace: p.Namespace,
+			Name:      p.Name,
 		}
-		podWork.ToDelete.Insert(types.NamespacedName{Namespace: podInfo.Namespace, Name: podInfo.Name})
-		delete(virtualPodsByName, podInfo.Name)
-	}
+	})...)
+	//virtualPods = append(virtualPods, pendingPods...)
+	//virtualPodsByName := lo.Associate(virtualPods, func(item corev1.Pod) (string, gsc.PodInfo) {
+	//	return item.Name, recorder.PodInfoFromPod(&item)
+	//})
+	//clusterSnapshotPodsByName := lo.KeyBy(snapshotPods, func(item gsc.PodInfo) string {
+	//	return item.Name
+	//})
+
+	//for _, podInfo := range virtualPodsByName {
+	//	snapshotPodInfo, ok := clusterSnapshotPodsByName[podInfo.Name]
+	//	if ok && (snapshotPodInfo.NominatedNodeName == podInfo.NominatedNodeName || snapshotPodInfo.NodeName == podInfo.NodeName) {
+	//		continue
+	//	}
+	//	podWork.ToDelete.Insert(types.NamespacedName{Namespace: podInfo.Namespace, Name: podInfo.Name})
+	//	delete(virtualPodsByName, podInfo.Name)
+	//}
 
 	for _, podInfo := range snapshotPods {
-		_, ok := virtualPodsByName[podInfo.Name]
-		if ok {
-			continue
-		}
+		//_, ok := virtualPodsByName[podInfo.Name]
+		//if ok {
+		//	continue
+		//}
 		podInfo = adjustPodInfo(podInfo)
 		podWork.ToDeploy = append(podWork.ToDeploy, podInfo)
 	}
@@ -1708,7 +1714,10 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 			scenario.ScalingResult.ScheduledPods = append(scenario.ScalingResult.ScheduledPods, podInfo)
 			emptyNodeNames.Delete(pod.Spec.NodeName)
 		}
-		if !scaledUpNodeNames.Has(pod.Spec.NodeName) {
+		//if !scaledUpNodeNames.Has(pod.Spec.NodeName) {
+		//	continue
+		//}
+		if pod.Spec.NodeName == "" {
 			continue
 		}
 		util, ok := nodeUtilizationMap[pod.Spec.NodeName]
