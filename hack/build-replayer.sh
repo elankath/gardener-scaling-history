@@ -20,6 +20,11 @@ if [[ "$mode" != "local" && "$mode" != "remote" ]]; then
   exit 1
 fi
 
+if [[ -z "$GOPATH" ]]; then
+  GOPATH=$(go env GOPATH)
+  echo "GOPATH is not set. Assuming default: $GOPATH"
+fi
+
 if [[ "$mode" == "local" ]]; then
   goos=$(go env GOOS)
   goarch=$(go env GOARCH)
