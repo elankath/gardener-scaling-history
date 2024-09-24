@@ -1999,7 +1999,7 @@ func GetReplayScalingRecommenderReportFormat(replayCAReportPath string) (reportF
 	if err != nil {
 		return
 	}
-	reportFormat = fullClusterName + "_replay-sr-%d.json"
+	reportFormat = fullClusterName + "_sr-replay-%d.json"
 	//.strings.TrimSuffix(fileNameWithoutExtension, "_ca-replay") + "-report-replay.json"
 	return
 }
