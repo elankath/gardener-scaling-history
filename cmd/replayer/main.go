@@ -81,8 +81,7 @@ func main() {
 	}
 	replayInterval := GetDuration("REPLAY_INTERVAL", replayer.DefaultReplayInterval)
 
-	ctx, cancelFn := context.WithCancel(context.Background())
-	defaultReplayer, err := replayer.NewDefaultReplayer(ctx, gsh.ReplayerParams{
+	replayParams := gsh.ReplayerParams{
 		InputDataPath:                inputDataPath,
 		ReportDir:                    reportDir,
 		VirtualAutoScalerConfigPath:  virtualAutoscalerConfig,
@@ -90,24 +89,44 @@ func main() {
 		DeployParallel:               deployParallel,
 		ReplayInterval:               replayInterval,
 		//RecurConfigUpdate:            recurConfigUpdate,
-	})
+	}
+
+	exitCode := launch(replayParams)
+	if exitCode == 0 {
+		return
+	} else {
+		os.Exit(exitCode)
+	}
+
+}
+
+func launch(replayParams gsh.ReplayerParams) int {
+	ctx, cancelFn := context.WithCancel(context.Background())
+	defer cancelFn()
+	defaultReplayer, err := replayer.NewDefaultReplayer(ctx, replayParams)
 	if err != nil {
 		slog.Error("cannot construct the default replayer", "error", err)
-		os.Exit(1)
+		return 1
 	}
-	go func() {
-		apputil.WaitForSignalAndShutdown(ctx, cancelFn)
-		err = defaultReplayer.Close()
+	defer func() {
+		err := defaultReplayer.Close()
 		if err != nil {
 			slog.Error("problem closing replayer", "error", err)
 		}
 	}()
+	go func() {
+		apputil.WaitForSignalAndShutdown(ctx, cancelFn)
+		//err = defaultReplayer.Close()
+		//if err != nil {
+		//	slog.Error("problem closing replayer", "error", err)
+		//}
+	}()
 
 	err = defaultReplayer.Start()
 	if err != nil {
-		slog.Error("Replayer had an issue.", "error", err)
-		os.Exit(1)
+		slog.Error("replayer had an issue.", "error", err)
+		return 1
 	}
 	slog.Info("Replay Successfully Finished")
-
+	return 0
 }
