@@ -42,7 +42,7 @@ Repository providers 2 apps:
 1. Port forward the recorder Pod's 8080 port locally 
    1. `kubectl port-forward -n robot pod/scaling-history-recorder 8080:8080`
 2. Use curl to list recorder SQLite DBs: 
-   1. `curl localhost:8080/db`
+   1. `curl localhost:8080/api/db`
    1. This will list the `.db` files
    ```
    live_hc-ap11_prod-haas.db
@@ -54,7 +54,7 @@ Repository providers 2 apps:
    live_hc-eu20_prod-az-orc.db
    ```
 1. Use curl to download a specific DB 
-   1.  `cd /tmp; curl -kLO localhost:8080/db/live_hc-ap11_prod-hdl.db`
+   1.  `cd /tmp; curl -kLO localhost:8080/api/db/live_hc-ap11_prod-hdl.db`
 1. End the port-forwarding.
 1. Use any DB Browser of your choice to open downloaded DB
    

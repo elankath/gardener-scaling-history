@@ -1,29 +1,25 @@
+---
 apiVersion: v1
-kind: PersistentVolumeClaim
+kind: Service
 metadata:
-  labels:
-    app.kubernetes.io/name: "scaling-history-recorder"
-  name: scaling-history-data
+  name: scaling-history-svc
   namespace: mcm-ca-team
 spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 50Gi
-  storageClassName: default
----
-
-
-
+  ports:
+    - port: 80
+      protocol: TCP
+      targetPort: 8080
+  selector:
+    app.kubernetes.io/name: scaling-history-app
+  type: LoadBalancer
 ---
 apiVersion: v1
 kind: Pod
 metadata:
-  name: scaling-history-recorder
+  name: scaling-history-app
   namespace: mcm-ca-team
   labels:
-    app.kubernetes.io/name: "scaling-history-recorder"
+    app.kubernetes.io/name: "scaling-history-app"
     networking.gardener.cloud/to-dns: allowed
     networking.gardener.cloud/to-runtime-apiserver: allowed
     networking.resources.gardener.cloud/to-kube-apiserver-tcp-443: allowed
@@ -31,19 +27,28 @@ metadata:
     app: kubernetes
     gardener.cloud/role: controlplane
 spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key:  "app.kubernetes.io/name"
+                operator: In
+                values:
+                  - "scaling-history-recorder"
+          topologyKey: "kubernetes.io/hostname"
   terminationGracePeriodSeconds: 30
-  #serviceAccountName: "robot"
   serviceAccountName: "default"
   containers:
-    - name: recorder
-      image: ${DOCKERHUB_USER}/scaling-history-recorder:latest
+    - name: app
+      image: ${DOCKERHUB_USER}/scaling-history-app:latest
       ports:
         - containerPort: 8080
       resources:
         requests:
-          memory: 10Gi
+          memory: 500Mi
         limits:
-          memory: 14Gi
+          memory: 1Gi
       env:
         - name: MODE
           value: in-utility-cluster
@@ -54,18 +59,12 @@ spec:
       volumeMounts:
         - mountPath: /data
           name: data-dir
-        - mountPath: /app/secrets/gardens
-          name: gardens
         - mountPath: /cfg
           name: recorder-config
   volumes:
     - name: data-dir
       persistentVolumeClaim:
         claimName: scaling-history-data
-    - name: gardens
-      secret:
-        defaultMode: 420
-        secretName: gardens
     - name: recorder-config
       projected:
         sources:

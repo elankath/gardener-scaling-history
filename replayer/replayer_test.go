@@ -81,7 +81,7 @@ func TestGetReplayScalingRecommenderReportFormat(t *testing.T) {
 	}
 	assert.Nil(t, err)
 	t.Logf("replayCAReportPath: %q", replaySRReportFmt)
-	assert.Equal(t, "live_hc-eu30_prod-gc-haas_replay-sr-%d.json", replaySRReportFmt)
+	assert.Equal(t, "live_hc-eu30_prod-gc-haas_sr-replay-%d.json", replaySRReportFmt)
 }
 
 //

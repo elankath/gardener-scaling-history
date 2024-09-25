@@ -70,6 +70,8 @@ type defaultReplayer struct {
 	lastScalingRun           ScalingRun
 	inputScenario            gsh.Scenario
 	lastScenario             gsh.Scenario
+	kvclCmd                  *exec.Cmd
+	scalerCmd                *exec.Cmd
 }
 
 type ScalingRun struct {
@@ -91,6 +93,8 @@ var _ gsh.Replayer = (*defaultReplayer)(nil)
 func NewDefaultReplayer(ctx context.Context, params gsh.ReplayerParams) (gsh.Replayer, error) {
 	var replayMode ReplayMode
 	var dataAccess *db.DataAccess
+	var kvclCmd *exec.Cmd
+	var err error
 	if strings.HasSuffix(params.InputDataPath, ".db") {
 		replayMode = ReplayCAMode
 		dataAccess = db.NewDataAccess(params.InputDataPath)
@@ -101,7 +105,7 @@ func NewDefaultReplayer(ctx context.Context, params gsh.ReplayerParams) (gsh.Rep
 	}
 	kvclCtx, kvclCancelFn := context.WithCancel(ctx)
 	if os.Getenv("NO_AUTO_LAUNCH") == "" {
-		err := launchKvcl(kvclCtx)
+		kvclCmd, err = launchKvcl(kvclCtx)
 		if err != nil {
 			kvclCancelFn()
 			return nil, err
@@ -121,14 +125,21 @@ func NewDefaultReplayer(ctx context.Context, params gsh.ReplayerParams) (gsh.Rep
 		return nil, fmt.Errorf("cannot create clientset: %w", err)
 	}
 
-	return &defaultReplayer{
+	dr := &defaultReplayer{
 		ctx:          ctx,
 		kvclCancelFn: kvclCancelFn,
 		dataAccess:   dataAccess,
 		replayMode:   replayMode,
 		clientSet:    clientset,
 		params:       params,
-	}, nil
+		kvclCmd:      kvclCmd,
+	}
+
+	context.AfterFunc(dr.ctx, func() {
+		_ = dr.doClose()
+	})
+
+	return dr, nil
 }
 
 func writeAutoscalerConfig(id string, autoscalerConfig gsc.AutoscalerConfig, path string) error {
@@ -635,6 +646,9 @@ func (r *defaultReplayer) Start() error {
 		if len(r.scaleUpEvents) == 0 {
 			return fmt.Errorf("no TriggeredScaleUp events found in recorded data")
 		}
+		for i, suEvent := range r.scaleUpEvents {
+			slog.Info("Loaded scale up event", "index", i, "event", suEvent)
+		}
 		slog.Info("Replayer started in replayFromDB mode")
 		reportFileFormat := apputil.FilenameWithoutExtension(r.params.InputDataPath) + "_ca-replay-%d.json"
 		r.reportPathFormat = path.Join(r.params.ReportDir, reportFileFormat)
@@ -643,13 +657,18 @@ func (r *defaultReplayer) Start() error {
 		if err != nil {
 			return err
 		}
-		caCtx, caCancelFn := context.WithCancel(r.ctx)
-		err = launchCA(caCtx, r.clientSet, r.params.VirtualClusterKubeConfigPath, caSettings) // must launch CA in go-routine and return processId and error
-		if err != nil {
-			caCancelFn()
-			return err
+		if os.Getenv("NO_AUTO_LAUNCH") == "" {
+			caCtx, caCancelFn := context.WithCancel(r.ctx)
+			caCmd, err := launchCA(caCtx, r.clientSet, r.params.VirtualClusterKubeConfigPath, caSettings) // must launch CA in go-routine and return processId and error
+			if err != nil {
+				caCancelFn()
+				return err
+			}
+			r.scalerCmd = caCmd
+			r.scalerCancelFn = caCancelFn
+		} else {
+			slog.Info("NO_AUTO_LAUNCH is set. Please launch gardener-virtual-autoscaler separately.")
 		}
-		r.scalerCancelFn = caCancelFn
 	} else {
 		sBytes, err := os.ReadFile(r.params.InputDataPath)
 		if err != nil {
@@ -674,14 +693,15 @@ func (r *defaultReplayer) Start() error {
 		srCtx, srCancelFn := context.WithCancel(r.ctx)
 		r.reportPathFormat = path.Join(r.params.ReportDir, reportFileFormat)
 		if os.Getenv("NO_AUTO_LAUNCH") == "" {
-			err = launchScalingRecommender(srCtx, r.params.VirtualClusterKubeConfigPath, r.params.InputDataPath) // must launch scaling recommender in go-routine and return processId and error
+			scalerCmd, err := launchScalingRecommender(srCtx, r.params.VirtualClusterKubeConfigPath, r.params.InputDataPath) // must launch scaling recommender in go-routine and return processId and error
 			if err != nil {
 				srCancelFn()
 				return err
 			}
+			r.scalerCmd = scalerCmd
 			r.scalerCancelFn = srCancelFn
 		} else {
-			slog.Info("NO_LAUNCH_SR is set. Please launch scaling-recommender separately.")
+			slog.Info("NO_AUTO_LAUNCH is set. Please launch scaling-recommender separately.")
 		}
 	}
 	err = r.CleanCluster(r.ctx)
@@ -691,33 +711,64 @@ func (r *defaultReplayer) Start() error {
 	return r.Replay()
 }
 
-func launchKvcl(ctx context.Context) error {
+func (r *defaultReplayer) doClose() error {
+	//err := r.dataAccess.Close()
+	//if err != nil {
+	//	return err
+	//}
+	//r.informerFactory.Shutdown()
+	//r.controlInformerFactory.Shutdown()
+	//return nil
+
+	if r.kvclCmd != nil && r.kvclCmd.Process != nil {
+		slog.Info("Killing kvcl...")
+		//r.kvclCancelFn()
+		err := r.kvclCmd.Process.Kill()
+		if err != nil {
+			slog.Error("cannot kill kvcl", "error", err)
+			return err
+		}
+	}
+	if r.scalerCmd != nil && r.scalerCmd.Process != nil {
+		slog.Info("Killing scaler proces...")
+		//r.scalerCancelFn()
+		err := r.scalerCmd.Process.Kill()
+		if err != nil {
+			slog.Error("cannot kill scaler", "error", err)
+			return err
+		}
+	}
+	return r.dataAccess.Close()
+}
+
+func launchKvcl(ctx context.Context) (*exec.Cmd, error) {
 	// TODO: change to using Start and Wait with graceful termination later
 	err := killProcessByName("kube-apiserver")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	err = killProcessByName("etcd")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, "bin/kvcl")
 	cmd.Env = append(os.Environ(), fmt.Sprintf("BINARY_ASSETS_DIR=%s", "bin"))
+	cmd.WaitDelay = time.Second
 	slog.Info("Launching kvcl", "cmd", cmd)
 	go func() {
 		err := cmd.Run()
 		if err != nil {
 			slog.Error("Failed to launch kvcl.", "error", err, "cmd", cmd)
-			os.Exit(9)
+			//os.Exit(9)
 		}
 	}()
 	waitSecs := 7
 	slog.Info("Waiting  for bin/kvcl to start", "waitSecs", waitSecs)
 	<-time.After(time.Duration(waitSecs) * time.Second)
-	return nil
+	return cmd, nil
 }
 
-func launchScalingRecommender(ctx context.Context, kubeconfigPath string, inputDataPath string) error {
+func launchScalingRecommender(ctx context.Context, kubeconfigPath string, inputDataPath string) (*exec.Cmd, error) {
 	// TODO: change to using Start and Wait with graceful termination later
 	cmd := exec.CommandContext(ctx, "bin/scaling-recommender")
 	cmd.Stdout = os.Stdout
@@ -741,7 +792,7 @@ func launchScalingRecommender(ctx context.Context, kubeconfigPath string, inputD
 	waitSecs := 6
 	slog.Info("Waiting  for bin/scaling-recommender to start", "waitSecs", waitSecs)
 	<-time.After(time.Duration(waitSecs) * time.Second)
-	return nil
+	return cmd, nil
 }
 
 func killProcessByName(name string) error {
@@ -784,11 +835,11 @@ func killProcessByName(name string) error {
 	return nil
 }
 
-func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPath string, settings gsc.CASettingsInfo) error {
+func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPath string, settings gsc.CASettingsInfo) (*exec.Cmd, error) {
 	if settings.Expander == "priority" {
 		settings.Priorities = strings.TrimSpace(settings.Priorities)
 		if settings.Priorities == "" {
-			return fmt.Errorf("launchCA found that settings.Expander is priority yet there are no persisted priorities")
+			return nil, fmt.Errorf("launchCA found that settings.Expander is priority yet there are no persisted priorities")
 		}
 		// deploy the priority config map
 		cmName := "cluster-autoscaler-priority-expander"
@@ -804,7 +855,7 @@ func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPa
 		}
 		createdCm, err := clientSet.CoreV1().ConfigMaps("kube-system").Create(ctx, &cm, metav1.CreateOptions{})
 		if err != nil {
-			return fmt.Errorf("cannot create %q config map: %w", cmName, err)
+			return nil, fmt.Errorf("cannot create %q config map: %w", cmName, err)
 		}
 		slog.Info("Created ConfigMap", "name", cmName, "obj", createdCm)
 	}
@@ -856,7 +907,7 @@ func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPa
 	waitSecs := 8
 	slog.Info("Waiting  for virtual bin/cluster-autoscaler to start", "waitSecs", waitSecs)
 	<-time.After(time.Duration(waitSecs) * time.Second)
-	return nil
+	return caCmd, nil
 	//err := caCmd.Start()
 	//if err != nil {
 	//	slog.Error("Cannot launch bin/cluster-autoscaler with args.", "error", err, "args", args)
@@ -1204,6 +1255,10 @@ func isDifferenceGreaterThan(t1, t2 time.Time, d time.Duration) bool {
 
 func GetNextReplayEvent(events []gsc.EventInfo, currEventIndex int) (nextEventIndex int, nextEvent gsc.EventInfo) {
 	numEvents := len(events)
+	if currEventIndex == 0 && numEvents == 1 {
+		slog.Info("GetNextReplayEvent returning single scale-up event")
+		return 1, events[0]
+	}
 	if currEventIndex >= numEvents-1 {
 		slog.Info("GetNextReplayEvent could find no more scale-up events")
 		nextEventIndex = -1
@@ -1469,16 +1524,18 @@ func getPodNamesNotAssignedToNodes(ctx context.Context, clientSet *kubernetes.Cl
 }
 
 func (r *defaultReplayer) Close() error {
-	// TODO: clean up cluster can be done here.
-	if r.kvclCancelFn != nil {
-		slog.Info("Cancelling kvcl...")
-		r.kvclCancelFn()
-	}
-	if r.scalerCancelFn != nil {
-		slog.Info("Cancelling scaler proces...")
-		r.scalerCancelFn()
-	}
-	return r.dataAccess.Close()
+	//// TODO: clean up cluster can be done here.
+	//if r.kvclCancelFn != nil {
+	//	slog.Info("Cancelling kvcl...")
+	//	r.kvclCancelFn()
+	//}
+	//if r.scalerCancelFn != nil {
+	//	slog.Info("Cancelling scaler proces...")
+	//	r.scalerCancelFn()
+	//}
+	//return r.dataAccess.Close()
+
+	return r.doClose()
 }
 
 func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime time.Time) (cs gsc.ClusterSnapshot, err error) {
@@ -1587,7 +1644,7 @@ func findNodeTemplate(nodeTemplates map[string]gsc.NodeTemplate, poolName, zone 
 	slog.Info("Parameters passed", "poolName", poolName, "zone", zone)
 	for _, nt := range nodeTemplates {
 		//slog.Info("Node Template zone and labels", "name", nt.Name, "zone", nt.Zone, "labels", nt.Labels)
-		slog.Info("Node capacity", "name", nt.Name, "zone", nt.Zone, "allocatable", nt.Allocatable)
+		slog.Debug("Node capacity", "name", nt.Name, "zone", nt.Zone, "allocatable", nt.Allocatable)
 		if nt.Zone == zone && nt.Labels["worker.gardener.cloud/pool"] == poolName {
 			return &nt
 		}
@@ -2017,7 +2074,7 @@ func GetReplayScalingRecommenderReportFormat(replayCAReportPath string) (reportF
 	if err != nil {
 		return
 	}
-	reportFormat = fullClusterName + "_replay-sr-%d.json"
+	reportFormat = fullClusterName + "_sr-replay-%d.json"
 	//.strings.TrimSuffix(fileNameWithoutExtension, "_ca-replay") + "-report-replay.json"
 	return
 }

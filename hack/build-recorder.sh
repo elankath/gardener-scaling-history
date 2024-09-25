@@ -19,7 +19,8 @@ if [[ -f bin/recorder ]]; then
   rm bin/recorder
 fi
 echo "Building recorder for linux/amd64..."
-GOOS=linux GOARCH=amd64 go build -v -o bin/recorder cmd/recorder/main.go
+#GOOS=linux GOARCH=amd64 go build -v -o bin/recorder cmd/recorder/main.go
+CC=x86_64-unknown-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -v -o bin/recorder cmd/recorder/main.go
 chmod +x bin/recorder
 RECORDER_IMAGE_TAG="$DOCKERHUB_USER/scaling-history-recorder:latest"
 export RECORDER_IMAGE_TAG

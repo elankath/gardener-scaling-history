@@ -637,7 +637,7 @@ func (r *defaultRecorder) processPod(podOld, podNew *corev1.Pod) error {
 		slog.Error("could not execute pod_info insert", "error", err, "pod.Name", podInfo.Name, "pod.UID", podInfo.UID, "pod.CreationTimestamp", podInfo.CreationTimestamp, "pod.Hash", podInfo.Hash)
 		return err
 	}
-	slog.Info("processPod stored pod.", "pod.Name", podInfo.Name, "pod.UID", podInfo.UID, "pod.CreationTimestamp", podInfo.CreationTimestamp, "shootLabel", r.params.ShootLabel())
+	slog.Debug("processPod stored pod.", "pod.Name", podInfo.Name, "pod.UID", podInfo.UID, "pod.CreationTimestamp", podInfo.CreationTimestamp, "shootLabel", r.params.ShootLabel())
 	return nil
 }
 

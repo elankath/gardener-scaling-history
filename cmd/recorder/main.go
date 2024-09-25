@@ -8,6 +8,7 @@ import (
 	"github.com/elankath/gardener-scaling-history/recorder"
 	"log/slog"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -20,8 +21,18 @@ func main() {
 	//	exitCode = launchInLocalMode()
 	//}
 	if len(mode) == 0 {
-		slog.Error("MODE environment variable must be set. Choices are local or in-utility-cluster")
-		os.Exit(1)
+		slog.Warn("MODE environment variable must be set. Choices are local or in-utility-cluster. Attempting to find mode.")
+		switch osName := runtime.GOOS; osName {
+		case "darwin":
+			mode = "local"
+			slog.Info("Running on macOS. Assuming mode", "os", osName, "mode", mode)
+		case "linux":
+			mode = "in-utility-cluster"
+			slog.Info("Running on linux. Assuming mode", "os", osName, "mode", mode)
+		default:
+			slog.Error("Cannot determine mode. Kindly set the same")
+			os.Exit(1)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	exitCode = launch(ctx, cancel, gsh.ExecutionMode(mode))
@@ -56,6 +67,13 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Executi
 		}
 		slog.Info("Assumed default dbDir for mode", "dbDir", dbDir, "mode", mode)
 	}
+	if !apputil.DirExists(dbDir) {
+		err := os.MkdirAll(dbDir, 0755)
+		if err != nil {
+			slog.Error("Could not create dbDir", "err", err, "dbDir", dbDir)
+			return 3
+		}
+	}
 
 	recorderParams, err := recorder.CreateRecorderParams(ctx, mode, configDir, dbDir)
 	if err != nil {
@@ -86,6 +104,13 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Executi
 	if len(reportDir) == 0 {
 		reportDir = "/tmp"
 		slog.Warn("REPORT_DIR not set. Assuming tmp dir", "reportDir", reportDir)
+	}
+	if !apputil.DirExists(reportDir) {
+		err := os.MkdirAll(reportDir, 0755)
+		if err != nil {
+			slog.Error("Could not create reportDir", "err", err, "reportDir", reportDir)
+			return 7
+		}
 	}
 	//launch engine in a goroutine
 	go func() {

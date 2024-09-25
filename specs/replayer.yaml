@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   generateName: scaling-history-replayer-
-  namespace: robot
+  namespace: mcm-ca-team
   annotations:
     nonce: "${NONCE}"
   labels:
@@ -40,16 +40,11 @@ spec:
         - name: INPUT_DATA_PATH
           value: ${INPUT_DATA_PATH}
         - name: REPORT_DIR
-          value: /reports
+          value: /data/reports
       volumeMounts:
-         - mountPath: /reports
-           name: reports-dir
-         - mountPath: /db
-           name: db-dir
+         - mountPath: /data
+           name: data-dir
   volumes:
-    - name: reports-dir
+    - name: data-dir
       persistentVolumeClaim:
-        claimName: shr-reports
-    - name: db-dir
-      persistentVolumeClaim:
-        claimName: shr-pvc
+        claimName: scaling-history-data
