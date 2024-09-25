@@ -24,9 +24,14 @@ kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080 &
 pid=$!
 sleep 7
 echo "Started port-forwarding with PID: $pid"
-echo "Downloading db list..."
-dbList=$(curl localhost:8080/api/db)
-echo "Found databases: $dbList"
+if [[ -z "$DOWNLOAD_DB" ]]; then
+  echo "Downloading db list..."
+  dbList=$(curl localhost:8080/api/db)
+  echo "Found databases: $dbList"
+else
+  dbList="$DOWNLOAD_DB"
+  echo "Downloading $dbList"
+fi
 for dbName in ${(f)dbList};  do
   url="http://localhost:8080/api/db/$dbName"
   echo "Downloading DB from url $url into gen ..."
