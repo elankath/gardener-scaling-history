@@ -754,7 +754,11 @@ func (r *defaultReplayer) doClose() error {
 			return err
 		}
 	}
-	return r.dataAccess.Close()
+	if r.dataAccess != nil {
+		slog.Info("Closing data access...")
+		return r.dataAccess.Close()
+	}
+	return nil
 }
 
 func launchKvcl(ctx context.Context) (*exec.Cmd, error) {
