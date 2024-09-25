@@ -43,6 +43,11 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc) int {
 	}
 	dbDir := os.Getenv("DB_DIR")
 	reportsDir := os.Getenv("REPORT_DIR")
+	dockerHubUser := os.Getenv("DOCKERHUB_USER")
+	if dockerHubUser == "" {
+		slog.Error("Missing env DOCKERHUB_USER")
+		return 1
+	}
 
 	if mode == "local" {
 		if len(dbDir) == 0 {
@@ -80,8 +85,9 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc) int {
 	}
 
 	appParams := app.Params{
-		DBDir:      dbDir,
-		ReportsDir: reportsDir,
+		DBDir:         dbDir,
+		ReportsDir:    reportsDir,
+		DockerHubUser: dockerHubUser,
 	}
 	//launch engine in a goroutine
 	go func() {

@@ -56,6 +56,8 @@ spec:
           value: /data/db
         - name: REPORT_DIR
           value: /data/reports
+        - name: DOCKERHUB_USER
+          value: ${DOCKERHUB_USER}
       volumeMounts:
         - mountPath: /data
           name: data-dir
