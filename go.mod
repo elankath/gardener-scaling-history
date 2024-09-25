@@ -5,15 +5,13 @@ go 1.22.0
 require (
 	github.com/blockloop/scan/v2 v2.5.0
 	github.com/dustin/go-humanize v1.0.1
-	github.com/elankath/gardener-scaling-common v0.0.0-20240912081638-9261758a905e
+	github.com/elankath/gardener-scaling-common v0.0.0-20240925070418-811cdb22c336
 	github.com/glebarez/go-sqlite v1.22.0
-	github.com/google/go-cmp v0.6.0
 	github.com/mattn/go-sqlite3 v1.14.23
 	github.com/nao1215/markdown v0.6.0
 	github.com/samber/lo v1.46.0
 	github.com/stretchr/testify v1.9.0
 	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8
-	golang.org/x/sync v0.8.0
 	k8s.io/api v0.30.3
 	k8s.io/apimachinery v0.30.3
 	k8s.io/client-go v0.30.3
@@ -30,6 +28,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/gnostic-models v0.6.8 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/uuid v1.5.0 // indirect
 	github.com/imdario/mergo v0.3.6 // indirect

@@ -472,6 +472,18 @@ func (r *defaultReplayer) ReplayCA() error {
 			if err != nil {
 				return err
 			}
+			stabilizeInterval := 30 * time.Second
+			numPods := len(clusterSnapshot.Pods)
+			stabilizeInterval = stabilizeInterval + time.Duration(numPods)*100*time.Millisecond
+			slog.Info("waiting for a stabilize interval for scheduler to finish its job", "stabilizeInterval", stabilizeInterval)
+			<-time.After(stabilizeInterval)
+
+			clusterSnapshot.AutoscalerConfig.Mode = gsc.AutoscalerReplayerRunMode
+			slog.Info("writing autoscaler config with replay run mode", "snapshotNumber", clusterSnapshot.Number, "currHash", clusterSnapshot.AutoscalerConfig.Hash, "loopNum", loopNum, "replayCount", r.replayCount)
+			err = writeAutoscalerConfigAndWaitForSignal(r.ctx, clusterSnapshot.ID, clusterSnapshot.AutoscalerConfig, r.params.VirtualAutoScalerConfigPath)
+			if err != nil {
+				return err
+			}
 			r.replayCount++
 			r.lastClusterSnapshot = clusterSnapshot
 			scalingOccurred, err := waitAndCheckVirtualScaling(r.ctx, r.clientSet, r.replayCount)
@@ -479,9 +491,6 @@ func (r *defaultReplayer) ReplayCA() error {
 				slog.Info("No virtual-scaling occurred while replaying real scaling event", "replayCount", r.replayCount, "dbPath", r.params.InputDataPath, "replayEvent", replayEvent)
 				continue
 			}
-			stabilizeInterval := 30 * time.Second
-			numPods := len(clusterSnapshot.Pods)
-			stabilizeInterval = stabilizeInterval + time.Duration(numPods)*100*time.Millisecond
 			slog.Info("waiting for a stabilize interval after virtual scaling", "stabilizeInterval", stabilizeInterval)
 			<-time.After(stabilizeInterval)
 			scenario, err := r.createScenario(r.ctx, clusterSnapshot)
@@ -549,6 +558,9 @@ func waitForVirtualCARefresh(ctx context.Context, numNodes int, successSignalPat
 			if data != nil {
 				successSignal := string(data)
 				slog.Info("waitForVirtualCARefresh obtained success signal.", "successSignal", successSignal, "successSignalPath", successSignalPath)
+				if err = os.Remove(successSignalPath); err != nil {
+					return err
+				}
 				return nil
 			}
 		}
@@ -1591,7 +1603,7 @@ func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime ti
 	if err != nil {
 		return
 	}
-	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerMode
+	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerPauseMode
 
 	nodes, err := r.dataAccess.LoadNodeInfosBefore(runBeginTime)
 	if err != nil {
