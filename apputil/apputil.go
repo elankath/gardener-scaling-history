@@ -227,6 +227,78 @@ func GetViewerKubeconfig(ctx context.Context, landscapeClient *kubernetes.Client
 	return kubeconfigPath, nil
 }
 
+func GetAdminKubeconfig(ctx context.Context, landscapeClient *kubernetes.Clientset, landscapeName, projectName, shootName string) (string, error) {
+	var projectNS string
+
+	if projectName == "garden" {
+		projectNS = projectName
+	} else {
+		projectNS = "garden-" + projectName
+	}
+	url := "/apis/core.gardener.cloud/v1beta1/namespaces/" + projectNS + "/shoots/" + shootName + "/adminkubeconfig"
+
+	restClient := landscapeClient.CoreV1().RESTClient()
+
+	expirationSecs := 86400
+	//expirationSecs := 600
+	payload := fmt.Sprintf(`{
+      "apiVersion": "authentication.gardener.cloud/v1alpha1",
+      "kind": "AdminKubeconfigRequest",
+      "spec": {"expirationSeconds": %d}}`, expirationSecs)
+
+	result := restClient.Post().AbsPath(url).Body([]byte(payload)).Do(ctx)
+
+	if result.Error() != nil {
+		slog.Error("Could not create adminkubeconfig request", "err", result.Error())
+		return "", result.Error()
+	}
+
+	responsePayload, err := result.Raw()
+	if err != nil {
+		slog.Error("Could not read result adminconfig payload", "err", err)
+		return "", err
+	}
+	responsePath := "/tmp/" + landscapeName + "_" + projectName + "_" + shootName + ".json"
+	err = os.WriteFile(responsePath, responsePayload, 0644)
+	if err != nil {
+		return "", err
+	}
+
+	payloadMap := make(map[string]any)
+
+	err = json.Unmarshal(responsePayload, &payloadMap)
+	if err != nil {
+		slog.Error("cannot unmarshal adminkubeconfig payload", "err", err)
+		return "", err
+	}
+
+	statusMap, ok := payloadMap["status"].(map[string]any)
+	if !ok {
+		slog.Error("can't find status field in response payload", "payload", string(responsePayload))
+		return "", fmt.Errorf("can't find status field in response payload")
+	}
+	encodedKubeconfig, ok := statusMap["kubeconfig"].(string)
+	if !ok {
+		slog.Error("Can't find kubeconfig in status map", "payload", string(responsePayload))
+		return "", fmt.Errorf("can't find kubeconfig in status map")
+	}
+	kubeconfigBytes, err := base64.StdEncoding.DecodeString(encodedKubeconfig)
+	if err != nil {
+		slog.Error("error decoding kubeconfig", "error", err)
+		return "", err
+	}
+
+	kubeconfigPath := "/tmp/" + landscapeName + "_" + projectName + "_" + shootName + ".yaml"
+	err = os.WriteFile(kubeconfigPath, kubeconfigBytes, 0644)
+	if err != nil {
+		return "", err
+	}
+
+	slog.Info("Generated admin kubeconfig", "kubeconfigPath", kubeconfigPath, "shootname", shootName, "projectNamespace", projectNS)
+
+	return kubeconfigPath, nil
+}
+
 func GetSeedName(ctx context.Context, landscapeClient *kubernetes.Clientset, projectName string, shootName string) (seedName string, err error) {
 	url := "/apis/core.gardener.cloud/v1beta1/namespaces/garden-" + projectName + "/shoots/" + shootName
 

@@ -12,8 +12,8 @@ gardenctl target --garden sap-landscape-live --project garden-ops --shoot utilit
 echo "Getting scrt robot-gardens..."
 kubectl get secret -n robot robot-gardens -oyaml > /tmp/robot-gardens.yaml
 echo "Modifying scrt robot-gardens for mcm-ca-team ns..."
-cat /tmp/robot-gardens.yaml | sed 's/namespace: robot/namespace: mcm-ca-team/; s/name: robot-gardens/name: gardens/; /resourceVersion/d; /uid/d; /creationTimestamp/d' > /tmp/gardens.yaml
-kubectl apply -f /tmp/gardens.yaml
+cat /tmp/robot-gardens.yaml | sed 's/namespace: robot/namespace: mcm-ca-team/; s/name: robot-gardens/name: landscapes/; /resourceVersion/d; /uid/d; /creationTimestamp/d' > /tmp/landscapes.yaml
+kubectl apply -f /tmp/landscapes.yaml
 
 
 appPoYaml="/tmp/scaling-history-app.yaml"
@@ -23,7 +23,6 @@ if [[ -f "$appPoYaml" ]]; then
 fi
 envsubst < specs/app.yaml > "$appPoYaml"
 echo "Substituted env variables in specs/app.yaml and wrote to $appPoYaml"
-exit 0
 kubectl delete -n mcm-ca-team po scaling-history-app || echo "NOTE: scaling-history-app pod is not already deployed."
 
 waitSecs=4

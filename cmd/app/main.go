@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/app"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"log/slog"
@@ -30,16 +31,19 @@ func main() {
 
 func launch(ctx context.Context, cancelFunc context.CancelFunc) int {
 	var mode string
-	switch osName := runtime.GOOS; osName {
-	case "darwin":
-		mode = "local"
-		slog.Info("Running on macOS. Assuming local mode", "os", osName, "mode", mode)
-	case "linux":
-		mode = "in-utility-cluster"
-		slog.Info("Running on linux. Assuming in-utility-cluster mode", "os", osName, "mode", mode)
-	default:
-		slog.Error("Cannot determine mode. Kindly set the same")
-		return 1
+	mode = os.Getenv("MODE")
+	if mode == "" {
+		switch osName := runtime.GOOS; osName {
+		case "darwin":
+			mode = "local"
+			slog.Info("Running on macOS. Assuming local mode", "os", osName, "mode", mode)
+		case "linux":
+			mode = "in-utility-cluster"
+			slog.Info("Running on linux. Assuming in-utility-cluster mode", "os", osName, "mode", mode)
+		default:
+			slog.Error("Cannot determine mode. Kindly set the same")
+			return 1
+		}
 	}
 	dbDir := os.Getenv("DB_DIR")
 	reportsDir := os.Getenv("REPORT_DIR")
@@ -51,12 +55,7 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc) int {
 
 	if mode == "local" {
 		if len(dbDir) == 0 {
-			if mode == "local" {
-				dbDir = "gen"
-			} else {
-				slog.Error("DB_DIR env must be set for non-local mode")
-				return 2
-			}
+			dbDir = "gen"
 			slog.Info("Assumed default dbDir for mode", "dbDir", dbDir, "mode", mode)
 		}
 
@@ -88,10 +87,14 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc) int {
 		DBDir:         dbDir,
 		ReportsDir:    reportsDir,
 		DockerHubUser: dockerHubUser,
+		Mode:          gsh.ExecutionMode(mode),
 	}
-	//launch engine in a goroutine
+	application, err := app.New(ctx, appParams)
+	if err != nil {
+		slog.Error("Error constructing application", "err", err)
+		return 2
+	}
 	go func() {
-		application := app.New(ctx, appParams)
 		err := application.Start()
 		if err != nil {
 			if errors.Is(err, context.Canceled) {

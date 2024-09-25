@@ -63,6 +63,8 @@ spec:
           name: data-dir
         - mountPath: /cfg
           name: recorder-config
+        - mountPath: /app/secrets/gardens
+          name: landscapes
   volumes:
     - name: data-dir
       persistentVolumeClaim:
@@ -72,3 +74,7 @@ spec:
         sources:
         - configMap:
             name: scaling-history-recorder-config
+    - name: landscapes
+      secret:
+        defaultMode: 420
+        secretName: landscapes
