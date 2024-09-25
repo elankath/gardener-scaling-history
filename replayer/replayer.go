@@ -1098,6 +1098,7 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 	slices.SortFunc(podSlice, apputil.SortPodInfoByCreationTimestamp)
 	for _, pod := range podSlice {
 		deployCount++
+		slog.Info("deploying scheduled Pod", "pod", pod.Name, "pod.Spec.nodeName", pod.Spec.NodeName)
 		err = doDeployPod(ctx, clientSet, replayCount, deployCount, getCorePodFromPodInfo(pod))
 		if err != nil {
 			return err
@@ -1117,6 +1118,7 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 	slices.SortFunc(podSlice, apputil.SortPodInfoByCreationTimestamp)
 	for _, pod := range podSlice {
 		deployCount++
+		slog.Info("deploying unscheduledPod", "pod", pod.Name)
 		err = doDeployPod(ctx, clientSet, replayCount, deployCount, getCorePodFromPodInfo(pod))
 		if err != nil {
 			return err
