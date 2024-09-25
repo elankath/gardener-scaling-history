@@ -1021,17 +1021,34 @@ func applyDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, deltaW
 		if p.Spec.NodeName != "" {
 			return "scheduledPod"
 		}
+		if _, ok := p.Labels["previouslyAssignedPod"]; ok {
+			return "previouslyAssignedPod"
+		}
 		return "unscheduledPod"
 	})
 	deployCount := 0
-	for _, pod := range podGroups["scheduledPod"] {
+	podSlice := podGroups["scheduledPod"]
+	slices.SortFunc(podSlice, apputil.SortPodInfoByCreationTimestamp)
+	for _, pod := range podSlice {
 		deployCount++
 		err = doDeployPod(ctx, clientSet, replayCount, deployCount, getCorePodFromPodInfo(pod))
 		if err != nil {
 			return err
 		}
 	}
-	for _, pod := range podGroups["unscheduledPod"] {
+	podSlice = podGroups["previouslyAssignedPod"]
+	slices.SortFunc(podSlice, apputil.SortPodInfoByCreationTimestamp)
+	for _, pod := range podSlice {
+		deployCount++
+		slog.Info("deploying previouslyAssignedPod", "pod", pod.Name)
+		err = doDeployPod(ctx, clientSet, replayCount, deployCount, getCorePodFromPodInfo(pod))
+		if err != nil {
+			return err
+		}
+	}
+	podSlice = podGroups["unscheduledPod"]
+	slices.SortFunc(podSlice, apputil.SortPodInfoByCreationTimestamp)
+	for _, pod := range podSlice {
 		deployCount++
 		err = doDeployPod(ctx, clientSet, replayCount, deployCount, getCorePodFromPodInfo(pod))
 		if err != nil {
@@ -1584,6 +1601,7 @@ func clearNodeNamesNotIn(pods []gsc.PodInfo, nodeNames []string) {
 		if !nameSet.Has(pods[i].Spec.NodeName) {
 			pods[i].NodeName = ""
 			pods[i].Spec.NodeName = ""
+			pods[i].Labels["previouslyAssignedPod"] = "1"
 		}
 	}
 }

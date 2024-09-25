@@ -132,6 +132,10 @@ func SortPodInfoForDeployment(a, b gsc.PodInfo) int {
 	return cmp.Compare(c1.UnixMilli(), c2.UnixMilli())
 }
 
+func SortPodInfoByCreationTimestamp(a, b gsc.PodInfo) int {
+	return a.CreationTimestamp.Compare(b.CreationTimestamp)
+}
+
 //func ListAllNodes(ctx context.Context, clientSet *kubernetes.Clientset)
 
 func CreateLandscapeClient(kubeconfigPath string, mode gsh.ExecutionMode) (*kubernetes.Clientset, error) {
