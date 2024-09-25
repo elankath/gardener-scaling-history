@@ -261,6 +261,7 @@ func postClusterSnapshot(cs gsc.ClusterSnapshot) error {
 }
 
 func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, snapshotID string, nodeInfos []gsc.NodeInfo) error {
+	deletedNodeNames := sets.New[string]()
 	nodeInfosByName := lo.Associate(nodeInfos, func(item gsc.NodeInfo) (string, struct{}) {
 		return item.Name, struct{}{}
 	})
@@ -281,8 +282,23 @@ func syncNodes(ctx context.Context, clientSet *kubernetes.Clientset, snapshotID 
 		if err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("%s | cannot delete the virtual node %q: %w", snapshotID, vn.Name, err)
 		}
+		deletedNodeNames.Insert(vn.Name)
 		//delete(virtualNodesMap, vn.Name)
 		slog.Info("%s | synchronizeNodes deleted the virtual node %q", snapshotID, vn.Name)
+	}
+	podsList, err := clientutil.ListAllPods(ctx, clientSet)
+	if err != nil {
+		return fmt.Errorf("cannot list the pods in virtual cluster: %w", err)
+	}
+	for _, pod := range podsList {
+		if deletedNodeNames.Has(pod.Spec.NodeName) {
+			pod.Spec.NodeName = ""
+			_, err := clientSet.CoreV1().Pods(pod.Namespace).Update(ctx, &pod, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("cannot update the pod %q: %w", pod.Name, err)
+			}
+			slog.Info("Cleared NodeName from pod", "pod.Name", pod.Name)
+		}
 	}
 
 	for _, nodeInfo := range nodeInfos {
