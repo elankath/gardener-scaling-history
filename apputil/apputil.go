@@ -1,23 +1,28 @@
 package apputil
 
 import (
+	"bytes"
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"fmt"
 	gsc "github.com/elankath/gardener-scaling-common"
 	gsh "github.com/elankath/gardener-scaling-history"
+	"io"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path"
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 )
 
 func WaitForSignalAndShutdown(ctx context.Context, cancelFunc context.CancelFunc) {
@@ -400,4 +405,93 @@ func GetClusterName(replayReportPath string) (fullClusterName string, err error)
 	}
 	fullClusterName = fileNameWithoutExtension[0:idx]
 	return
+}
+
+func CopySQLiteDB(srcDBPath, dstDBPath string) error {
+	//Ensure that destDB file does not exist
+	err := os.Remove(dstDBPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// Open source database connection
+	db, err := sql.Open("sqlite3", srcDBPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	// Execute the VACUUM INTO command to copy the database safely
+	query := fmt.Sprintf("VACUUM INTO '%s';", dstDBPath)
+	_, err = db.Exec(query)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func DownloadDBFromApp(dbPath string) error {
+	if !strings.HasSuffix(dbPath, ".db") {
+		return fmt.Errorf("dbPath does not end with .db: %s", dbPath)
+	}
+	dbName := path.Base(dbPath)
+
+	client := http.Client{
+		Timeout: 15 * time.Minute,
+	}
+
+	dbUrl := "http://10.47.254.238/api/db/" + dbName
+	slog.Info("Downloading db...", "url", dbUrl)
+
+	resp, err := client.Get(dbUrl)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("downloading db failed with status code %d", resp.StatusCode)
+	}
+
+	dbfile, err := os.Create(dbPath)
+	if err != nil {
+		return fmt.Errorf("error creating db file: %w", err)
+	}
+	defer dbfile.Close()
+	_, err = io.Copy(dbfile, resp.Body)
+	if err != nil {
+		return fmt.Errorf("error downloading db %q to path %q: %w", dbName, dbPath, err)
+	}
+	slog.Info("Successfully downloaded db", "path", dbPath)
+	return nil
+}
+
+func UploadReport(ctx context.Context, reportPath string) error {
+	reportName := path.Base(reportPath)
+
+	client := http.Client{
+		Timeout: 15 * time.Minute,
+	}
+
+	reportUrl := "http://10.47.254.238/reports/" + reportName
+	slog.Info("Uploading report...", "reportPath", reportPath, "reportUrl", reportUrl)
+
+	data, err := os.ReadFile(reportPath)
+	if err != nil {
+		return fmt.Errorf("error reading report file %q: %w", reportPath, err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "PUT", reportUrl, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("error creating report upload request: %w", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("error uploading report %q: %w", reportPath, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("uploading report failed with status code %d", resp.StatusCode)
+	}
+	slog.Info("Successfully uploaded report", "reportPath", reportPath, "reportUrl", reportUrl)
+
+	return nil
 }

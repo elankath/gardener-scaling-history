@@ -90,6 +90,16 @@ type ReplayReport struct {
 	//	InitialClusterSnapshot gsc.
 }
 
+type FileInfos struct {
+	Items []FileInfo
+}
+
+type FileInfo struct {
+	Name         string
+	Size         uint64
+	ReadableSize string
+}
+
 type Replayer interface {
 	io.Closer
 	Start() error

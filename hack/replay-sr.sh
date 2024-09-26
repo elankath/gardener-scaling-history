@@ -47,7 +47,7 @@ if [[ -z "$INPUT_DATA_PATH" ]]; then
   echo
   echo "Kindly Select a report for which to run the recommender to produce report:"
   reportList=$(echo "$reportList" | tr '\n' ' ')
-  chosenReport=$(gum choose $reportList)
+  chosenReport=$(gum choose ${=reportList})
   echo "You have chosen $chosenReport ! Will run scaling-recommender against this report."
 #  export INPUT_DATA_PATH="/data/reports/$chosenReport"
 #  echo "INPUT_DATA_PATH has been set to $INPUT_DATA_PATH for scaling-recommender pod."

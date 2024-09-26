@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"errors"
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/replayer"
 	"k8s.io/utils/env"
 	"log/slog"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -48,22 +48,31 @@ func main() {
 		slog.Error("INPUT_DATA_PATH env MUST be set. Must be either a scenario .json file or a recorded .db path")
 		os.Exit(1)
 	}
-	waitDuration := 15 * time.Second
-	waitNum := 0
-	for {
-		fileInfo, err := os.Stat(inputDataPath)
-		if errors.Is(err, os.ErrNotExist) {
-			slog.Warn("No file found at inputDataPath - waiting for work...", "inputDataPath", inputDataPath, "waitNum", waitNum, "waitDuration", waitDuration)
-			<-time.After(waitDuration)
-			waitNum += 1
-			continue
-		} else if err != nil {
-			slog.Error("cannot getting stat for inputDataPath", "inputDataPath", inputDataPath, "err", err)
+
+	var mode string
+	mode = os.Getenv("MODE")
+	if mode == "" {
+		switch osName := runtime.GOOS; osName {
+		case "darwin":
+			mode = "local"
+			slog.Info("Running on macOS. Assuming local mode", "os", osName, "mode", mode)
+		case "linux":
+			mode = "in-utility-cluster"
+			slog.Info("Running on linux. Assuming in-utility-cluster mode", "os", osName, "mode", mode)
+		default:
+			slog.Error("Cannot determine mode. Kindly set the same")
 			os.Exit(1)
 		}
-		slog.Info("file found at inputDataPath", "inputDataPath", inputDataPath, "fileInfoSize", fileInfo.Size(), "fileInfoTime", fileInfo.ModTime())
-		break
 	}
+
+	if mode == "in-utility-cluster" {
+		err := apputil.DownloadDBFromApp(inputDataPath)
+		if err != nil {
+			slog.Error("Error downloading DB from app", "err", err)
+			os.Exit(2)
+		}
+	}
+
 	//virtualClusterKubeConfig := os.Getenv("KUBECONFIG")
 	//if len(virtualClusterKubeConfig) == 0 {
 	//	virtualClusterKubeConfig = "/tmp/kvcl.yaml"
@@ -84,6 +93,13 @@ func main() {
 	if len(reportDir) == 0 {
 		reportDir = "/tmp"
 		slog.Warn("REPORT_DIR not set. Assuming tmp dir", "reportDir", reportDir)
+	}
+	if !apputil.DirExists(reportDir) {
+		err := os.MkdirAll(reportDir, os.ModePerm)
+		if err != nil {
+			slog.Error("Error creating report dir", "reportDir", reportDir, "err", err)
+			os.Exit(3)
+		}
 	}
 	virtualAutoscalerConfig := os.Getenv("VIRTUAL_AUTOSCALER_CONFIG")
 	if len(virtualAutoscalerConfig) == 0 {

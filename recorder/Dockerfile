@@ -1,4 +1,5 @@
 FROM ubuntu:latest
+RUN apt update && apt -y install curl
 WORKDIR /
 COPY bin/recorder /recorder
 RUN chmod +x recorder

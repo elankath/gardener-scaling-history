@@ -36,13 +36,13 @@ spec:
           value: ${POD_DATA_PATH}
         - name: REPORT_DIR
           value: /reports
-      volumeMounts:
-         - mountPath: /reports
-           name: reports-dir
+#      volumeMounts:
+#         - mountPath: /reports
+#           name: reports-dir
       resources:
         requests:
           memory: ${MEMORY}
-  volumes:
-    - name: reports-dir
-      persistentVolumeClaim:
-        claimName: scaling-history-reports
+#  volumes:
+#    - name: reports-dir
+#      persistentVolumeClaim:
+#        claimName: scaling-history-reports

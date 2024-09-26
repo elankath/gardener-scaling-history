@@ -8,6 +8,7 @@ import (
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/specs"
+	_ "github.com/mattn/go-sqlite3"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +17,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path"
@@ -64,9 +66,12 @@ func New(parentCtx context.Context, params Params) (*DefaultApp, error) {
 	}
 	app.httpServer.Handler = app.mux
 	app.mux.HandleFunc("GET /api/reports", app.ListReports)
-	//app.mux.HandleFunc("GET /api/db/{dbName}", app.GetDatabase)
-	//app.mux.HandleFunc("GET /api/reports", app.ListReports)
 	app.mux.HandleFunc("GET /api/reports/{reportName}", app.GetReport)
+	app.mux.HandleFunc("PUT /api/reports/{reportName}", app.PutReport)
+	app.mux.HandleFunc("POST /api/reports/:upload", app.UploadReports)
+	app.mux.HandleFunc("GET /api/db", app.ListDatabases)
+	app.mux.HandleFunc("GET /api/db/{dbName}", app.GetDatabase)
+	//app.mux.HandleFunc("GET /api/reports", app.ListReports)
 	return app, nil
 }
 
@@ -177,16 +182,6 @@ func ListAllDBPaths(dir string) (dbPaths []string, err error) {
 	return
 }
 
-type fileInfos struct {
-	Items []fileInfo
-}
-
-type fileInfo struct {
-	Name         string
-	Size         uint64
-	ReadableSize string
-}
-
 func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	entries, err := os.ReadDir(a.params.ReportsDir)
@@ -195,7 +190,7 @@ func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("could not list files in reportsDir %q", a.params.ReportsDir), 500)
 		return
 	}
-	var reportInfos []fileInfo
+	reportInfos := []gsh.FileInfo{}
 	for _, e := range entries {
 		dbName := e.Name()
 		if !strings.HasSuffix(dbName, ".json") {
@@ -213,13 +208,16 @@ func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reportSize := uint64(statInfo.Size())
-		reportInfos = append(reportInfos, fileInfo{
+		reportInfos = append(reportInfos, gsh.FileInfo{
 			Name:         name,
 			Size:         reportSize,
 			ReadableSize: humanize.Bytes(reportSize),
 		})
 	}
-	err = json.NewEncoder(w).Encode(fileInfos{reportInfos})
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", " ")
+	err = encoder.Encode(gsh.FileInfos{reportInfos})
+	//err = json.NewEncoder(w).Encode(gsh.FileInfos{reportInfos})
 	if err != nil {
 		slog.Error("ListReports could not serialize items.", "error", err, "reportInfos", reportInfos)
 		http.Error(w, fmt.Sprintf("ListReports could not serialize response due to: %s", err), 500)
@@ -253,4 +251,151 @@ func (a *DefaultApp) GetReport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+reportName+"\"")
 	http.ServeFile(w, r, reportFile)
+}
+
+func (a *DefaultApp) PutReport(w http.ResponseWriter, r *http.Request) {
+	reportName := r.PathValue("reportName")
+	if len(reportName) == 0 {
+		http.Error(w, "reportName must not be empty", 400)
+		return
+	}
+	reportPath := path.Join(a.params.ReportsDir, reportName)
+
+	slog.Info("Coping request body to report path", "reportPath", reportPath)
+
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		slog.Error("PutReport could not read request body", "error", err, "reportPath", reportPath)
+		http.Error(w, fmt.Sprintf("PutReport could not read request body: %s", err), 500)
+		return
+	}
+
+	err = os.WriteFile(reportPath, data, 0644)
+	if err != nil {
+		slog.Error("PutReport could not write request body", "error", err, "reportPath", reportPath)
+		http.Error(w, fmt.Sprintf("PutReport could not write request body to report path %q: %s", reportPath, err), 500)
+		return
+	}
+}
+
+func (a *DefaultApp) UploadReports(w http.ResponseWriter, r *http.Request) {
+	var err error
+	err = r.ParseMultipartForm(100 << 20)
+	if err != nil {
+		slog.Error("UploadReports could not parse multi-part form", "error", err)
+		http.Error(w, "UploadReports could not parse multi-part form:"+err.Error(), 500)
+		return
+	}
+
+	multipartFormData := r.MultipartForm
+	for _, filePart := range multipartFormData.File["reports"] {
+		slog.Info("Accepting upload report.", "file", filePart.Filename, "size", filePart.Size)
+		data, ok := ReadFilePart(w, filePart)
+		if !ok {
+			return
+		}
+		reportPath := filepath.Join(a.params.ReportsDir, filePart.Filename)
+		err = os.WriteFile(reportPath, data, 0600)
+		if err != nil {
+			slog.Error("UploadReports could not write report", "reportPath", reportPath, "error", err)
+			http.Error(w, "UploadReports could not write report: "+reportPath, 500)
+			return
+		}
+		slog.Info("Uploaded report", "reportPath", reportPath)
+	}
+}
+
+func (a *DefaultApp) GetDatabase(w http.ResponseWriter, r *http.Request) {
+	dbName := r.PathValue("dbName")
+	if len(dbName) == 0 {
+		http.Error(w, "dbName must not be empty", 400)
+		return
+	}
+	dbFile := path.Join(a.params.DBDir, dbName)
+	if !apputil.FileExists(dbFile) {
+		http.Error(w, fmt.Sprintf("dbFile %q not found", dbFile), 400)
+		return
+	}
+	ext := filepath.Ext(dbFile)
+	dbCopyFile := dbFile[:len(dbFile)-len(ext)] + "_copy" + ext
+	err := apputil.CopySQLiteDB(dbFile, dbCopyFile)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("could not make copy SQLite db file to serve %q: %v", dbFile, err), 500)
+		return
+	}
+	slog.Info("Serving copy of DB.", "dbFile", dbCopyFile)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(dbCopyFile)+"\"")
+	http.ServeFile(w, r, dbCopyFile)
+}
+
+func (a *DefaultApp) ListDatabases(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	entries, err := os.ReadDir(a.params.DBDir)
+	if err != nil {
+		slog.Error("ListDatabases could not list files in dbDir", "error", err, "dbDir", a.params.DBDir)
+		http.Error(w, fmt.Sprintf("could not list files in dbDir %q", a.params.DBDir), 500)
+		return
+	}
+	dbInfos := []gsh.FileInfo{}
+	for _, e := range entries {
+		dbName := e.Name()
+		if !strings.HasSuffix(dbName, ".db") {
+			continue
+		}
+		if strings.HasSuffix(dbName, "_copy.db") {
+			continue
+		}
+		name := e.Name()
+		dbPath := filepath.Join(a.params.DBDir, name)
+		statInfo, err := os.Stat(dbPath)
+		if err != nil {
+			slog.Error("ListDatabases could not stat db file.", "error", err, "dbPath", dbPath)
+			http.Error(w, fmt.Sprintf("ListDatabases could not stat db file %q in dbDir %q", dbPath, a.params.DBDir), 500)
+			return
+		}
+		dbSize := uint64(statInfo.Size())
+		dbInfos = append(dbInfos, gsh.FileInfo{
+			Name:         name,
+			Size:         dbSize,
+			ReadableSize: humanize.Bytes(dbSize),
+		})
+	}
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", " ")
+	//err = json.NewEncoder(w).Encode(gsh.FileInfos{dbInfos})
+	err = encoder.Encode(gsh.FileInfos{dbInfos})
+	if err != nil {
+		slog.Error("ListDatabases could not serialize items.", "error", err, "dbInfos", dbInfos)
+		http.Error(w, fmt.Sprintf("ListDatabases could not serialize response due to: %s", err), 500)
+		return
+	}
+	return
+}
+
+func ReadFilePart(w http.ResponseWriter, filePart *multipart.FileHeader) (data []byte, ok bool) {
+	var err error
+	uploadedFile, err := filePart.Open()
+	if err != nil {
+		slog.Error("UploadReports could not open report file", "file", filePart.Filename, "error", err)
+		http.Error(w, "UploadReports could not open report file: "+err.Error(), 500)
+		return
+	}
+	// then use the single uploadedFile however you want
+	// you may use its read method to get the file's bytes into a predefined slice,
+	//here am just using an anonymous slice for the example
+	data, err = io.ReadAll(uploadedFile)
+	if err != nil {
+		slog.Error("UploadReports could not read report file", "file", filePart.Filename, "error", err)
+		http.Error(w, "UploadReports could not read report file: "+err.Error(), 500)
+		return
+	}
+	err = uploadedFile.Close()
+	if err != nil {
+		slog.Error("UploadReports could not close report file", "file", filePart.Filename)
+		http.Error(w, "UploadReports could not close report file: "+err.Error(), 500)
+		return
+	}
+	ok = true
+	return
 }

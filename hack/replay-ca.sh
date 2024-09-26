@@ -28,45 +28,42 @@ if [[ ! -f specs/replayer.yaml ]]; then
   exit 2
 fi
 
-if [[ -z "$INPUT_DATA_PATH" ]]; then
-  echoErr "Kindly download the recorded db using ./hack/download-db.sh and set the path to it in the INPUT_DATA_PATH env var"
-  exit 3
-fi
-
-if [[ ! -f "$INPUT_DATA_PATH" ]]; then
-  echoErr "DB does not exist at $INPUT_DATA_PATH. Kindly download the recorded db using ./hack/download-db.sh and set the path to it in the INPUT_DATA_PATH env var"
-  exit 4
-fi
-
-if [[ "$INPUT_DATA_PATH" != *".db" ]]; then
-  echoErr "file at $INPUT_DATA_PATH does not appear to be a db file. Kindly download the recorded db using ./hack/download-db.sh and set the path to it in the INPUT_DATA_PATH env var"
-  exit 5
-fi
-
 echo "NOTE: Please ensure you have Gardener Live Landscape Access"
-echo "NOTE: Please ensure that scaling-history-recorder Pod is running via ./hack/deploy-recorder.sh"
+echo "NOTE: Please ensure that scaling-history-app Pod is running via ./hack/build-app.sh and ./hack/deploy-app.sh"
 gardenctl target --garden sap-landscape-live --project garden-ops --shoot utility-int
 
 if [[ -z "$INPUT_DATA_PATH" ]]; then
   # Set up trap to call cleanup function on script exit or interrupt
-  trap cleanup EXIT
-  echo "INPUT_DATA_PATH NOT specified. Getting list of recorded DB's from scaling-history-recorder.."
-  echo "Executing  kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080..."
-  kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080 &
-  pid=$!
-  sleep 6
-  echo "Started port-forwarding with PID: $pid"
+#  trap cleanup EXIT
+#  echo "INPUT_DATA_PATH NOT specified. Getting list of recorded DB's from scaling-history-recorder.."
+#  echo "Executing  kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080..."
+#  kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080 &
+#  pid=$!
+#  sleep 6
+#  echo "Started port-forwarding with PID: $pid"
   echo "Downloading db list..."
-  dbList=$(curl localhost:8080/api/db)
+  dbList=$(curl http://10.47.254.238/api/db | jq -r '.Items[].Name')
   printf ">> Found recorded databases \n: %s" $dbList
   echo
   echo "Kindly Select a DB for which to run the replayer to produce scenario report:"
   dbList=$(echo "$dbList" | tr '\n' ' ')
-  chosenDb=$(gum choose $dbList)
-  echo "You have chosen $chosenDb ! Will run replayer against this DB."
-#  export INPUT_DATA_PATH="/db/$chosenDb"
+  chosenDb=$(gum choose ${=dbList})
   export DB_NAME=${chosenDb:t}
+  echo "You have chosen $chosenDb ! Replayer will download and use chosen DB."
+#  url="http://localhost:8080/api/db/$DB_NAME"
+#  echo "Downloading DB from url $url into gen ..."
+#  curl -kL "$url" -o "gen/$DB_NAME"
+  export INPUT_DATA_PATH="/data/db/$DB_NAME"
 else
+  if [[ ! -f "$INPUT_DATA_PATH" ]]; then
+    echoErr "DB does not exist at $INPUT_DATA_PATH. Kindly download the recorded db using ./hack/download-db.sh and set the path to it in the INPUT_DATA_PATH env var"
+    exit 4
+  fi
+
+  if [[ "$INPUT_DATA_PATH" != *".db" ]]; then
+    echoErr "file at $INPUT_DATA_PATH does not appear to be a db file. Kindly download the recorded db using ./hack/download-db.sh and set the path to it in the INPUT_DATA_PATH env var"
+    exit 5
+  fi
   export DB_NAME=${INPUT_DATA_PATH:t}
 fi
 
@@ -95,10 +92,3 @@ echo "Starting Replayer Pod..."
 kubectl apply -f  "$replayerPodYaml"
 sleep 12
 kubectl get pod -n mcm-ca-team
-
-targetDBPath="${POD_NAME}:/db/${DB_NAME}"
-targetReportDir="${POD_NAME}:/reports/"
-echo "Copying db ${INPUT_DATA_PATH} to ${targetDBPath}..."
-echo "kubectl cp -n mcm-ca-team ${INPUT_DATA_PATH} ${targetDBPath}"
-kubectl cp -n mcm-ca-team "${INPUT_DATA_PATH}" "${targetDBPath}"
-echo "Copy done. ${POD_NAME} should now commence work and will produce CA replay reports within dir ${targetReportDir}"

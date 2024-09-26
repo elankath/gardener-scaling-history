@@ -16,7 +16,7 @@ if [[ -f "$appBinPath" ]]; then
   rm "$appBinPath"
 fi
 echo "Building app for linux/amd64..."
-GOOS=linux GOARCH=amd64 go build -v -o "$appBinPath" cmd/app/main.go
+CC=x86_64-unknown-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -v -o "$appBinPath" cmd/app/main.go
 chmod +x "$appBinPath"
 APP_IMAGE_TAG="$DOCKERHUB_USER/scaling-history-app:latest"
 export APP_IMAGE_TAG

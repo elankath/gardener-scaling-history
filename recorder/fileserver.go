@@ -2,7 +2,6 @@ package recorder
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	_ "github.com/mattn/go-sqlite3"
@@ -84,7 +83,7 @@ func (f *FileServer) GetDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	ext := filepath.Ext(dbFile)
 	dbCopyFile := dbFile[:len(dbFile)-len(ext)] + "_copy" + ext
-	err := copySQLiteDB(dbFile, dbCopyFile)
+	err := apputil.CopySQLiteDB(dbFile, dbCopyFile)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("could not make copy SQLite db file to serve %q: %v", dbFile, err), 500)
 		return
@@ -93,27 +92,6 @@ func (f *FileServer) GetDatabase(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(dbCopyFile)+"\"")
 	http.ServeFile(w, r, dbCopyFile)
-}
-
-func copySQLiteDB(srcDBPath, dstDBPath string) error {
-	//Ensure that destDB file does not exist
-	err := os.Remove(dstDBPath)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	// Open source database connection
-	db, err := sql.Open("sqlite3", srcDBPath)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	// Execute the VACUUM INTO command to copy the database safely
-	query := fmt.Sprintf("VACUUM INTO '%s';", dstDBPath)
-	_, err = db.Exec(query)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (f *FileServer) ListReports(w http.ResponseWriter, _ *http.Request) {

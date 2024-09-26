@@ -64,21 +64,29 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc) int {
 			slog.Warn("REPORT_DIR not set. Assuming tmp dir", "reportsDir", reportsDir)
 		}
 	} else if mode == "in-utility-cluster" {
-		if dbDir == "" {
-			dbDir = "/data/db"
-			slog.Error("DB_DIR not set for in-utility-cluster. Assuming default.", "dbDir", dbDir)
-			if !apputil.DirExists("/data/db") {
-				slog.Error("dbDir does not exist!", "dbDir", dbDir)
+		if len(dbDir) == 0 {
+			slog.Error("DB_DIR not set for in-utility-cluster.", "dbDir", dbDir)
+			return 3
+		}
+		if !apputil.DirExists(dbDir) {
+			slog.Warn("dbDir does not exist. Creating...", "dbDir", dbDir)
+			err := os.MkdirAll(dbDir, 0755)
+			if err != nil {
+				slog.Error("Failed to create dbDir", "err", err)
 				return 3
 			}
 		}
 
-		if reportsDir == "" {
-			reportsDir = "/data/reports"
-			slog.Error("REPORT_DIR not set for in-utility-cluster. Assuming default.", "reportsDir", reportsDir)
-			if !apputil.DirExists(reportsDir) {
-				slog.Error("reportsDir does not exist!", "reportsDir", reportsDir)
-				return 4
+		if len(reportsDir) == 0 {
+			slog.Error("REPORT_DIR not set for in-utility-cluster.", "reportsDir", reportsDir)
+			return 3
+		}
+		if !apputil.DirExists(dbDir) {
+			slog.Warn("reportsDir does not exist. Creating...", "reportsDir", reportsDir)
+			err := os.MkdirAll(reportsDir, 0755)
+			if err != nil {
+				slog.Error("Failed to create reportsDir", "err", err)
+				return 3
 			}
 		}
 	}

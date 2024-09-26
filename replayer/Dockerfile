@@ -3,6 +3,7 @@ FROM ubuntu:latest
 #RUN apt-get update && apt-get install -y \
 #    curl \
 #    tee
+RUN apt update && apt -y install curl
 WORKDIR /
 COPY bin/remote /bin
 RUN mkdir /db
