@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/replayer"
@@ -46,6 +47,22 @@ func main() {
 	if len(inputDataPath) == 0 {
 		slog.Error("INPUT_DATA_PATH env MUST be set. Must be either a scenario .json file or a recorded .db path")
 		os.Exit(1)
+	}
+	waitDuration := 15 * time.Second
+	waitNum := 0
+	for {
+		fileInfo, err := os.Stat(inputDataPath)
+		if errors.Is(err, os.ErrNotExist) {
+			slog.Warn("No file found at inputDataPath - waiting for work...", "inputDataPath", inputDataPath, "waitNum", waitNum, "waitDuration", waitDuration)
+			<-time.After(waitDuration)
+			waitNum += 1
+			continue
+		} else if err != nil {
+			slog.Error("cannot getting stat for inputDataPath", "inputDataPath", inputDataPath, "err", err)
+			os.Exit(1)
+		}
+		slog.Info("file found at inputDataPath", "inputDataPath", inputDataPath, "fileInfoSize", fileInfo.Size(), "fileInfoTime", fileInfo.ModTime())
+		break
 	}
 	//virtualClusterKubeConfig := os.Getenv("KUBECONFIG")
 	//if len(virtualClusterKubeConfig) == 0 {

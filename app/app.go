@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -45,10 +46,10 @@ func New(parentCtx context.Context, params Params) (*DefaultApp, error) {
 	appCtx, appCancelCauseFunc := context.WithCancelCause(parentCtx)
 	stopCh := appCtx.Done()
 
-	kubeClient, err := GetShootAdminKubeclient(appCtx, params.Mode)
-	if err != nil {
-		return nil, err
-	}
+	//kubeClient, err := GetShootAdminKubeclient(appCtx, params.Mode)
+	//if err != nil {
+	//	return nil, err
+	//}
 
 	app := &DefaultApp{
 		params:     params,
@@ -56,16 +57,16 @@ func New(parentCtx context.Context, params Params) (*DefaultApp, error) {
 		cancelFunc: appCancelCauseFunc,
 		stopCh:     stopCh,
 		mux:        http.NewServeMux(),
-		kubeclient: kubeClient,
+		//kubeclient: kubeClient,
 		httpServer: &http.Server{
 			Addr: ":8080",
 		},
 	}
 	app.httpServer.Handler = app.mux
-	app.mux.HandleFunc("GET /api/db", app.ListDatabases)
+	app.mux.HandleFunc("GET /api/reports", app.ListReports)
 	//app.mux.HandleFunc("GET /api/db/{dbName}", app.GetDatabase)
 	//app.mux.HandleFunc("GET /api/reports", app.ListReports)
-	//app.mux.HandleFunc("GET /api/reports/{reportName}", app.GetReport)
+	app.mux.HandleFunc("GET /api/reports/{reportName}", app.GetReport)
 	return app, nil
 }
 
@@ -73,12 +74,12 @@ func (a *DefaultApp) Start() error {
 	context.AfterFunc(a.ctx, func() {
 		_ = a.doClose()
 	})
-	go func() {
-		err := a.RunCAReplays()
-		if err != nil {
-			slog.Error("Error running CA replay", err)
-		}
-	}()
+	//go func() {
+	//	err := a.RunCAReplays()
+	//	if err != nil {
+	//		slog.Error("Error running CA replay", err)
+	//	}
+	//}()
 	defer a.httpServer.Shutdown(a.ctx)
 	if err := a.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -186,42 +187,42 @@ type fileInfo struct {
 	ReadableSize string
 }
 
-func (a *DefaultApp) ListDatabases(w http.ResponseWriter, r *http.Request) {
+func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	entries, err := os.ReadDir(a.params.DBDir)
+	entries, err := os.ReadDir(a.params.ReportsDir)
 	if err != nil {
-		slog.Error("ListDatabases could not list files in dbDir", "error", err, "dbDir", a.params.DBDir)
-		http.Error(w, fmt.Sprintf("could not list files in dbDir %q", a.params.DBDir), 500)
+		slog.Error("ListReports could not list files in ReportsDir", "error", err, "reportsDir", a.params.ReportsDir)
+		http.Error(w, fmt.Sprintf("could not list files in reportsDir %q", a.params.ReportsDir), 500)
 		return
 	}
-	var dbInfos []fileInfo
+	var reportInfos []fileInfo
 	for _, e := range entries {
 		dbName := e.Name()
-		if !strings.HasSuffix(dbName, ".db") {
+		if !strings.HasSuffix(dbName, ".json") {
 			continue
 		}
-		if strings.HasSuffix(dbName, "_copy.db") {
-			continue
-		}
+		//if strings.HasSuffix(dbName, "_copy.db") {
+		//	continue
+		//}
 		name := e.Name()
-		dbPath := filepath.Join(a.params.DBDir, name)
-		statInfo, err := os.Stat(dbPath)
+		reportPath := filepath.Join(a.params.ReportsDir, name)
+		statInfo, err := os.Stat(reportPath)
 		if err != nil {
-			slog.Error("ListDatabases could not stat db file.", "error", err, "dbPath", dbPath)
-			http.Error(w, fmt.Sprintf("ListDatabases could not stat db file %q in dbDir %q", dbPath, a.params.DBDir), 500)
+			slog.Error("ListReports could not stat report file.", "error", err, "reportPath", reportPath)
+			http.Error(w, fmt.Sprintf("ListReports could not stat report file %q in reportDir %q", reportPath, a.params.ReportsDir), 500)
 			return
 		}
-		dbSize := uint64(statInfo.Size())
-		dbInfos = append(dbInfos, fileInfo{
+		reportSize := uint64(statInfo.Size())
+		reportInfos = append(reportInfos, fileInfo{
 			Name:         name,
-			Size:         dbSize,
-			ReadableSize: humanize.Bytes(dbSize),
+			Size:         reportSize,
+			ReadableSize: humanize.Bytes(reportSize),
 		})
 	}
-	err = json.NewEncoder(w).Encode(fileInfos{dbInfos})
+	err = json.NewEncoder(w).Encode(fileInfos{reportInfos})
 	if err != nil {
-		slog.Error("ListDatabases could not serialize items.", "error", err, "dbInfos", dbInfos)
-		http.Error(w, fmt.Sprintf("ListDatabases could not serialize response due to: %s", err), 500)
+		slog.Error("ListReports could not serialize items.", "error", err, "reportInfos", reportInfos)
+		http.Error(w, fmt.Sprintf("ListReports could not serialize response due to: %s", err), 500)
 		return
 	}
 	return
@@ -235,4 +236,21 @@ func (a *DefaultApp) Close() error {
 func (a *DefaultApp) doClose() error {
 	// Add close stuff here.
 	return nil
+}
+
+func (a *DefaultApp) GetReport(w http.ResponseWriter, r *http.Request) {
+	reportName := r.PathValue("reportName")
+	if len(reportName) == 0 {
+		http.Error(w, "reportName must not be empty", 400)
+		return
+	}
+	reportFile := path.Join(a.params.ReportsDir, reportName)
+	if !apputil.FileExists(reportFile) {
+		http.Error(w, fmt.Sprintf("reportFile %q not found", reportFile), 400)
+		return
+	}
+	slog.Info("Serving report.", "reportFile", reportFile)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+reportName+"\"")
+	http.ServeFile(w, r, reportFile)
 }

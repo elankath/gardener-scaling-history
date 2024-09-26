@@ -5,6 +5,7 @@ FROM ubuntu:latest
 #    tee
 WORKDIR /
 COPY bin/remote /bin
+RUN mkdir /db
 RUN chmod +x /bin
 #EXPOSE 8080
 #ENTRYPOINT ["/bin/replayer"]

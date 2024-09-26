@@ -1,3 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: scaling-history-reports
+  namespace: mcm-ca-team
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: default
+
 ---
 apiVersion: v1
 kind: Service
@@ -27,16 +40,6 @@ metadata:
     app: kubernetes
     gardener.cloud/role: controlplane
 spec:
-  affinity:
-    podAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-              - key:  "app.kubernetes.io/name"
-                operator: In
-                values:
-                  - "scaling-history-recorder"
-          topologyKey: "kubernetes.io/hostname"
   terminationGracePeriodSeconds: 30
   serviceAccountName: "default"
   containers:
@@ -52,23 +55,21 @@ spec:
       env:
         - name: MODE
           value: in-utility-cluster
-        - name: DB_DIR
-          value: /data/db
         - name: REPORT_DIR
-          value: /data/reports
+          value: /reports
         - name: DOCKERHUB_USER
           value: ${DOCKERHUB_USER}
       volumeMounts:
-        - mountPath: /data
-          name: data-dir
+        - mountPath: /reports
+          name: reports-dir
         - mountPath: /cfg
           name: recorder-config
         - mountPath: /app/secrets/gardens
           name: landscapes
   volumes:
-    - name: data-dir
+    - name: reports-dir
       persistentVolumeClaim:
-        claimName: scaling-history-data
+        claimName: scaling-history-reports
     - name: recorder-config
       projected:
         sources:

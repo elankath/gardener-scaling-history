@@ -34,6 +34,19 @@ spec:
   terminationGracePeriodSeconds: 30
   #serviceAccountName: "robot"
   serviceAccountName: "default"
+  tolerations:
+    - key: dedicated
+      value: scaling-history
+      effect: NoSchedule
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: worker.garden.sapcloud.io/group
+                operator: In
+                values:
+                  - scalehist
   containers:
     - name: recorder
       image: ${DOCKERHUB_USER}/scaling-history-recorder:latest

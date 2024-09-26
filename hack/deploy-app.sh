@@ -29,3 +29,5 @@ waitSecs=4
 echo "cleared objects..waiting for $waitSecs seconds before deploying fresh objects..."
 sleep "$waitSecs"
 kubectl apply -f  "$appPoYaml"
+sleep "$waitSecs"
+kubectl -n mcm-ca-team get po scaling-history-app

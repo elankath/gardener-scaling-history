@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  generateName: scaling-history-replayer-
+  name: ${POD_NAME}
   namespace: mcm-ca-team
   annotations:
     nonce: "${NONCE}"
@@ -14,29 +14,35 @@ metadata:
     app: kubernetes
     gardener.cloud/role: controlplane
 spec:
+  tolerations:
+    - key: dedicated
+      value: scaling-history
+      effect: NoSchedule
   affinity:
-    podAffinity:
+    nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchExpressions:
-              - key:  "app.kubernetes.io/name"
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: worker.garden.sapcloud.io/group
                 operator: In
                 values:
-                    - "scaling-history-recorder"
-          topologyKey: "kubernetes.io/hostname"
+                  - scalehist
   restartPolicy: Never
   containers:
     - name: replayer
       image: ${DOCKERHUB_USER}/scaling-history-replayer:latest
       env:
         - name: INPUT_DATA_PATH
-          value: ${INPUT_DATA_PATH}
+          value: ${POD_DATA_PATH}
         - name: REPORT_DIR
-          value: /data/reports
+          value: /reports
       volumeMounts:
-         - mountPath: /data
-           name: data-dir
+         - mountPath: /reports
+           name: reports-dir
+      resources:
+        requests:
+          memory: ${MEMORY}
   volumes:
-    - name: data-dir
+    - name: reports-dir
       persistentVolumeClaim:
-        claimName: scaling-history-data
+        claimName: scaling-history-reports

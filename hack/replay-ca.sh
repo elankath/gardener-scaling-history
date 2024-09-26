@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 set -eo pipefail
 
 echoErr() { echo "$@" 1>&2; }
@@ -28,6 +28,21 @@ if [[ ! -f specs/replayer.yaml ]]; then
   exit 2
 fi
 
+if [[ -z "$INPUT_DATA_PATH" ]]; then
+  echoErr "Kindly download the recorded db using ./hack/download-db.sh and set the path to it in the INPUT_DATA_PATH env var"
+  exit 3
+fi
+
+if [[ ! -f "$INPUT_DATA_PATH" ]]; then
+  echoErr "DB does not exist at $INPUT_DATA_PATH. Kindly download the recorded db using ./hack/download-db.sh and set the path to it in the INPUT_DATA_PATH env var"
+  exit 4
+fi
+
+if [[ "$INPUT_DATA_PATH" != *".db" ]]; then
+  echoErr "file at $INPUT_DATA_PATH does not appear to be a db file. Kindly download the recorded db using ./hack/download-db.sh and set the path to it in the INPUT_DATA_PATH env var"
+  exit 5
+fi
+
 echo "NOTE: Please ensure you have Gardener Live Landscape Access"
 echo "NOTE: Please ensure that scaling-history-recorder Pod is running via ./hack/deploy-recorder.sh"
 gardenctl target --garden sap-landscape-live --project garden-ops --shoot utility-int
@@ -49,26 +64,41 @@ if [[ -z "$INPUT_DATA_PATH" ]]; then
   dbList=$(echo "$dbList" | tr '\n' ' ')
   chosenDb=$(gum choose $dbList)
   echo "You have chosen $chosenDb ! Will run replayer against this DB."
-  export INPUT_DATA_PATH="/data/db/$chosenDb"
-  echo "INPUT_DATA_PATH has been set to $INPUT_DATA_PATH for replayer job."
+#  export INPUT_DATA_PATH="/db/$chosenDb"
+  export DB_NAME=${chosenDb:t}
+else
+  export DB_NAME=${INPUT_DATA_PATH:t}
 fi
 
+export SCALER="ca"
+export POD_SUFFIX=$(print -P "%{$(echo $RANDOM | md5sum | head -c 3)%}")
+export POD_NAME="scaling-history-replayer-${SCALER}-${POD_SUFFIX}"
+export POD_DATA_PATH="/db/${DB_NAME}"
+echo "POD_DATA_PATH has been set to ${POD_DATA_PATH} for ${POD_NAME} pod."
 
-#replayerDepsYaml="/tmp/scaling-history-replayer-deps.yaml"
-#envsubst < specs/replayer-deps.yaml > "$replayerDepsYaml"
-#echo "Substituted env variables in specs/replayer-deps.yaml and wrote to $replayerDepsYaml"
-#sleep 1
-#echo "Applying Replayer dependencies..."
-#kubectl apply -f  "$replayerDepsYaml"
-
-#export INPUT_DATA_PATH="/db/live_hc-eu30_prod-gc-haas.db"
-replayerPodYaml="/tmp/scaling-history-replayer.yaml"
 export NONCE="$(date)"
+export MEMORY="8Gi"
+replayerPodYaml="/tmp/scaling-history-replayer.yaml"
 envsubst < specs/replayer.yaml > "$replayerPodYaml"
 echo "Substituted env variables in specs/replayer.yaml and wrote to $replayerPodYaml"
 #kubectl delete job -n mcm-ca-team scaling-history-replayer || echo "scaling-history-replayer JOB not yet deployed."
 sleep 1
+
+#set +e
+#caReplayPVC=$(kubectl -n mcm-ca-team get pvc scaling-history-reports-ca-1)
+#if [[  -z "$caReplayPVC" ]]; then
+#  echo "Creating replayer PVC"
+#  kubectl create -f
+#set -e
+
 echo "Starting Replayer Pod..."
-kubectl create -f  "$replayerPodYaml"
-sleep 2
+kubectl apply -f  "$replayerPodYaml"
+sleep 12
 kubectl get pod -n mcm-ca-team
+
+targetDBPath="${POD_NAME}:/db/${DB_NAME}"
+targetReportDir="${POD_NAME}:/reports/"
+echo "Copying db ${INPUT_DATA_PATH} to ${targetDBPath}..."
+echo "kubectl cp -n mcm-ca-team ${INPUT_DATA_PATH} ${targetDBPath}"
+kubectl cp -n mcm-ca-team "${INPUT_DATA_PATH}" "${targetDBPath}"
+echo "Copy done. ${POD_NAME} should now commence work and will produce CA replay reports within dir ${targetReportDir}"

@@ -55,7 +55,7 @@ func (f *FileServer) ListDatabases(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain")
 	entries, err := os.ReadDir(f.dbDir)
 	if err != nil {
-		slog.Error("ListDatabases could not list files in dbDir", "error", err, "dbDir", f.dbDir)
+		slog.Error("ListReports could not list files in dbDir", "error", err, "dbDir", f.dbDir)
 		http.Error(w, fmt.Sprintf("could not list files in dbDir %q", f.dbDir), 500)
 		return
 	}
