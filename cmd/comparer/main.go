@@ -202,9 +202,9 @@ func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport
 		PlainText("This section compares the total cost of the scaled-up nodes by Virtual CA and Scaling Recommender").
 		LF().
 		Table(md.TableSet{
-			Header: []string{"Virtual CA", "Scaling Recommender"},
+			Header: []string{"Virtual CA", "Scaling Recommender", "Saved Costs"},
 			Rows: [][]string{
-				{fmt.Sprintf("$%.2f", vcaTotalScaleupCost), fmt.Sprintf("$%.2f", srTotalScaleupCost)},
+				{fmt.Sprintf("$%.2f", vcaTotalScaleupCost), fmt.Sprintf("$%.2f", srTotalScaleupCost), fmt.Sprintf("$%.2f", vcaTotalScaleupCost-srTotalScaleupCost)},
 			},
 		}).
 		H2("Resource Utilization").

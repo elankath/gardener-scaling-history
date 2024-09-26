@@ -62,7 +62,7 @@ func (rp RecorderParams) String() string {
 
 func (sr ScalingResult) GetResourceStat() (stats ResourceStats, err error) {
 	for _, node := range sr.ScaledUpNodes {
-		rl, ok := sr.ScaledUpNodesUtilization[node.Name]
+		rl, ok := sr.NodesUtilization[node.Name]
 		if !ok {
 			//err = fmt.Errorf("cannot find utilization for node %s", node.Name)
 			continue

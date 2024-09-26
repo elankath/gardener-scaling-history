@@ -914,6 +914,8 @@ func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPa
 	args = append(args, "--expendable-pods-priority-cutoff=-10")
 	args = append(args, "--kube-client-qps=30")
 	args = append(args, "--kube-client-burst=20")
+	//args = append(args, "--scale-down-unneeded-time=0s")
+	//args = append(args, "--scale-down-delay-after-add=0s")
 
 	caCmd := exec.Command("bin/cluster-autoscaler", args...)
 	caCmd.Stdout = os.Stdout
@@ -1837,7 +1839,7 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 		util = gsc.SumResources([]corev1.ResourceList{sumPodRequests, util})
 		nodeUtilizationMap[pod.Spec.NodeName] = util
 	}
-	scenario.ScalingResult.ScaledUpNodesUtilization = nodeUtilizationMap
+	scenario.ScalingResult.NodesUtilization = nodeUtilizationMap
 	scenario.ScalingResult.EmptyNodeNames = emptyNodeNames.SortedList()
 
 	return
