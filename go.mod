@@ -1,6 +1,6 @@
 module github.com/elankath/gardener-scaling-history
 
-go 1.22.0
+go 1.23.1
 
 require (
 	github.com/blockloop/scan/v2 v2.5.0

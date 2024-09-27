@@ -29,13 +29,14 @@ import (
 
 type DefaultApp struct {
 	io.Closer
-	params     Params
-	ctx        context.Context
-	cancelFunc context.CancelCauseFunc
-	stopCh     <-chan struct{}
-	mux        *http.ServeMux
-	httpServer *http.Server
-	kubeclient *kubernetes.Clientset
+	params       Params
+	ctx          context.Context
+	cancelFunc   context.CancelCauseFunc
+	stopCh       <-chan struct{}
+	mux          *http.ServeMux
+	httpServer   *http.Server
+	kubeclient   *kubernetes.Clientset
+	numCAReplays int
 }
 
 type Params struct {
@@ -87,16 +88,7 @@ func (a *DefaultApp) Start() error {
 	context.AfterFunc(a.ctx, func() {
 		_ = a.doClose()
 	})
-	go func() {
-		err := a.RunCAReplays()
-		if err != nil {
-			slog.Error("Error running CA replay", err)
-		}
-	}()
-	//err := a.deployDummyPod()
-	//if err != nil {
-	//	slog.Warn("Cannot deploy dummy pod", "error", err)
-	//}
+	a.StartCAReplayLoop()
 	defer a.httpServer.Shutdown(a.ctx)
 	if err := a.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -104,11 +96,30 @@ func (a *DefaultApp) Start() error {
 	return nil
 }
 
+func (a *DefaultApp) StartCAReplayLoop() {
+	const caReplayInterval = time.Hour * 1
+	go func() {
+		for {
+			select {
+			case <-time.After(caReplayInterval):
+				err := a.RunCAReplays()
+				if err != nil {
+					slog.Error("Error in RunCAReplays", "error", err)
+				}
+			case <-a.ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
 func (a *DefaultApp) RunCAReplays() error {
 	dbPaths, err := ListAllDBPaths(a.params.DBDir)
 	if err != nil {
 		return err
 	}
+	slog.Info("RunCAReplays commencing.", "dbPaths", dbPaths, "numCAReplays", a.numCAReplays)
+	begin := time.Now()
 	//nonce: "${NONCE}"
 	//DOCKERHUB_USER
 	//INPUT_DATA_PATH
@@ -117,11 +128,13 @@ func (a *DefaultApp) RunCAReplays() error {
 		if strings.HasSuffix(dbPath, "_copy.db") {
 			continue
 		}
+		a.numCAReplays++
 		err = a.RunCAReplay(dbPath)
 		if err != nil {
 			slog.Warn("Error running CA replay", "dbPath", dbPath, "error", err)
 		}
 	}
+	slog.Info("RunCAReplays completed.", "duration", time.Now().Sub(begin), "dbPaths", dbPaths)
 	return nil
 }
 
@@ -139,10 +152,10 @@ func (a *DefaultApp) RunCAReplay(dbPath string) error {
 	if err = yamlDecoder.Decode(pod); err != nil {
 		return err
 	}
-	slog.Info("Deploying replayer pod: ", "name", pod.Name, "INPUT_DATA_PATH", dbPath)
+	slog.Info("Deploying replayer pod: ", "name", pod.Name, "INPUT_DATA_PATH", dbPath, "numCAReplays", a.numCAReplays)
 	_, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
-		slog.Error("Error deploying replayer pod", "name", pod.Name, "INPUT_DATA_PATH", dbPath)
+		slog.Error("Error deploying replayer pod", "name", pod.Name, "INPUT_DATA_PATH", dbPath, "numCAReplays", a.numCAReplays)
 		return err
 	}
 
