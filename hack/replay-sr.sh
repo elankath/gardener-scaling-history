@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 set -eo pipefail
 
 echoErr() { echo "$@" 1>&2; }
@@ -34,15 +34,16 @@ gardenctl target --garden sap-landscape-live --project garden-ops --shoot utilit
 
 if [[ -z "$INPUT_DATA_PATH" ]]; then
   # Set up trap to call cleanup function on script exit or interrupt
-  trap cleanup EXIT
-  echo "INPUT_DATA_PATH NOT specified. Getting list of recorded reports.."
-  echo "Executing kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080..."
-  kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080 &
-  pid=$!
-  sleep 6
-  echo "Started port-forwarding with PID: $pid"
+#  trap cleanup EXIT
+#  echo "INPUT_DATA_PATH NOT specified. Getting list of recorded reports.."
+#  echo "Executing kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080..."
+#  kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080 &
+#  pid=$!
+#  sleep 6
+#  echo "Started port-forwarding with PID: $pid"
   echo "Downloading report list..."
-  reportList=$(curl localhost:8080/api/reports)
+#  reportList=$(curl localhost:8080/api/reports)
+  reportList=$(curl http://10.47.254.238/api/reports | jq -r '.Items[].Name')
   printf ">> Found reports \n: %s" $reportList
   echo
   echo "Kindly Select a report for which to run the recommender to produce report:"
@@ -68,6 +69,7 @@ else
   export REPORT_NAME=${INPUT_DATA_PATH:t}
 fi
 
+export NO_AUTO_LAUNCH="true"
 export SCALER="sr"
 export POD_SUFFIX=$(print -P "%{$(echo $RANDOM | md5sum | head -c 3)%}")
 export POD_NAME="scaling-history-replayer-${SCALER}-${POD_SUFFIX}"
@@ -87,9 +89,9 @@ kubectl create -f  "$replayerPodYaml"
 sleep 2
 kubectl get pod -n mcm-ca-team
 
-targetReportPath="${POD_NAME}:/reports/${REPORT_NAME}"
-targetReportDir="${POD_NAME}:/reports/"
-echo "Copying replayCA report ${INPUT_DATA_PATH} to ${targetReportPath}..."
-echo "kubectl cp -n mcm-ca-team ${INPUT_DATA_PATH} ${targetReportPath}"
-kubectl cp -n mcm-ca-team "${INPUT_DATA_PATH}" "${targetReportPath}"
-echo "Copy done. ${POD_NAME} should now commence work and will produce SR reports within dir ${targetReportDir}"
+#targetReportPath="${POD_NAME}:/reports/${REPORT_NAME}"
+#targetReportDir="${POD_NAME}:/reports/"
+#echo "Copying replayCA report ${INPUT_DATA_PATH} to ${targetReportPath}..."
+#echo "kubectl cp -n mcm-ca-team ${INPUT_DATA_PATH} ${targetReportPath}"
+#kubectl cp -n mcm-ca-team "${INPUT_DATA_PATH}" "${targetReportPath}"
+#echo "Copy done. ${POD_NAME} should now commence work and will produce SR reports within dir ${targetReportDir}"

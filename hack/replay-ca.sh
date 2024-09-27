@@ -67,6 +67,7 @@ else
   export DB_NAME=${INPUT_DATA_PATH:t}
 fi
 
+export NO_AUTO_LAUNCH="false"
 export SCALER="ca"
 export POD_SUFFIX=$(print -P "%{$(echo $RANDOM | md5sum | head -c 3)%}")
 export POD_NAME="scaling-history-replayer-${SCALER}-${POD_SUFFIX}"

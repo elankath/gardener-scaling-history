@@ -463,6 +463,41 @@ func DownloadDBFromApp(dbPath string) error {
 	return nil
 }
 
+func DownloadReportFromApp(reportPath string) error {
+	if !strings.HasSuffix(reportPath, ".json") {
+		return fmt.Errorf("reportPath does not end with .json: %s", reportPath)
+	}
+	reportName := path.Base(reportPath)
+
+	client := http.Client{
+		Timeout: 15 * time.Minute,
+	}
+
+	reportUrl := "http://10.47.254.238/api/reports/" + reportName
+	slog.Info("Downloading report...", "url", reportUrl)
+
+	resp, err := client.Get(reportUrl)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("downloading report failed with status code %d", resp.StatusCode)
+	}
+
+	reportFile, err := os.Create(reportPath)
+	if err != nil {
+		return fmt.Errorf("error creating report file: %w", err)
+	}
+	defer reportFile.Close()
+	_, err = io.Copy(reportFile, resp.Body)
+	if err != nil {
+		return fmt.Errorf("error downloading report %q to path %q: %w", reportName, reportPath, err)
+	}
+	slog.Info("Successfully downloaded report", "path", reportPath)
+	return nil
+}
+
 func UploadReport(ctx context.Context, reportPath string) error {
 	reportName := path.Base(reportPath)
 
@@ -470,7 +505,7 @@ func UploadReport(ctx context.Context, reportPath string) error {
 		Timeout: 15 * time.Minute,
 	}
 
-	reportUrl := "http://10.47.254.238/reports/" + reportName
+	reportUrl := "http://10.47.254.238/api/reports/" + reportName
 	slog.Info("Uploading report...", "reportPath", reportPath, "reportUrl", reportUrl)
 
 	data, err := os.ReadFile(reportPath)

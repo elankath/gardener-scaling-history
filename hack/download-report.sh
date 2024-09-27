@@ -19,16 +19,12 @@ gardenctl target --garden sap-landscape-live --project garden-ops --shoot utilit
 
 # Set up trap to call cleanup function on script exit or interrupt
 trap cleanup EXIT
-echo "Executing  kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080..."
-kubectl port-forward -n mcm-ca-team pod/scaling-history-recorder 8080:8080 &
-pid=$!
-sleep 7
-echo "Started port-forwarding with PID: $pid"
 echo "Downloading report list..."
-reportList=$(curl localhost:8080/api/reports)
+reportList=$(curl http://10.47.254.238/api/reports | jq -r '.Items[].Name')
+printf ">> Found report list \n: %s" $reportList
 echo "Found reports: $reportList"
-for reportName in ${(f)reportList};  do
-  url="http://localhost:8080/api/reports/$reportName"
+for reportName in ${(f)reportList}; do
+  url="http://10.47.254.238/api/reports/$reportName"
   echo "Downloading report from url $url into tmp ..."
   curl -kL "$url" -o "/tmp/$reportName"
 done

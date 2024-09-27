@@ -66,10 +66,18 @@ func main() {
 	}
 
 	if mode == "in-utility-cluster" {
-		err := apputil.DownloadDBFromApp(inputDataPath)
-		if err != nil {
-			slog.Error("Error downloading DB from app", "err", err)
-			os.Exit(2)
+		if strings.HasSuffix(inputDataPath, ".db") {
+			err := apputil.DownloadDBFromApp(inputDataPath)
+			if err != nil {
+				slog.Error("Error downloading DB from app", "err", err)
+				os.Exit(2)
+			}
+		} else if strings.HasSuffix(inputDataPath, ".json") {
+			err := apputil.DownloadReportFromApp(inputDataPath)
+			if err != nil {
+				slog.Error("Error downloading report from app", "err", err)
+				os.Exit(2)
+			}
 		}
 	}
 
@@ -114,6 +122,11 @@ func main() {
 	}
 	replayInterval := GetDuration("REPLAY_INTERVAL", replayer.DefaultReplayInterval)
 
+	var autoLaunchDeps bool
+	if os.Getenv("NO_AUTO_LAUNCH") == "" || os.Getenv("NO_AUTO_LAUNCH") == "false" {
+		autoLaunchDeps = true
+	}
+
 	replayParams := gsh.ReplayerParams{
 		InputDataPath:                inputDataPath,
 		ReportDir:                    reportDir,
@@ -121,6 +134,7 @@ func main() {
 		VirtualClusterKubeConfigPath: "/tmp/kvcl.yaml",
 		DeployParallel:               deployParallel,
 		ReplayInterval:               replayInterval,
+		AutoLaunchDependencies:       autoLaunchDeps,
 		//RecurConfigUpdate:            recurConfigUpdate,
 	}
 

@@ -104,7 +104,7 @@ func NewDefaultReplayer(ctx context.Context, params gsh.ReplayerParams) (gsh.Rep
 		return nil, fmt.Errorf("invalid DB path for DB-report %q", params.InputDataPath)
 	}
 	kvclCtx, kvclCancelFn := context.WithCancel(ctx)
-	if os.Getenv("NO_AUTO_LAUNCH") == "" {
+	if params.AutoLaunchDependencies {
 		kvclCmd, err = launchKvcl(kvclCtx)
 		if err != nil {
 			kvclCancelFn()
@@ -685,7 +685,7 @@ func (r *defaultReplayer) Start() error {
 		if err != nil {
 			return err
 		}
-		if os.Getenv("NO_AUTO_LAUNCH") == "" {
+		if r.params.AutoLaunchDependencies {
 			caCtx, caCancelFn := context.WithCancel(r.ctx)
 			caCmd, err := launchCA(caCtx, r.clientSet, r.params.VirtualClusterKubeConfigPath, caSettings) // must launch CA in go-routine and return processId and error
 			if err != nil {
@@ -720,7 +720,7 @@ func (r *defaultReplayer) Start() error {
 		}
 		srCtx, srCancelFn := context.WithCancel(r.ctx)
 		r.reportPathFormat = path.Join(r.params.ReportDir, reportFileFormat)
-		if os.Getenv("NO_AUTO_LAUNCH") == "" {
+		if r.params.AutoLaunchDependencies {
 			scalerCmd, err := launchScalingRecommender(srCtx, r.params.VirtualClusterKubeConfigPath, r.params.InputDataPath) // must launch scaling recommender in go-routine and return processId and error
 			if err != nil {
 				srCancelFn()

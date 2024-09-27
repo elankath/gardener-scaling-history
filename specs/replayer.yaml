@@ -33,9 +33,11 @@ spec:
       image: ${DOCKERHUB_USER}/scaling-history-replayer:latest
       env:
         - name: INPUT_DATA_PATH
-          value: ${POD_DATA_PATH}
+          value: "${POD_DATA_PATH}"
         - name: REPORT_DIR
-          value: /reports
+          value: "/reports"
+        - name: NO_AUTO_LAUNCH
+          value: "${NO_AUTO_LAUNCH}"
 #      volumeMounts:
 #         - mountPath: /reports
 #           name: reports-dir

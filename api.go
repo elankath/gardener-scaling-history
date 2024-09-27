@@ -45,6 +45,7 @@ type ReplayerParams struct {
 	VirtualClusterKubeConfigPath string
 	DeployParallel               int
 	ReplayInterval               time.Duration
+	AutoLaunchDependencies       bool
 	//RecurConfigUpdate            bool
 }
 
