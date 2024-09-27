@@ -875,7 +875,7 @@ func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPa
 		}
 		// deploy the priority config map
 		cmName := "cluster-autoscaler-priority-expander"
-		cm := corev1.ConfigMap{
+		_ = corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      cmName,
 				Namespace: "kube-system",
@@ -885,11 +885,13 @@ func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPa
 			},
 			BinaryData: nil,
 		}
-		createdCm, err := clientSet.CoreV1().ConfigMaps("kube-system").Create(ctx, &cm, metav1.CreateOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("cannot create %q config map: %w", cmName, err)
-		}
-		slog.Info("Created ConfigMap", "name", cmName, "obj", createdCm)
+		slog.Warn("NOT DEPLOYING CONFIGMAP SINCE OVERRIDDEN TO USE LEAST WASTE")
+		settings.Expander = "least-waste"
+		//createdCm, err := clientSet.CoreV1().ConfigMaps("kube-system").Create(ctx, &cm, metav1.CreateOptions{})
+		//if err != nil {
+		//	return nil, fmt.Errorf("cannot create %q config map: %w", cmName, err)
+		//}
+		//slog.Info("Created ConfigMap", "name", cmName, "obj", createdCm)
 	}
 	// TODO: change to using Start and Wait with graceful termination later
 	settings.IgnoreDaemonSetUtilization = true
