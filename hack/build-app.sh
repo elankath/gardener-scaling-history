@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env zsh
 set -eo pipefail
 
 echoErr() { echo "$@" 1>&2; }
@@ -22,7 +22,7 @@ else
     echo "x86_64-unknown-linux-gnu-gcc does not exist. Installing via brew..."
     brew tap SergioBenitez/osxct
     brew install SergioBenitez/osxct/x86_64-unknown-linux-gnu
-    echo "Installed x86_64-unknown-linux-gnu-gcc -> OPEN FRESH TERMINAL AND RUN THIS SCRIPT: '$0' AGAIN"
+    echo "Installed x86_64-unknown-linux-gnu-gcc -> QUIT TERMINAL, OPEN FRESH TERMINAL AND RUN THIS SCRIPT: '$0' AGAIN"
     exit 3
 fi
 echo "Building app for linux/amd64..."

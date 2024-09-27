@@ -99,6 +99,10 @@ func (a *DefaultApp) Start() error {
 func (a *DefaultApp) StartCAReplayLoop() {
 	const caReplayInterval = time.Hour * 1
 	go func() {
+		err := a.RunCAReplays()
+		if err != nil {
+			slog.Error("Error in RunCAReplays", "error", err)
+		}
 		for {
 			select {
 			case <-time.After(caReplayInterval):
@@ -152,24 +156,25 @@ func (a *DefaultApp) RunCAReplay(dbPath string) error {
 	if err = yamlDecoder.Decode(pod); err != nil {
 		return err
 	}
-	slog.Info("Deploying replayer pod: ", "name", pod.Name, "INPUT_DATA_PATH", dbPath, "numCAReplays", a.numCAReplays)
+	slog.Info("RunCAReplay is deploying pod.", "podName", pod.Name, "INPUT_DATA_PATH", dbPath, "numCAReplays", a.numCAReplays)
 	_, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {
-		slog.Error("Error deploying replayer pod", "name", pod.Name, "INPUT_DATA_PATH", dbPath, "numCAReplays", a.numCAReplays)
+		slog.Error("RunCAReplay cannot deploy replayer pod", "podName", pod.Name, "INPUT_DATA_PATH", dbPath, "numCAReplays", a.numCAReplays, "error", err)
 		return err
 	}
 
 	err = wait.PollUntilContextTimeout(ctx, 5*time.Minute, 2*time.Hour, false, func(ctx context.Context) (done bool, err error) {
 		pod, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 		if err != nil {
+			slog.Warn("RunCAReplay cannot get Pod", "podName", pod.Name, "numCAReplays", a.numCAReplays, "error", err)
 			return false, err
 		}
 
 		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-			slog.Info("replayer pod completed", "name", pod.Name, "INPUT_DATA_PATH", dbPath, "podPhase", pod.Status.Phase)
+			slog.Info("RunCAReplay is completed", "podName", pod.Name, "INPUT_DATA_PATH", dbPath, "podPhase", pod.Status.Phase)
 			return true, nil
 		}
-		slog.Info("Replayer in progress", "name", pod.Name, "INPUT_DATA_PATH", dbPath, "podPhase", pod.Status.Phase)
+		slog.Info("RunCAReplay is in progress.", "podName", pod.Name, "INPUT_DATA_PATH", dbPath, "podPhase", pod.Status.Phase)
 		return false, nil
 	})
 	if err != nil {
