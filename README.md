@@ -5,9 +5,11 @@
 
 Repository providers 2 apps:
 - recorder: monitors and records the scaling data for one or more gardner clusters: machine deployments, machine classes, priority classes, autoscaling config, scheduled and unscheduled pods, nodes, etc. Recorded data is dumped into a [SQLite](https://sqlite.org/) DB per cluster.
-- replayer: replays the recorded scaling data of a gardener cluster against another k8s cluster (set via `KUBECONFIG`).
-  - effectively deploys scheduled and un-scheduled pods in a configurable batch interval and waits till nodes belonging to CA node groups are scaled.
-  - This is primarily meant for simulating autoscaling  and hence ideally should be run against a virtual cluster like one setup by https://github.com/unmarshall/kvcl/
+- replayer: The replayer can replay scenarios against either the virtual CA or the scaling recommender
+  - replay-CA: replays the recorded scaling data of a gardener cluster against a virtual k8s cluster.
+       - effectively deploys scheduled and un-scheduled pods in a configurable batch interval and waits till nodes belonging to CA node groups are scaled.
+       - This is primarily meant for simulating autoscaling  and hence ideally should be run against a virtual cluster like one setup by https://github.com/unmarshall/kvcl/
+  - replay-SR: replays the scenario json (produced by replay-CA) against the new scaling-recommender.
 
 ## Launch the Recorder
 
@@ -104,11 +106,30 @@ In either case it generates another scenario report.
    1. (eg: `export INPUT_DATA_PATH=$GOPATH/src/github.tools.sap/I034796/gardener-scaling-reports/independent-scenarios/live_hc-eu30_prod-gc-dmi_ca-replay-5.json`)
 3. Run `go run cmd/replayer/main.go`
 
+#### Launch replay scaling recommender remotely 
+
+1. Login into `utility-int` cluster `gardenctl target --garden sap-landscape-live --project garden-ops --shoot utility-int`
+1. Export your docker hub username: `export DOCKERHUB_USER=<dockerHubUser>`
+1. Login into Docker Hub: `docker login -u $DOCKERHUB_USER -p <dockerHubPass>`
+1. Ensure you are at the base dir of the gardener-scaling-history
+1. Run `./hack/build-replayer.sh remote`
+1. Run `./hack/replay-sr.sh`
+    1. This will list all replay-CA reports available
+    1. Choose the report you want to run the replayer with.
+   1. It will then deploy a `scaling-history-replayer-xxxxx` Pod that will run the replayer, generate the report and then upload the generated report into the  `/data/reports` directory of the PV `scaling-history-data`
+   1. Replay reports look like `<landscape>_<project>_<shoot>_sr-replay-<number>.json` where number corresponds to the scaling event index.
+       1. Ex: `live_hc-eu10_prod-haas_sr-replay-0.json`
+1. You can download the reports as described in the subsequent section.
+ 
 ## Download Reports
 
 ### Download reports into /tmp dir
-
 1. Ensure you have garden live landscape access.
 1. Kindly run the script `./hack/download-reports.sh`
 1. This will download replay reports into your local `/tmp` directory.
+
+#### Report Download API
+   1. You can get a listing of reports by executing `curl http://10.47.254.238/api/reports`
+   1. You can download a specific report into your current directory by using: `curl -LO <reportUrl>`
+        1. Ex: `curl -LO http://10.47.254.238/api/reports/live_hc-canary_prod-hna1_ca-replay-1.json`
  
