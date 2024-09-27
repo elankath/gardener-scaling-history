@@ -15,3 +15,12 @@ func GetReplayerPodYamlTemplate() (string, error) {
 
 	return string(data), nil
 }
+
+func GetPodYaml(fileName string) (string, error) {
+	data, err := assets.ReadFile(fileName)
+	if err != nil {
+		return "", err
+	}
+
+	return string(data), nil
+}

@@ -54,9 +54,9 @@ spec:
         - containerPort: 8080
       resources:
         requests:
-          memory: 10Gi
+          memory: 12Gi
         limits:
-          memory: 14Gi
+          memory: 16Gi
       env:
         - name: MODE
           value: in-utility-cluster

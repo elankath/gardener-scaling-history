@@ -11,6 +11,32 @@
 #      storage: 20Gi
 #  storageClassName: default
 
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-deployer-role
+  namespace: mcm-ca-team
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list", "create", "watch"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-deployer-rolebinding
+  namespace: mcm-ca-team
+subjects:
+  - kind: ServiceAccount
+    name: mcm-ca-cfg  # Replace with the actual ServiceAccount name
+    namespace: mcm-ca-team
+roleRef:
+  kind: Role
+  name: pod-deployer-role
+  apiGroup: rbac.authorization.k8s.io
+
 ---
 apiVersion: v1
 kind: Service
@@ -54,7 +80,7 @@ spec:
                 values:
                   - scalehist
   terminationGracePeriodSeconds: 30
-  serviceAccountName: "default"
+  serviceAccountName: "mcm-ca-cfg"
   containers:
     - name: app
       image: ${DOCKERHUB_USER}/scaling-history-app:latest

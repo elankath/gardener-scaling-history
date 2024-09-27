@@ -22,12 +22,17 @@ cleanup() {
 trap cleanup EXIT
 
 inputDataPath=${INPUT_DATA_PATH}
+inputDataFileName=$(basename "${inputDataPath}")
 # Check if the string ends with the suffix
 if [[ "$inputDataPath" == *".json" ]]; then
   replaySR="true"
+  clusterName="${inputDataFileName%_*}"
 else
   replaySR="false"
+  clusterName="${inputDataFileName%.*}"
 fi
+
+echo "Computed variables: replaySR = ${replaySR}; clusterName = ${clusterName}"
 
 declare provider
 
@@ -64,3 +69,13 @@ fi
 
 echo "Launching replayer..."
 /bin/replayer 2>&1 | tee /tmp/replayer.log
+
+if [[ -f /tmp/kvcl.log ]]; then
+  curl -v -X POST -F logs=@/tmp/kvcl.log "http://10.47.254.238/api/logs/${clusterName}"
+fi
+if [[ -f /tmp/sr.log ]]; then
+  curl -v -X POST -F logs=@/tmp/sr.log "http://10.47.254.238/api/logs/${clusterName}"
+fi
+if [[ -f /tmp/replayer.log ]]; then
+  curl -v -X POST -F logs=@/tmp/replayer.log "http://10.47.254.238/api/logs/${clusterName}"
+fi

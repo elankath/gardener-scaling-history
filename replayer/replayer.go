@@ -1696,6 +1696,9 @@ func clearNodeNamesNotIn(pods []gsc.PodInfo, nodeNames []string) {
 		if !nameSet.Has(pods[i].Spec.NodeName) {
 			pods[i].NodeName = ""
 			pods[i].Spec.NodeName = ""
+			if pods[i].Labels == nil {
+				pods[i].Labels = make(map[string]string)
+			}
 			pods[i].Labels["previouslyAssignedPod"] = "1"
 		}
 	}

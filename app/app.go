@@ -13,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -48,10 +49,14 @@ func New(parentCtx context.Context, params Params) (*DefaultApp, error) {
 	appCtx, appCancelCauseFunc := context.WithCancelCause(parentCtx)
 	stopCh := appCtx.Done()
 
-	//kubeClient, err := GetShootAdminKubeclient(appCtx, params.Mode)
-	//if err != nil {
-	//	return nil, err
-	//}
+	restConfig, err := clientcmd.BuildConfigFromFlags("", "")
+	if err != nil {
+		return nil, err
+	}
+	kubeClient, err := kubernetes.NewForConfig(restConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	app := &DefaultApp{
 		params:     params,
@@ -59,7 +64,7 @@ func New(parentCtx context.Context, params Params) (*DefaultApp, error) {
 		cancelFunc: appCancelCauseFunc,
 		stopCh:     stopCh,
 		mux:        http.NewServeMux(),
-		//kubeclient: kubeClient,
+		kubeclient: kubeClient,
 		httpServer: &http.Server{
 			Addr: ":8080",
 		},
@@ -71,6 +76,9 @@ func New(parentCtx context.Context, params Params) (*DefaultApp, error) {
 	app.mux.HandleFunc("POST /api/reports/:upload", app.UploadReports)
 	app.mux.HandleFunc("GET /api/db", app.ListDatabases)
 	app.mux.HandleFunc("GET /api/db/{dbName}", app.GetDatabase)
+	app.mux.HandleFunc("POST /api/logs/{clusterName}", app.UploadLogs)
+	app.mux.HandleFunc("GET /api/logs/{clusterName}/{fileName}", app.GetLogFile)
+	app.mux.HandleFunc("GET /api/logs/{clusterName}", app.ListLogFiles)
 	//app.mux.HandleFunc("GET /api/reports", app.ListReports)
 	return app, nil
 }
@@ -79,12 +87,16 @@ func (a *DefaultApp) Start() error {
 	context.AfterFunc(a.ctx, func() {
 		_ = a.doClose()
 	})
-	//go func() {
-	//	err := a.RunCAReplays()
-	//	if err != nil {
-	//		slog.Error("Error running CA replay", err)
-	//	}
-	//}()
+	go func() {
+		err := a.RunCAReplays()
+		if err != nil {
+			slog.Error("Error running CA replay", err)
+		}
+	}()
+	//err := a.deployDummyPod()
+	//if err != nil {
+	//	slog.Warn("Cannot deploy dummy pod", "error", err)
+	//}
 	defer a.httpServer.Shutdown(a.ctx)
 	if err := a.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -102,25 +114,55 @@ func (a *DefaultApp) RunCAReplays() error {
 	//INPUT_DATA_PATH
 
 	for _, dbPath := range dbPaths {
-		replayerYaml, err := GetReplayerPodYaml(dbPath, a.params.DockerHubUser, time.Now())
+		if strings.HasSuffix(dbPath, "_copy.db") {
+			continue
+		}
+		err = a.RunCAReplay(dbPath)
 		if err != nil {
-			return err
+			slog.Warn("Error running CA replay", "dbPath", dbPath, "error", err)
 		}
-		stringReader := strings.NewReader(replayerYaml)
-		//yamlReader := yaml.NewYAMLReader(bufio.NewReader(stringReader))
-		yamlDecoder := yaml.NewYAMLOrJSONDecoder(io.NopCloser(stringReader), 4096)
-		var pod corev1.Pod
-		if err := yamlDecoder.Decode(&pod); err != nil {
-			return err
-		}
-		slog.Info("Deploying replayer pod: ", "name", pod.Name, "inputDataPath", dbPath)
-		_, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Create(a.ctx, &pod, metav1.CreateOptions{})
-		if err != nil {
-			slog.Error("Error deploying replayer pod", "name", pod.Name, "inputDataPath", dbPath)
-			return err
-		}
-		break
 	}
+	return nil
+}
+
+func (a *DefaultApp) RunCAReplay(dbPath string) error {
+	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Hour)
+	defer cancel()
+	replayerYaml, err := GetReplayerPodYaml(dbPath, a.params.DockerHubUser, time.Now())
+	if err != nil {
+		return err
+	}
+	stringReader := strings.NewReader(replayerYaml)
+	//yamlReader := yaml.NewYAMLReader(bufio.NewReader(stringReader))
+	yamlDecoder := yaml.NewYAMLOrJSONDecoder(io.NopCloser(stringReader), 4096)
+	var pod = &corev1.Pod{}
+	if err = yamlDecoder.Decode(pod); err != nil {
+		return err
+	}
+	slog.Info("Deploying replayer pod: ", "name", pod.Name, "INPUT_DATA_PATH", dbPath)
+	_, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		slog.Error("Error deploying replayer pod", "name", pod.Name, "INPUT_DATA_PATH", dbPath)
+		return err
+	}
+
+	err = wait.PollUntilContextTimeout(ctx, 5*time.Minute, 2*time.Hour, false, func(ctx context.Context) (done bool, err error) {
+		pod, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			slog.Info("replayer pod completed", "name", pod.Name, "INPUT_DATA_PATH", dbPath, "podPhase", pod.Status.Phase)
+			return true, nil
+		}
+		slog.Info("Replayer in progress", "name", pod.Name, "INPUT_DATA_PATH", dbPath, "podPhase", pod.Status.Phase)
+		return false, nil
+	})
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -164,7 +206,23 @@ func GetReplayerPodYaml(inputDataPath, dockerHubUser string, now time.Time) (str
 	if err != nil {
 		return "", err
 	}
-	oldNew := []string{"${NONCE}", now.Format(time.RFC822Z), "${DOCKERHUB_USER}", dockerHubUser, "${INPUT_DATA_PATH}", inputDataPath}
+	var memory, podName, dbPath string
+	if strings.HasSuffix(inputDataPath, ".db") {
+		memory = "8Gi"
+	} else if strings.HasSuffix(inputDataPath, ".json") {
+		memory = "16Gi"
+	} else {
+		return "", fmt.Errorf("invalid inputDataPath: %q", inputDataPath)
+	}
+
+	shootName := inputDataPath[:strings.LastIndex(inputDataPath, ".")]
+	shootName = inputDataPath[strings.LastIndex(inputDataPath, "_")+1:]
+	podName = "scaling-history-replayer-ca-" + shootName
+
+	dbPath = "/db/" + path.Base(inputDataPath)
+	//POD_DATA_PATH = "/db/${DB_NAME}"
+
+	oldNew := []string{"${NONCE}", now.Format(time.RFC822Z), "${DOCKERHUB_USER}", dockerHubUser, "${INPUT_DATA_PATH}", inputDataPath, "${MEMORY}", memory, "${POD_NAME}", podName, "${NO_AUTO_LAUNCH}", "false", "${POD_DATA_PATH}", dbPath}
 	replacer := strings.NewReplacer(oldNew...)
 	return replacer.Replace(replayerPodTemplate), nil
 }
@@ -368,6 +426,153 @@ func (a *DefaultApp) ListDatabases(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("ListDatabases could not serialize items.", "error", err, "dbInfos", dbInfos)
 		http.Error(w, fmt.Sprintf("ListDatabases could not serialize response due to: %s", err), 500)
+		return
+	}
+	return
+}
+
+func (a *DefaultApp) UploadLogs(w http.ResponseWriter, r *http.Request) {
+	var err error
+	clusterName := strings.TrimSpace(r.PathValue("clusterName"))
+	if len(clusterName) == 0 {
+		http.Error(w, "clusterName must not be empty", 400)
+		return
+	}
+	clusterLogsDir := "/data/logs/" + clusterName
+	err = os.MkdirAll(clusterLogsDir, 0777)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("could not create logs directory %q: %v", clusterLogsDir, err), 500)
+		return
+	}
+	err = r.ParseMultipartForm(100 << 20)
+	if err != nil {
+		slog.Error("UploadLogs could not parse multi-part form", "error", err)
+		http.Error(w, "UploadLogs could not parse multi-part form:"+err.Error(), 500)
+		return
+	}
+
+	logFileInfos := []gsh.FileInfo{}
+	multipartFormData := r.MultipartForm
+	for _, filePart := range multipartFormData.File["logs"] {
+		slog.Info("Accepting upload log.", "file", filePart.Filename, "size", filePart.Size)
+		data, ok := ReadFilePart(w, filePart)
+		if !ok {
+			return
+		}
+		logFilePath := filepath.Join(clusterLogsDir, filePart.Filename)
+		err = os.WriteFile(logFilePath, data, 0600)
+		if err != nil {
+			slog.Error("UploadLogs could not write log file", "logFilePath", logFilePath, "error", err)
+			http.Error(w, "UploadLogs could not write log file: "+logFilePath, 500)
+			return
+		}
+		slog.Info("Uploaded log file", "logFilePath", logFilePath)
+		logFileSz := uint64(filePart.Size)
+		logFileInfos = append(logFileInfos, gsh.FileInfo{
+			Name:         logFilePath,
+			Size:         logFileSz,
+			ReadableSize: humanize.Bytes(logFileSz),
+		})
+	}
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", " ")
+	err = encoder.Encode(gsh.FileInfos{logFileInfos})
+	if err != nil {
+		slog.Error("UploadLogs could not serialize items.", "error", err, "logFileInfos", logFileInfos)
+		http.Error(w, fmt.Sprintf("UploadLogs could not serialize response due to: %s", err), 500)
+		return
+	}
+}
+
+func (a *DefaultApp) GetLogFile(w http.ResponseWriter, r *http.Request) {
+	clusterName := strings.TrimSpace(r.PathValue("clusterName"))
+	if len(clusterName) == 0 {
+		http.Error(w, "clusterName must not be empty", 400)
+		return
+	}
+	clusterLogsDir := "/data/logs/" + clusterName
+
+	logFileName := r.PathValue("fileName")
+	if len(logFileName) == 0 {
+		http.Error(w, "logFileName must not be empty", 400)
+		return
+	}
+	logFilePath := path.Join(clusterLogsDir, logFileName)
+	if !apputil.FileExists(logFilePath) {
+		http.Error(w, fmt.Sprintf("logFilePath %q not found", logFilePath), 400)
+		return
+	}
+	slog.Info("Serving log file.", "logFilePath", logFilePath)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+logFileName+"\"")
+	http.ServeFile(w, r, logFilePath)
+}
+
+func (a *DefaultApp) deployDummyPod() error {
+	var pod corev1.Pod
+	podYaml, err := specs.GetPodYaml("smallPod.yaml")
+	if err != nil {
+		return err
+	}
+	stringReader := strings.NewReader(podYaml)
+	//yamlReader := yaml.NewYAMLReader(bufio.NewReader(stringReader))
+	yamlDecoder := yaml.NewYAMLOrJSONDecoder(io.NopCloser(stringReader), 4096)
+	if err := yamlDecoder.Decode(&pod); err != nil {
+		return err
+	}
+	pod.Namespace = "mcm-ca-team"
+	slog.Info("Deploying dummy pod: ", "name", pod.Name)
+	_, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Create(a.ctx, &pod, metav1.CreateOptions{})
+	if err != nil {
+		slog.Error("Error deploying dummy pod", "name", pod.Name)
+		return err
+	}
+	return nil
+}
+
+func (a *DefaultApp) ListLogFiles(w http.ResponseWriter, r *http.Request) {
+	var err error
+	clusterName := strings.TrimSpace(r.PathValue("clusterName"))
+	if len(clusterName) == 0 {
+		http.Error(w, "clusterName must not be empty", 400)
+		return
+	}
+	clusterLogsDir := "/data/logs/" + clusterName
+
+	w.Header().Set("Content-Type", "application/json")
+	entries, err := os.ReadDir(clusterLogsDir)
+	if err != nil {
+		slog.Error("ListLogFiles could not list files in clusterLogsDir", "error", err, "clusterLogsDir", clusterLogsDir)
+		http.Error(w, fmt.Sprintf("could not list files in clusterLogsDir %q", clusterLogsDir), 500)
+		return
+	}
+	logFileInfos := []gsh.FileInfo{}
+	for _, e := range entries {
+		logFileName := e.Name()
+		if !strings.HasSuffix(logFileName, ".log") {
+			continue
+		}
+		logFilePath := filepath.Join(clusterLogsDir, logFileName)
+		statInfo, err := os.Stat(logFilePath)
+		if err != nil {
+			slog.Error("ListLogFiles could not stat log file.", "error", err, "logFilePath", logFilePath)
+			http.Error(w, fmt.Sprintf("ListLogFiles could not stat log file %q in clusterLogsDir %q", logFilePath, clusterLogsDir), 500)
+			return
+		}
+		logFileSize := uint64(statInfo.Size())
+		logFileInfos = append(logFileInfos, gsh.FileInfo{
+			Name:         logFileName,
+			Size:         logFileSize,
+			ReadableSize: humanize.Bytes(logFileSize),
+		})
+	}
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", " ")
+	err = encoder.Encode(gsh.FileInfos{logFileInfos})
+	//err = json.NewEncoder(w).Encode(gsh.FileInfos{logFileInfos})
+	if err != nil {
+		slog.Error("ListLogFiles could not serialize items.", "error", err, "logFileInfos", logFileInfos)
+		http.Error(w, fmt.Sprintf("ListLogFiles could not serialize response due to: %s", err), 500)
 		return
 	}
 	return

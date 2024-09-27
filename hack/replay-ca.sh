@@ -67,9 +67,20 @@ else
   export DB_NAME=${INPUT_DATA_PATH:t}
 fi
 
+inputDataFileName=$(basename "${INPUT_DATA_PATH}")
+# Check if the string ends with the suffix
+if [[ "${INPUT_DATA_PATH}" == *".json" ]]; then
+  clusterName="${inputDataFileName%_*}"
+else
+  clusterName="${inputDataFileName%.*}"
+fi
+shootName="${clusterName##*_}"
+echo "Computed clusterName=${clusterName} shootName=${shootName} from INPUT_DATA_PATH=${INPUT_DATA_PATH}"
+
 export NO_AUTO_LAUNCH="false"
 export SCALER="ca"
-export POD_SUFFIX=$(print -P "%{$(echo $RANDOM | md5sum | head -c 3)%}")
+#export POD_SUFFIX=$(print -P "%{$(echo $RANDOM | md5sum | head -c 3)%}")
+export POD_SUFFIX=${shootName}
 export POD_NAME="scaling-history-replayer-${SCALER}-${POD_SUFFIX}"
 export POD_DATA_PATH="/db/${DB_NAME}"
 echo "POD_DATA_PATH has been set to ${POD_DATA_PATH} for ${POD_NAME} pod."
