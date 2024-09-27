@@ -56,7 +56,7 @@ spec:
         requests:
           memory: 12Gi
         limits:
-          memory: 16Gi
+          memory: 18Gi
       env:
         - name: MODE
           value: in-utility-cluster
