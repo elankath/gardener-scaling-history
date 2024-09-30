@@ -143,7 +143,7 @@ func (a *DefaultApp) RunCAReplays() error {
 }
 
 func (a *DefaultApp) RunCAReplay(dbPath string) error {
-	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Hour)
+	ctx, cancel := context.WithTimeout(a.ctx, 4*time.Hour)
 	defer cancel()
 	replayerYaml, err := GetReplayerPodYaml(dbPath, a.params.DockerHubUser, time.Now())
 	if err != nil {
@@ -234,7 +234,7 @@ func GetReplayerPodYaml(inputDataPath, dockerHubUser string, now time.Time) (str
 	}
 
 	shootName := inputDataPath[:strings.LastIndex(inputDataPath, ".")]
-	shootName = inputDataPath[strings.LastIndex(inputDataPath, "_")+1:]
+	shootName = shootName[strings.LastIndex(shootName, "_")+1:]
 	podName = "scaling-history-replayer-ca-" + shootName
 
 	dbPath = "/db/" + path.Base(inputDataPath)
