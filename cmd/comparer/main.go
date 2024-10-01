@@ -9,6 +9,7 @@ import (
 	"github.com/elankath/gardener-scaling-history/pricing"
 	md "github.com/nao1215/markdown"
 	"github.com/samber/lo"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/json"
 	"log/slog"
 	"os"
@@ -70,15 +71,20 @@ func unmarshallReport(path string) (gsh.Scenario, error) {
 	return scenario, nil
 }
 
-func mapToRows(m map[string]int) [][]string {
-	rows := make([][]string, 0, len(m))
-	for k, v := range m {
-		rows = append(rows, []string{k, fmt.Sprint(v)})
+func mapToRows(pa pricing.InstancePricingAccess, s gsh.Scenario) [][]string {
+	nodeGroups := s.ScalingResult.ScaledUpNodeGroups
+	rows := make([][]string, 0, len(nodeGroups))
+	for ng, count := range nodeGroups {
+		instanceType, cpu, memory, cost := getInstanceDetailsForNodeGroup(pa, s.ClusterSnapshot.AutoscalerConfig.NodeTemplates, ng)
+		if instanceType == "" {
+			rows = append(rows, []string{ng, fmt.Sprint(count), "", "", "", ""})
+		}
+		rows = append(rows, []string{ng, fmt.Sprint(count), instanceType, fmt.Sprintf("$%.2f", cost), cpu.String(), fmt.Sprintf("%.2f GiB", float64(memory.Value())/1024/1024/1024)})
 	}
 	return rows
 }
 
-func unscheduledPodNames(s gsh.Scenario) []string {
+func pendingUnscheduledPodNames(s gsh.Scenario) []string {
 	podNames := lo.Map(s.ScalingResult.PendingUnscheduledPods, func(item gsc.PodInfo, _ int) string {
 		return item.Name
 	})
@@ -97,6 +103,17 @@ func sumInstancePrices(pa pricing.InstancePricingAccess, nodes []gsc.NodeInfo) (
 		totalPrice = totalPrice + pa.Get3YearReservedPricing(machineType)
 	}
 	return totalPrice, nil
+}
+
+// TODO: Placeholder only. Unscheduled pod counts need to be obtained for CA and SR separately after stabilization interval
+func getUnscheduledPodCount(s gsh.Scenario) (count int) {
+	count = lo.CountBy(s.ClusterSnapshot.Pods, func(item gsc.PodInfo) bool {
+		if item.NodeName == "" {
+			return true
+		}
+		return false
+	})
+	return count
 }
 
 type poolKey struct {
@@ -150,6 +167,15 @@ func getReportIndex(fp string) string {
 	return filePathWithoutExtension[index+1:]
 }
 
+func getInstanceDetailsForNodeGroup(pa pricing.InstancePricingAccess, nodeTemplates map[string]gsc.NodeTemplate, ng string) (instanceName string, cpu resource.Quantity, memory resource.Quantity, cost float64) {
+	for k, v := range nodeTemplates {
+		if k == ng {
+			return v.InstanceType, *v.Allocatable.Cpu(), *v.Allocatable.Memory(), pa.Get3YearReservedPricing(v.InstanceType)
+		}
+	}
+	return "", resource.Quantity{}, resource.Quantity{}, 0.0
+}
+
 func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport, srScenarioReport gsh.Scenario) error {
 	clusterName, err := apputil.GetClusterName(c.caReportPath)
 	dieOnError(err, "error getting cluster name from ca report path")
@@ -183,20 +209,21 @@ func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport
 	mkBuilder := md.NewMarkdown(targetFile).
 		H1("Virtual CA vs Scaling Recommender Comparison Report").
 		PlainTextf("Cluster: %s", clusterName).
-		PlainTextf("Provider: %s", c.provider).
+		PlainTextf("\nProvider: %s", c.provider).
+		PlainTextf("\nUnscheduled Pod Count: %v", getUnscheduledPodCount(caScenarioReport)). //TODO: Placeholder only, needs to be changed to counts after stabilization interval
 		H2("Scaled-Up NodeGroups").
 		PlainText("This section compares the node groups that are scaled by Virtual CA and Scaling Recommender").
 		H3("Virtual CA").
 		LF().
 		Table(md.TableSet{
-			Header: []string{"NodeGroup", "Count"},
-			Rows:   mapToRows(caScenarioReport.ScalingResult.ScaledUpNodeGroups),
+			Header: []string{"NodeGroup", "Count", "Instance Type", "Cost of Instance", "Cpu", "Memory"},
+			Rows:   mapToRows(pa, caScenarioReport),
 		}).
 		H3("Scaling Recommender").
 		LF().
 		Table(md.TableSet{
-			Header: []string{"NodeGroup", "Count"},
-			Rows:   mapToRows(srScenarioReport.ScalingResult.ScaledUpNodeGroups),
+			Header: []string{"NodeGroup", "Count", "Instance Type", "Cost of Instance", "Cpu", "Memory"},
+			Rows:   mapToRows(pa, srScenarioReport),
 		}).
 		H2("Total Cost of Scaled-Up Nodes").
 		PlainText("This section compares the total cost of the scaled-up nodes by Virtual CA and Scaling Recommender").
@@ -214,8 +241,8 @@ func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport
 		BulletList(
 			fmt.Sprintf("*Total Allocated CPU:* %s", caResourceStats.AvailAllocCPU.String()),
 			fmt.Sprintf("*Total Utilized CPU:* %s", caResourceStats.TotalUtilCPU.String()),
-			fmt.Sprintf("*Total Allocated Memory:* %s", caResourceStats.AvailAllocMem.String()),
-			fmt.Sprintf("*Total Utilized Memory:* %s", caResourceStats.TotalUtilMem.String())).
+			fmt.Sprintf("*Total Allocated Memory:* %.2f GiB", float64(caResourceStats.AvailAllocMem.Value())/1024/1024/1024),
+			fmt.Sprintf("*Total Utilized Memory:* %.2f GiB", float64(caResourceStats.TotalUtilMem.Value())/1024/1024/1024)).
 		LF().
 		PlainTextf("**CPU Utilization Percentage:** %.2f%%", 100*caResourceStats.TotalUtilCPU.AsApproximateFloat64()/caResourceStats.AvailAllocCPU.AsApproximateFloat64()).
 		PlainTextf("**Memory Utilization Percentage:** %.2f%%", 100*caResourceStats.TotalUtilMem.AsApproximateFloat64()/caResourceStats.AvailAllocMem.AsApproximateFloat64()).
@@ -224,8 +251,8 @@ func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport
 		BulletList(
 			fmt.Sprintf("*Total Allocated CPU:* %s", srResourceStats.AvailAllocCPU.String()),
 			fmt.Sprintf("*Total Utilized CPU:* %s", srResourceStats.TotalUtilCPU.String()),
-			fmt.Sprintf("*Total Allocated Memory:* %s", srResourceStats.AvailAllocMem.String()),
-			fmt.Sprintf("*Total Utilized Memory:* %s", srResourceStats.TotalUtilMem.String())).
+			fmt.Sprintf("*Total Allocated Memory:* %.2f GiB", float64(srResourceStats.AvailAllocMem.Value())/1024/1024/1024),
+			fmt.Sprintf("*Total Utilized Memory:* %.2f GiB", float64(srResourceStats.TotalUtilMem.Value())/1024/1024/1024)).
 		LF().
 		PlainTextf("**CPU Utilization Percentage:** %.2f%%", 100*srResourceStats.TotalUtilCPU.AsApproximateFloat64()/srResourceStats.AvailAllocCPU.AsApproximateFloat64()).
 		PlainTextf("**Memory Utilization Percentage:** %.2f%%", 100*srResourceStats.TotalUtilMem.AsApproximateFloat64()/srResourceStats.AvailAllocMem.AsApproximateFloat64()).
@@ -235,13 +262,13 @@ func generateReport(pa pricing.InstancePricingAccess, c config, caScenarioReport
 		PlainTextf("*Count:* %d", len(caScenarioReport.ScalingResult.PendingUnscheduledPods))
 
 	if len(caScenarioReport.ScalingResult.PendingUnscheduledPods) > 0 {
-		mkBuilder.BulletList(unscheduledPodNames(caScenarioReport)...)
+		mkBuilder.BulletList(pendingUnscheduledPodNames(caScenarioReport)...)
 	}
 	mkBuilder.H3("Scaling Recommender").
 		PlainTextf("*Count:* %d", len(srScenarioReport.ScalingResult.PendingUnscheduledPods))
 
 	if len(srScenarioReport.ScalingResult.PendingUnscheduledPods) > 0 {
-		mkBuilder.BulletList(unscheduledPodNames(srScenarioReport)...)
+		mkBuilder.BulletList(pendingUnscheduledPodNames(srScenarioReport)...)
 	}
 
 	return mkBuilder.Build()
