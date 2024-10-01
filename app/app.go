@@ -129,6 +129,9 @@ func (a *DefaultApp) RunCAReplays() error {
 	//INPUT_DATA_PATH
 
 	for _, dbPath := range dbPaths {
+		if !strings.HasSuffix(dbPath, ".db") {
+			continue
+		}
 		if strings.HasSuffix(dbPath, "_copy.db") {
 			continue
 		}
@@ -162,7 +165,7 @@ func (a *DefaultApp) RunCAReplay(dbPath string) error {
 	}
 	if existingPod != nil {
 		if existingPod.Status.Phase == corev1.PodRunning {
-			slog.Warn("RunCAReplay already found a running replayer pod. Skipping", "podName", pod.Name)
+			slog.Warn("RunCAReplay already found a RUNNING replayer pod. Skipping", "podName", pod.Name)
 			return nil
 		}
 		err := a.kubeclient.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
