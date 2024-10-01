@@ -189,6 +189,17 @@ type nodeRow struct {
 	Hash               string
 }
 
+// CSINodeRow represents the row information for a CSI Node Obj. TODO: should have made this a gsc.CSINodeInfo a bit dirty now.
+type CSINodeRow struct {
+	RowID              int64 `db:"RowID"`
+	Name               string
+	Namespace          string
+	CreationTimestamp  int64 `db:"CreationTimestamp"`
+	SnapshotTimestamp  int64 `db:"SnapshotTimestamp"`
+	AllocatableVolumes int   `db:"AllocatableVolumes"`
+	DeletionTimeStamp  sql.NullInt64
+}
+
 func (r nodeRow) AsInfo() (nodeInfo gsc.NodeInfo, err error) {
 	labels, err := labelsFromText(r.Labels)
 	if err != nil {

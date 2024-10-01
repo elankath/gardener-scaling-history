@@ -427,7 +427,7 @@ func (r *defaultReplayer) ReplayCA() error {
 			}
 			//slog.Info("Invoking GetRecordedClusterSnapshot with BeginTime->EndTime.", "BeginTime", replayRun.BeginTime, "EndTime", replayRun.EndTime, "loopNum", loopNum, "replayCount", r.replayCount)
 			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "loopNum", loopNum, "replayCount", r.replayCount)
-			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime, replayMarkTime)
+			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "loopNum", loopNum, "replayCount", r.replayCount)
@@ -551,7 +551,7 @@ func waitForVirtualCARefresh(ctx context.Context, numNodes int, successSignalPat
 	for {
 		select {
 		case <-ctx.Done():
-			slog.Warn("waitForVirtualCARefresh context cancelled or timed out:", ctx.Err())
+			slog.Warn("waitForVirtualCARefresh context cancelled or timed out:", "error", ctx.Err())
 			return ctx.Err()
 		case <-timeoutCh:
 			slog.Error("waitForVirtualCARefresh exceeded timeoutCh.", "timeout", timeout)
@@ -1576,87 +1576,10 @@ func (r *defaultReplayer) Close() error {
 	return r.doClose()
 }
 
-func (r *defaultReplayer) GetRecordedClusterSnapshot(runBeginTime, runEndTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+func (r *defaultReplayer) GetRecordedClusterSnapshot(runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
 	r.snapshotCount++
-	cs.Number = r.snapshotCount
-	cs.ID = fmt.Sprintf("%s-%d", apputil.FilenameWithoutExtension(r.params.InputDataPath), cs.Number)
-	cs.SnapshotTime = runBeginTime
-
-	mccs, err := r.dataAccess.LoadMachineClassInfosBefore(runEndTime)
-	if err != nil {
-		return
-	}
-
-	mcds, err := r.dataAccess.LoadMachineDeploymentInfosBefore(runEndTime)
-	if err != nil {
-		return
-	}
-	workerPools, err := r.dataAccess.LoadWorkerPoolInfosBefore(runEndTime)
-	if err != nil {
-		return
-	}
-	cs.WorkerPools = workerPools
-
-	cs.AutoscalerConfig.NodeTemplates, err = GetNodeTemplates(mccs, mcds)
-	if err != nil {
-		return
-	}
-
-	cs.PriorityClasses, err = r.dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(runEndTime)
-	if err != nil {
-		return
-	}
-
-	allPods, err := r.dataAccess.GetLatestPodInfosBeforeSnapshotTimestamp(runEndTime)
-	slices.SortFunc(allPods, func(a, b gsc.PodInfo) int {
-		return b.SnapshotTimestamp.Compare(a.SnapshotTimestamp) // most recent first
-	})
-	allPods = lo.UniqBy(allPods, func(p gsc.PodInfo) string {
-		return p.Name
-	})
-	apputil.SortPodInfosForReadability(allPods)
-
-	kubeSystemResources := resutil.ComputeKubeSystemResources(allPods)
-	adjustNodeTemplates(cs.AutoscalerConfig.NodeTemplates, kubeSystemResources)
-
-	cs.AutoscalerConfig.CASettings, err = r.dataAccess.LoadCASettingsBefore(runEndTime)
-	if err != nil {
-		return
-	}
-	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerPauseMode
-
-	nodes, err := r.dataAccess.LoadNodeInfosBefore(runBeginTime)
-	if err != nil {
-		err = fmt.Errorf("cannot get the node infos before markTime %q: %w", runBeginTime, err)
-		return
-	}
-	if len(nodes) == 0 {
-		err = fmt.Errorf("no existingNodes available before markTime %q", runBeginTime)
-		return
-	}
-	cs.Nodes = filterNodeInfos(nodes)
-	cs.Nodes, err = modifyNodeAllocatable(cs.AutoscalerConfig.NodeTemplates, cs.Nodes)
-	if err != nil {
-		return
-	}
-	cs.Pods = filterAppPods(allPods)
-	nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
-		return n.Name
-	})
-	clearNodeNamesNotIn(cs.Pods, nodeNames)
-	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
-	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
-	if err != nil {
-		return
-	}
-	successSignalFileName := fmt.Sprintf("vas-success-%d.txt", cs.Number)
-	errorSignalFileName := fmt.Sprintf("vas-error-%d.txt", cs.Number)
-	cs.AutoscalerConfig.SuccessSignalPath = path.Join(os.TempDir(), successSignalFileName)
-	cs.AutoscalerConfig.ErrorSignalPath = path.Join(os.TempDir(), errorSignalFileName)
-	_ = os.Remove(cs.AutoscalerConfig.SuccessSignalPath)
-	_ = os.Remove(cs.AutoscalerConfig.ErrorSignalPath)
-	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
-	cs.Hash = cs.GetHash()
+	snapshotID := fmt.Sprintf("%s-%d", apputil.FilenameWithoutExtension(r.params.InputDataPath), cs.Number)
+	cs, err = GetRecordedClusterSnapshot(r.dataAccess, r.snapshotCount, snapshotID, runMarkTime)
 	return
 }
 
@@ -1853,6 +1776,32 @@ func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gs
 	scenario.ScalingResult.EmptyNodeNames = emptyNodeNames.SortedList()
 
 	return
+}
+
+func populateAllocatableVolumes(dataAccess *db.DataAccess, nodes []gsc.NodeInfo, beginTime time.Time) error {
+	allCSINodeRows, err := dataAccess.LoadCSINodeRowsBefore(beginTime)
+	if err != nil {
+		return err
+	}
+	csiNodeRowsByName := lo.GroupBy(allCSINodeRows, func(cn db.CSINodeRow) string {
+		return cn.Name
+	})
+	for i, n := range nodes {
+		if n.AllocatableVolumes > 0 {
+			continue
+		}
+		csiNodeRows, ok := csiNodeRowsByName[n.Name]
+		if !ok || len(csiNodeRows) == 0 {
+			slog.Warn("populateAllocatableVolumes could not find csiNodeRows for node.", "nodeName", n.Name)
+			continue
+		}
+		csiNodeRow := csiNodeRows[0]
+		n.AllocatableVolumes = csiNodeRow.AllocatableVolumes
+		slog.Debug("populateAllocatableVolumes found AllocatableVolumes from csiNodeRow", "nodeName", n.Name, "allocatableVolumes", csiNodeRow.AllocatableVolumes)
+		nodes[i] = n
+	}
+	return nil
+	//BRB 1m
 }
 
 func GetNodeGroupNameFromMCCName(namespace, mccName string) string {
@@ -2123,4 +2072,93 @@ func GetReplayScalingRecommenderReportFormat(replayCAReportPath string) (reportF
 	reportFormat = fullClusterName + "_sr-replay-%d.json"
 	//.strings.TrimSuffix(fileNameWithoutExtension, "_ca-replay") + "-report-replay.json"
 	return
+}
+
+func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, snapshotID string, runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+	cs.Number = snapshotNumber
+	cs.ID = snapshotID
+	cs.SnapshotTime = runMarkTime
+
+	mccs, err := dataAccess.LoadMachineClassInfosBefore(runMarkTime)
+	if err != nil {
+		return
+	}
+
+	mcds, err := dataAccess.LoadMachineDeploymentInfosBefore(runMarkTime)
+	if err != nil {
+		return
+	}
+	workerPools, err := dataAccess.LoadWorkerPoolInfosBefore(runMarkTime)
+	if err != nil {
+		return
+	}
+	cs.WorkerPools = workerPools
+
+	cs.AutoscalerConfig.NodeTemplates, err = GetNodeTemplates(mccs, mcds)
+	if err != nil {
+		return
+	}
+
+	cs.PriorityClasses, err = dataAccess.LoadLatestPriorityClassInfoBeforeSnapshotTime(runMarkTime)
+	if err != nil {
+		return
+	}
+
+	allPods, err := dataAccess.GetLatestPodInfosBeforeSnapshotTimestamp(runMarkTime)
+	slices.SortFunc(allPods, func(a, b gsc.PodInfo) int {
+		return b.SnapshotTimestamp.Compare(a.SnapshotTimestamp) // most recent first
+	})
+	allPods = lo.UniqBy(allPods, func(p gsc.PodInfo) string {
+		return p.Name
+	})
+	apputil.SortPodInfosForReadability(allPods)
+
+	kubeSystemResources := resutil.ComputeKubeSystemResources(allPods)
+	adjustNodeTemplates(cs.AutoscalerConfig.NodeTemplates, kubeSystemResources)
+
+	cs.AutoscalerConfig.CASettings, err = dataAccess.LoadCASettingsBefore(runMarkTime)
+	if err != nil {
+		return
+	}
+	cs.AutoscalerConfig.Mode = gsc.AutoscalerReplayerPauseMode
+
+	nodes, err := dataAccess.LoadNodeInfosBefore(runMarkTime)
+	if err != nil {
+		err = fmt.Errorf("cannot get the node infos before markTime %q: %w", runMarkTime, err)
+		return
+	}
+	err = populateAllocatableVolumes(dataAccess, nodes, runMarkTime)
+	if err != nil {
+		err = fmt.Errorf("cannot populateAllocatableVolumes in nodes before markTime %q: %w", runMarkTime, err)
+		return
+	}
+	if len(nodes) == 0 {
+		err = fmt.Errorf("no existingNodes available before markTime %q", runMarkTime)
+		return
+	}
+	cs.Nodes = filterNodeInfos(nodes)
+	cs.Nodes, err = modifyNodeAllocatable(cs.AutoscalerConfig.NodeTemplates, cs.Nodes)
+	if err != nil {
+		return
+	}
+	cs.Pods = filterAppPods(allPods)
+	nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
+		return n.Name
+	})
+	clearNodeNamesNotIn(cs.Pods, nodeNames)
+	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
+	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
+	if err != nil {
+		return
+	}
+	successSignalFileName := fmt.Sprintf("vas-success-%d.txt", cs.Number)
+	errorSignalFileName := fmt.Sprintf("vas-error-%d.txt", cs.Number)
+	cs.AutoscalerConfig.SuccessSignalPath = path.Join(os.TempDir(), successSignalFileName)
+	cs.AutoscalerConfig.ErrorSignalPath = path.Join(os.TempDir(), errorSignalFileName)
+	_ = os.Remove(cs.AutoscalerConfig.SuccessSignalPath)
+	_ = os.Remove(cs.AutoscalerConfig.ErrorSignalPath)
+	cs.AutoscalerConfig.Hash = cs.AutoscalerConfig.GetHash()
+	cs.Hash = cs.GetHash()
+	return
+
 }

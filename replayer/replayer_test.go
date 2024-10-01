@@ -2,6 +2,7 @@ package replayer
 
 import (
 	"context"
+	"github.com/elankath/gardener-scaling-history/db"
 	"github.com/samber/lo"
 	assert "github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -82,6 +83,18 @@ func TestGetReplayScalingRecommenderReportFormat(t *testing.T) {
 	assert.Nil(t, err)
 	t.Logf("replayCAReportPath: %q", replaySRReportFmt)
 	assert.Equal(t, "live_hc-eu30_prod-gc-haas_sr-replay-%d.json", replaySRReportFmt)
+}
+
+func TestGetRecordedClusterSnapshotTime(t *testing.T) {
+	dbPath := "/Users/I034796/go/src/github.com/elankath/gardener-scaling-history/gen/live_hc-canary_prod-bds.db"
+	dataAccess := db.NewDataAccess(dbPath)
+	err := dataAccess.Init()
+	assert.Nil(t, err)
+	snapshot, err := GetRecordedClusterSnapshot(dataAccess, 1, "test", time.Now())
+	assert.Nil(t, err)
+	for _, n := range snapshot.Nodes {
+		assert.True(t, n.AllocatableVolumes > 0, "node.AllocatableVolumes should be greater than 0 for node", n.Name)
+	}
 }
 
 //

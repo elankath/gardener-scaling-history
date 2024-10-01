@@ -39,6 +39,8 @@ type DataAccess struct {
 	insertEvent                                          *sql.Stmt
 	insertNodeInfo                                       *sql.Stmt
 	updateNodeInfoDeletionTimeStamp                      *sql.Stmt
+	insertCSINodeInfo                                    *sql.Stmt
+	updateCSINodeInfoDeletionTimeStamp                   *sql.Stmt
 	insertPodInfo                                        *sql.Stmt
 	insertPriorityClassInfo                              *sql.Stmt
 	insertPDB                                            *sql.Stmt
@@ -54,6 +56,7 @@ type DataAccess struct {
 	selectLatestPodInfosBeforeSnapshotTimestamp          *sql.Stmt
 	selectLatestPriorityClassInfoBeforeSnapshotTimestamp *sql.Stmt
 	selectNodeInfosBefore                                *sql.Stmt
+	selectCSINodeInfosBefore                             *sql.Stmt
 	selectNodeCountWithNameAndHash                       *sql.Stmt
 	selectLatestCASettingsInfo                           *sql.Stmt
 	insertCASettingsInfo                                 *sql.Stmt
@@ -76,6 +79,28 @@ func (d *DataAccess) Init() error {
 	if err != nil {
 		return fmt.Errorf("cannot open db: %w", err)
 	}
+	// From:https://kerkour.com/sqlite-for-servers
+	_, err = db.Exec("PRAGMA journal_mode = WAL")
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("PRAGMA busy_timeout = 5000")
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("PRAGMA synchronous = NORMAL")
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("PRAGMA cache_size = 20000")
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec("PRAGMA temp_store = memory")
+	if err != nil {
+		return err
+	}
+	db.SetMaxOpenConns(1)
 	d.dataDB = db
 	err = d.createSchema()
 	if err != nil {
@@ -139,6 +164,21 @@ func (d *DataAccess) prepareStatements() (err error) {
 	d.selectNodeInfosBefore, err = db.Prepare(SelectNodeInfoBefore)
 	if err != nil {
 		return fmt.Errorf("cannot prepare selectNodeInfosBefore statement: %w", err)
+	}
+
+	d.insertCSINodeInfo, err = db.Prepare(InsertCSINodeInfo)
+	if err != nil {
+		return fmt.Errorf("cannot prepare insertCSINodeInfo statement: %w", err)
+	}
+
+	d.updateCSINodeInfoDeletionTimeStamp, err = db.Prepare(UpdateCSINodeInfoDeletionTimestamp)
+	if err != nil {
+		return fmt.Errorf("cannot prepare updateCSINodeInfoDeletionTimeStamp: %w", err)
+	}
+
+	d.selectCSINodeInfosBefore, err = db.Prepare(SelectCSINodeInfoBefore)
+	if err != nil {
+		return fmt.Errorf("cannot prepare selectCSINodeInfosBefore statement: %w", err)
 	}
 
 	pdbInsertStmt, err := db.Prepare("INSERT INTO pdb_info(uid,name,generation,creationTimestamp,minAvailable,maxUnAvailable,spec) VALUES(?,?,?,?,?,?,?)")
@@ -356,6 +396,12 @@ func (d *DataAccess) createSchema() error {
 	}
 	slog.Info("successfully created node_info table", "result", result)
 
+	result, err = db.Exec(CreateCSINodeTable)
+	if err != nil {
+		return fmt.Errorf("cannot create csi_node_info table : %w", err)
+	}
+	slog.Info("successfully created csi_node_info table", "result", result)
+
 	result, err = db.Exec(CreatePodInfoTable)
 	if err != nil {
 		return fmt.Errorf("cannot create pod_info table: %w", err)
@@ -452,6 +498,9 @@ func (d *DataAccess) UpdatePodDeletionTimestamp(podUID types.UID, deletionTimest
 
 func (d *DataAccess) UpdateNodeInfoDeletionTimestamp(name string, deletionTimestamp time.Time) (updated int64, err error) {
 	return updateDeletionTimestamp(d.updateNodeInfoDeletionTimeStamp, name, deletionTimestamp)
+}
+func (d *DataAccess) UpdateCSINodeRowDeletionTimestamp(name string, deletionTimestamp time.Time) (updated int64, err error) {
+	return updateDeletionTimestamp(d.updateCSINodeInfoDeletionTimeStamp, name, deletionTimestamp)
 }
 
 func (d *DataAccess) UpdateMCDInfoDeletionTimestamp(name string, deletionTimestamp time.Time) (updated int64, err error) {
@@ -839,6 +888,34 @@ func (d *DataAccess) StoreNodeInfo(n gsc.NodeInfo) (rowID int64, err error) {
 	}
 	slog.Debug("inserted new row into the node_info table", "node.Name", n.Name)
 	return result.LastInsertId()
+}
+
+func (d *DataAccess) StoreCSINodeRow(cn CSINodeRow) (rowID int64, err error) {
+	result, err := d.insertCSINodeInfo.Exec(
+		cn.CreationTimestamp,
+		cn.SnapshotTimestamp,
+		cn.Name,
+		cn.Namespace,
+		cn.AllocatableVolumes)
+	if err != nil {
+		slog.Error("cannot insert CSINodeRow in the csi_node_info table", "error", err, "csiNode", cn)
+		return -1, err
+	}
+	slog.Debug("inserted new row into the csi_node_info table", "Name", cn.Name)
+	return result.LastInsertId()
+}
+
+func (d *DataAccess) LoadCSINodeRowsBefore(snapshotTimestamp time.Time) ([]CSINodeRow, error) {
+	//nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp.UTC().UnixNano(), snapshotTimestamp.UTC().UnixNano())
+	adjustedTimeParam := adjustParam(snapshotTimestamp)
+	rowObjs, err := queryRows[CSINodeRow](d.selectCSINodeInfosBefore, adjustedTimeParam, adjustedTimeParam)
+	if err != nil {
+		return nil, err
+	}
+	if err != nil {
+		return nil, fmt.Errorf("LoadCSINodeRowsBefore could not scan rows: %w", err)
+	}
+	return rowObjs, nil
 }
 
 func (d *DataAccess) LoadNodeInfosBefore(snapshotTimestamp time.Time) ([]gsc.NodeInfo, error) {

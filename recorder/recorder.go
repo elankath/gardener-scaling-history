@@ -37,7 +37,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
+	//"sync"
 	"sync/atomic"
 	"time"
 )
@@ -240,8 +240,8 @@ type defaultRecorder struct {
 	deploymentInformer     informers.GenericInformer
 	configmapInformer      corev1informers.ConfigMapInformer
 	dataAccess             *db.DataAccess
-	nodeAllocatableVolumes sync.Map
-	stopCh                 <-chan struct{}
+	//nodeAllocatableVolumes sync.Map
+	stopCh <-chan struct{}
 }
 
 func (r *defaultRecorder) IsStarted() bool {
@@ -429,42 +429,34 @@ func (r *defaultRecorder) processNode(old any, new any) {
 	if nodeOld != nil {
 		nodeOld = old.(*corev1.Node)
 	}
-	allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
-	nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, allocatableVolumes)
-	InvokeOrScheduleFunc("processNode", 10*time.Second, nodeNewInfo, func(_ gsc.NodeInfo) error {
-		allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
-		if allocatableVolumes == 0 {
-			slog.Debug("Allocatable Volumes key not found. Deferring insert", "node.Name", nodeNewInfo.Name)
-			return ErrKeyNotFound
-		}
-		nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, allocatableVolumes)
-		countWithSameHash, err := r.dataAccess.CountNodeInfoWithHash(nodeNew.Name, nodeNewInfo.Hash)
-		if err != nil {
-			slog.Error("cannot CountPodInfoWithSpecHash", "node.Name", nodeNew.Name, "node.Hash", nodeNewInfo.Hash, "error", err)
-			return err
-		}
-
-		if countWithSameHash > 0 {
-			slog.Debug("NodeInfo is already present with same hash", "node.Name", nodeNew.Name, "node.Hash", nodeNewInfo.Hash, "count", countWithSameHash, "error", err)
-			return err
-		}
-		_, err = r.dataAccess.StoreNodeInfo(nodeNewInfo)
-		if err != nil {
-			slog.Error("could not store node info.", "node.Name", nodeNew.Name, "error", err, "recorderParams", r.params)
-			return nil
-		}
-		slog.Info("processNode stored node", "node.Name", nodeNewInfo.Name, "allocatableVolumes", allocatableVolumes, "node.Hash", nodeNewInfo.Hash, "shootLabel", r.params.ShootLabel())
-		return nil
-	})
-}
-
-func (r *defaultRecorder) getAllocatableVolumes(nodeName string) (allocatableVolumes int) {
-	val, _ := r.nodeAllocatableVolumes.Load(nodeName)
-	if val != nil {
-		allocatableVolumes = val.(int)
+	//	allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
+	nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, 0)
+	//if allocatableVolumes == 0 {
+	//	slog.Warn("Allocatable Volumes key not found", "node.Name", nodeNewInfo.Name)
+	//}
+	countWithSameHash, err := r.dataAccess.CountNodeInfoWithHash(nodeNew.Name, nodeNewInfo.Hash)
+	if err != nil {
+		slog.Error("cannot CountPodInfoWithSpecHash", "node.Name", nodeNew.Name, "node.Hash", nodeNewInfo.Hash, "error", err)
+		return
 	}
-	return
+	if countWithSameHash > 0 {
+		slog.Debug("NodeInfo is already present with same hash", "node.Name", nodeNew.Name, "node.Hash", nodeNewInfo.Hash, "count", countWithSameHash, "error", err)
+		return
+	}
+	_, err = r.dataAccess.StoreNodeInfo(nodeNewInfo)
+	if err != nil {
+		slog.Error("could not store node info.", "node.Name", nodeNew.Name, "error", err, "recorderParams", r.params)
+	}
+	slog.Info("processNode stored node", "node.Name", nodeNewInfo.Name, "node.Hash", nodeNewInfo.Hash, "shootLabel", r.params.ShootLabel())
 }
+
+//func (r *defaultRecorder) getAllocatableVolumes(nodeName string) (allocatableVolumes int) {
+//	val, _ := r.nodeAllocatableVolumes.Load(nodeName)
+//	if val != nil {
+//		allocatableVolumes = val.(int)
+//	}
+//	return
+//}
 
 func InvokeOrScheduleFunc[T any](label string, duration time.Duration, entity T, fn func(T) error) {
 	err := fn(entity)
@@ -1236,7 +1228,18 @@ func (r *defaultRecorder) onAddCSINode(obj interface{}) {
 			allocatableCount = int(*allocatableResources.Count)
 		}
 	}
-	r.nodeAllocatableVolumes.Store(csiNode.Name, allocatableCount)
+	//r.nodeAllocatableVolumes.Store(csiNode.Name, allocatableCount)
+	_, err := r.dataAccess.StoreCSINodeRow(db.CSINodeRow{
+		Name:               csiNode.Name,
+		Namespace:          csiNode.Namespace,
+		CreationTimestamp:  csiNode.CreationTimestamp.UTC().UnixNano(),
+		SnapshotTimestamp:  time.Now().UTC().UnixNano(),
+		AllocatableVolumes: allocatableCount,
+	})
+	if err != nil {
+		slog.Error("could not store csiNodeRow.", "Name", csiNode.Name, "error", err, "recorderParams", r.params)
+	}
+	// update the node info.allocablev volumes  table for the csi node id.
 }
 
 func (r *defaultRecorder) onUpdateCSINode(_ interface{}, newObj interface{}) {
@@ -1260,7 +1263,16 @@ func (r *defaultRecorder) onDeleteCSINode(obj any) {
 			return
 		}
 	}
-	r.nodeAllocatableVolumes.Delete(csiNode.Name)
+	delTimeStamp := time.Now().UTC() // shitty issue where sometimes >node.DeletionTimestamp is nil
+	if csiNode.DeletionTimestamp != nil {
+		delTimeStamp = csiNode.DeletionTimestamp.UTC()
+	}
+	rowsUpdated, err := r.dataAccess.UpdateCSINodeRowDeletionTimestamp(csiNode.Name, delTimeStamp)
+	slog.Debug("updated DeletionTimestamp of csiNode.", "Name", csiNode.Name, "csiNode.DeletionTimestamp", delTimeStamp, "rows.updated", rowsUpdated)
+	if err != nil {
+		slog.Error("could not execute UpdateCSINodeInfoDeletionTimestamp ", "error", err, "Name", csiNode.Name, "csiNode.DeletionTimestamp", delTimeStamp, "recorderParams", r.params)
+	}
+	//r.nodeAllocatableVolumes.Delete(csiNode.Name)
 }
 
 func (r *defaultRecorder) processMCD(mcdOld, mcdNew *unstructured.Unstructured) error {

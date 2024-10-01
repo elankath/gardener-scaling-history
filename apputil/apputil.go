@@ -418,6 +418,7 @@ func CopySQLiteDB(srcDBPath, dstDBPath string) error {
 	if err != nil {
 		return err
 	}
+	db.SetMaxOpenConns(1)
 	defer db.Close()
 	// Execute the VACUUM INTO command to copy the database safely
 	query := fmt.Sprintf("VACUUM INTO '%s';", dstDBPath)

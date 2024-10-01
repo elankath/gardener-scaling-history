@@ -156,6 +156,21 @@ func (a *DefaultApp) RunCAReplay(dbPath string) error {
 	if err = yamlDecoder.Decode(pod); err != nil {
 		return err
 	}
+	existingPod, err := a.kubeclient.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+	if err != nil {
+		slog.Warn("RunCAReplay cannot get existing pod details.", "podName", pod.Name, "numCAReplays", a.numCAReplays, "error", err)
+	}
+	if existingPod != nil {
+		if existingPod.Status.Phase == corev1.PodRunning {
+			slog.Warn("RunCAReplay already found a running replayer pod. Skipping", "podName", pod.Name)
+			return nil
+		}
+		err := a.kubeclient.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+		if err != nil {
+			slog.Error("RunCAReplay is unable to delete existing replayer pod.", "podName", pod.Name, "podPhase", pod.Status.Phase, "numCAReplays", a.numCAReplays, "error", err)
+			return err
+		}
+	}
 	slog.Info("RunCAReplay is deploying pod.", "podName", pod.Name, "INPUT_DATA_PATH", dbPath, "numCAReplays", a.numCAReplays)
 	_, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
 	if err != nil {

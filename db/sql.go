@@ -124,6 +124,31 @@ const CreateNodeInfoTable = `CREATE TABLE IF NOT EXISTS node_info (
 	DeletionTimestamp INT,
 	Hash TEXT)`
 
+const CreateCSINodeTable = `CREATE TABLE IF NOT EXISTS csi_node_info (
+	RowID INTEGER PRIMARY KEY AUTOINCREMENT,
+	CreationTimestamp INT NOT NULL,
+	SnapshotTimestamp INT NOT NULL,
+	Name TEXT, 
+	Namespace TEXT, 
+	AllocatableVolumes INT,
+	DeletionTimestamp INT
+)`
+
+const InsertCSINodeInfo = `INSERT INTO csi_node_info(
+    CreationTimestamp,
+	SnapshotTimestamp,
+	Name,
+	Namespace,
+    AllocatableVolumes) 
+	VALUES(?, ?, ?, ?, ?)`
+
+const SelectCSINodeInfoBefore = `SELECT * FROM csi_node_info
+	WHERE csi_node_info.CreationTimestamp <= ?
+	AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)
+	GROUP BY csi_node_info.Name HAVING max(RowID) ORDER BY RowID ASC`
+
+const UpdateCSINodeInfoDeletionTimestamp = `UPDATE csi_node_info SET DeletionTimestamp = ? where Name = ?`
+
 const InsertNodeInfo = `INSERT INTO node_info(
     CreationTimestamp,
 	SnapshotTimestamp,
