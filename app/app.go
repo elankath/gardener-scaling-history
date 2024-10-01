@@ -162,15 +162,14 @@ func (a *DefaultApp) RunCAReplay(dbPath string) error {
 	existingPod, err := a.kubeclient.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 	if err != nil {
 		slog.Warn("RunCAReplay cannot get existing pod details.", "podName", pod.Name, "numCAReplays", a.numCAReplays, "error", err)
-	}
-	if existingPod != nil {
+	} else if existingPod != nil {
 		if existingPod.Status.Phase == corev1.PodRunning {
 			slog.Warn("RunCAReplay already found a RUNNING replayer pod. Skipping", "podName", pod.Name)
 			return nil
 		}
 		err := a.kubeclient.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
 		if err != nil {
-			slog.Error("RunCAReplay is unable to delete existing replayer pod.", "podName", pod.Name, "podPhase", pod.Status.Phase, "numCAReplays", a.numCAReplays, "error", err)
+			slog.Warn("RunCAReplay is unable to delete existing replayer pod.", "podName", pod.Name, "podPhase", pod.Status.Phase, "numCAReplays", a.numCAReplays, "error", err)
 			return err
 		}
 	}
@@ -180,8 +179,9 @@ func (a *DefaultApp) RunCAReplay(dbPath string) error {
 		slog.Error("RunCAReplay cannot deploy replayer pod", "podName", pod.Name, "INPUT_DATA_PATH", dbPath, "numCAReplays", a.numCAReplays, "error", err)
 		return err
 	}
-
-	err = wait.PollUntilContextTimeout(ctx, 5*time.Minute, 2*time.Hour, false, func(ctx context.Context) (done bool, err error) {
+	waitInterval := 2 * time.Minute
+	slog.Info("RunCAReplay deployed pod and will check for status after waitInterval.", "podName", pod.Name, "INPUT_DATA_PATH", dbPath, "waitInterval", waitInterval, "numCAReplays", a.numCAReplays)
+	err = wait.PollUntilContextTimeout(ctx, waitInterval, 3*time.Hour, false, func(ctx context.Context) (done bool, err error) {
 		pod, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 		if err != nil {
 			slog.Warn("RunCAReplay cannot get Pod", "podName", pod.Name, "numCAReplays", a.numCAReplays, "error", err)
@@ -370,6 +370,7 @@ func (a *DefaultApp) PutReport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("PutReport could not write request body to report path %q: %s", reportPath, err), 500)
 		return
 	}
+	slog.Info("Successfully saved report", "reportPath", reportPath)
 }
 
 func (a *DefaultApp) UploadReports(w http.ResponseWriter, r *http.Request) {
