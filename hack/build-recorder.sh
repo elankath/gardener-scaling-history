@@ -24,14 +24,13 @@ fi
 
 echo "Please ensure that Docker Desktop is started."
 mkdir -p bin
-if [[ -f bin/recorder ]]; then
-  echo "Removing existing binary."
-  rm bin/recorder
+if [[ -f bin/remote/recorder ]]; then
+  echo "Removing existing remote binary."
+  rm bin/remote/recorder
 fi
 echo "Building recorder for linux/amd64..."
-#GOOS=linux GOARCH=amd64 go build -v -o bin/recorder cmd/recorder/main.go
-CC=x86_64-unknown-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -v -o bin/recorder cmd/recorder/main.go
-chmod +x bin/recorder
+CC=x86_64-unknown-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -v -o bin/remote/recorder cmd/recorder/main.go
+chmod +x bin/remote/recorder
 RECORDER_IMAGE_TAG="$DOCKERHUB_USER/scaling-history-recorder:latest"
 export RECORDER_IMAGE_TAG
 
