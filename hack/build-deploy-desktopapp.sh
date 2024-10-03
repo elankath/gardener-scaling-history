@@ -39,14 +39,14 @@ GOOS=linux GOARCH=amd64 go build -v -o "$BINOUT" cmd/desktopapp/main.go
 chmod +x bin/remote/desktopapp
 
 echo "Performing pre-requisities on desktop VM ${DESKTOP_VM_HOST}..."
-#ssh "scalehist@${DESKTOP_VM_HOST}" 'mkdir -p ~/bin;mkdir -p ~/logs;mkdir -p ~/gen;echo "Directories created"'
-#echo "Coping $BINOUT to ${DESKTOP_VM_HOST}/bin..."
-#echo scp -C -o "IPQoS=throughput" "${BINOUT}" "scalehist@${DESKTOP_VM_HOST}:~/bin"
-#scp -C -o "IPQoS=throughput" "${BINOUT}" "scalehist@${DESKTOP_VM_HOST}:~/bin"
+ssh "scalehist@${DESKTOP_VM_HOST}" 'mkdir -p ~/bin;mkdir -p ~/logs;mkdir -p ~/gen;echo "Directories created"'
+echo "Coping $BINOUT to ${DESKTOP_VM_HOST}/bin..."
+echo scp -C -o "IPQoS=throughput" "${BINOUT}" "scalehist@${DESKTOP_VM_HOST}:~/bin"
+scp -C -o "IPQoS=throughput" "${BINOUT}" "scalehist@${DESKTOP_VM_HOST}:~/bin"
 
-echo "Using sftp to upload $BINOUT to scalehist@${DESKTOP_VM_HOST}/bin..."
-sftp "scalehist@${DESKTOP_VM_HOST}" <<EOF
-cd bin
-put "$BINOUT
-bye
-EOF
+#echo "Using sftp to upload $BINOUT to scalehist@${DESKTOP_VM_HOST}/bin..."
+#sftp "scalehist@${DESKTOP_VM_HOST}" <<EOF
+#cd bin
+#put "$BINOUT
+#bye
+#EOF

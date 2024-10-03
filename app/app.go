@@ -9,6 +9,7 @@ import (
 	"github.com/elankath/gardener-scaling-history/apputil"
 	"github.com/elankath/gardener-scaling-history/specs"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/samber/lo"
 	"io"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +38,7 @@ type DefaultApp struct {
 	httpServer   *http.Server
 	kubeclient   *kubernetes.Clientset
 	numCAReplays int
+	numSRReplays int
 }
 
 type Params struct {
@@ -89,11 +91,33 @@ func (a *DefaultApp) Start() error {
 		_ = a.doClose()
 	})
 	a.StartCAReplayLoop()
+	a.StartSRReplayLoop()
 	defer a.httpServer.Shutdown(a.ctx)
 	if err := a.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+func (a *DefaultApp) StartSRReplayLoop() {
+	const srReplayInterval = time.Minute * 30
+	go func() {
+		err := a.RunSRReplays()
+		if err != nil {
+			slog.Error("Error in RunSRReplays", "error", err)
+		}
+		for {
+			select {
+			case <-time.After(srReplayInterval):
+				err := a.RunSRReplays()
+				if err != nil {
+					slog.Error("Error in RunSRReplays", "error", err)
+				}
+			case <-a.ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (a *DefaultApp) StartCAReplayLoop() {
@@ -119,14 +143,12 @@ func (a *DefaultApp) StartCAReplayLoop() {
 
 func (a *DefaultApp) RunCAReplays() error {
 	dbPaths, err := ListAllDBPaths(a.params.DBDir)
+	lo.Shuffle(dbPaths)
 	if err != nil {
 		return err
 	}
 	slog.Info("RunCAReplays commencing.", "dbPaths", dbPaths, "numCAReplays", a.numCAReplays)
 	begin := time.Now()
-	//nonce: "${NONCE}"
-	//DOCKERHUB_USER
-	//INPUT_DATA_PATH
 
 	for _, dbPath := range dbPaths {
 		if !strings.HasSuffix(dbPath, ".db") {
@@ -145,10 +167,29 @@ func (a *DefaultApp) RunCAReplays() error {
 	return nil
 }
 
+func (a *DefaultApp) RunSRReplays() error {
+	caReportPaths, err := ListAllCAReportPaths(a.params.ReportsDir)
+	if err != nil {
+		return err
+	}
+	slog.Info("RunSRReplays commencing.", "caReportPaths", caReportPaths)
+	begin := time.Now()
+	for _, caReportPath := range caReportPaths {
+		a.numSRReplays++
+		err = a.RunSRReplay(caReportPath)
+		if err != nil {
+			slog.Warn("Error running SR replay", "caReportPath", caReportPath, "error", err, "numSRReplays", a.numSRReplays)
+		}
+	}
+	slog.Info("RunSRReplays completed.", "duration", time.Now().Sub(begin), "caReportPaths", caReportPaths)
+	return nil
+}
+
 func (a *DefaultApp) RunCAReplay(dbPath string) error {
+	slog.Info("RunCAReplay invoked with dbPath.", "dbPath", dbPath)
 	ctx, cancel := context.WithTimeout(a.ctx, 4*time.Hour)
 	defer cancel()
-	replayerYaml, err := GetReplayerPodYaml(dbPath, a.params.DockerHubUser, time.Now())
+	replayerYaml, err := GetCAReplayerPodYaml(dbPath, a.params.DockerHubUser, time.Now())
 	if err != nil {
 		return err
 	}
@@ -202,6 +243,63 @@ func (a *DefaultApp) RunCAReplay(dbPath string) error {
 	return nil
 }
 
+func (a *DefaultApp) RunSRReplay(caReportPath string) error {
+	ctx, cancel := context.WithTimeout(a.ctx, 2*time.Hour)
+	defer cancel()
+	replayerYaml, err := GetSRReplayerPodYaml(caReportPath, a.params.DockerHubUser, time.Now())
+	if err != nil {
+		return err
+	}
+	stringReader := strings.NewReader(replayerYaml)
+	//yamlReader := yaml.NewYAMLReader(bufio.NewReader(stringReader))
+	yamlDecoder := yaml.NewYAMLOrJSONDecoder(io.NopCloser(stringReader), 4096)
+	var pod = &corev1.Pod{}
+	if err = yamlDecoder.Decode(pod); err != nil {
+		return err
+	}
+	existingPod, err := a.kubeclient.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+	if err != nil {
+		slog.Warn("RunSRReplay cannot get existing pod details.", "podName", pod.Name, "numSRReplays", a.numCAReplays, "error", err)
+	} else if existingPod != nil {
+		if existingPod.Status.Phase == corev1.PodRunning {
+			slog.Warn("RunSRReplay already found a RUNNING replayer pod. Skipping", "podName", pod.Name)
+			return nil
+		}
+		err := a.kubeclient.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+		if err != nil {
+			slog.Warn("RunSRReplay is unable to delete existing replayer pod.", "podName", pod.Name, "podPhase", pod.Status.Phase, "numSRReplays", a.numCAReplays, "error", err)
+			return err
+		}
+	}
+	slog.Info("RunSRReplay is deploying pod.", "podName", pod.Name, "INPUT_DATA_PATH", caReportPath, "numSRReplays", a.numSRReplays)
+	_, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+	if err != nil {
+		slog.Error("RunSRReplay cannot deploy replayer pod", "podName", pod.Name, "INPUT_DATA_PATH", caReportPath, "numSRReplays", a.numCAReplays, "error", err)
+		return err
+	}
+	waitInterval := 2 * time.Minute
+	slog.Info("RunSRReplay deployed pod and will check for status after waitInterval.", "podName", pod.Name, "INPUT_DATA_PATH", caReportPath, "waitInterval", waitInterval, "numSRReplays", a.numSRReplays)
+	err = wait.PollUntilContextTimeout(ctx, waitInterval, 1*time.Hour, false, func(ctx context.Context) (done bool, err error) {
+		pod, err = a.kubeclient.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+		if err != nil {
+			slog.Warn("RunSRReplay cannot get Pod", "podName", pod.Name, "numSRReplays", a.numCAReplays, "error", err)
+			return false, err
+		}
+
+		if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			slog.Info("RunSRReplay is completed", "podName", pod.Name, "INPUT_DATA_PATH", caReportPath, "podPhase", pod.Status.Phase)
+			return true, nil
+		}
+		slog.Info("RunSRReplay is in progress.", "podName", pod.Name, "INPUT_DATA_PATH", caReportPath, "podPhase", pod.Status.Phase)
+		return false, nil
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func GetShootAdminKubeclient(ctx context.Context, mode gsh.ExecutionMode) (*kubernetes.Clientset, error) {
 	landscapeKubeConfigs, err := apputil.GetLandscapeKubeconfigs(mode)
 	if err != nil {
@@ -225,23 +323,24 @@ func GetShootAdminKubeclient(ctx context.Context, mode gsh.ExecutionMode) (*kube
 
 	config, err := clientcmd.BuildConfigFromFlags("", shootKubeconfigPath)
 	if err != nil {
-		slog.Error("Error building rest config", err)
+		slog.Error("Error building rest config", "error", err)
 		return nil, err
 	}
 	kubeClient, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		slog.Error("Error building kubernetes clientset", err)
+		slog.Error("Error building kubernetes clientset", "error", err)
 		return nil, err
 	}
 
 	return kubeClient, nil
 }
 
-func GetReplayerPodYaml(inputDataPath, dockerHubUser string, now time.Time) (string, error) {
+func GetCAReplayerPodYaml(inputDataPath, dockerHubUser string, now time.Time) (string, error) {
 	replayerPodTemplate, err := specs.GetReplayerPodYamlTemplate()
 	if err != nil {
 		return "", err
 	}
+	// live_mlfprod_prod-us_copy.db
 	var memory, podName, dbPath string
 	if strings.HasSuffix(inputDataPath, ".db") {
 		memory = "8Gi"
@@ -250,17 +349,54 @@ func GetReplayerPodYaml(inputDataPath, dockerHubUser string, now time.Time) (str
 	} else {
 		return "", fmt.Errorf("invalid inputDataPath: %q", inputDataPath)
 	}
-
-	shootName := inputDataPath[:strings.LastIndex(inputDataPath, ".")]
-	shootName = shootName[strings.LastIndex(shootName, "_")+1:]
-	podName = "scaling-history-replayer-ca-" + shootName
-
+	podName = GetCAPodName(inputDataPath)
 	dbPath = "/db/" + path.Base(inputDataPath)
+	slog.Info("GetReplayerPodYaml obtained podName for inputDataPath", "podName", podName, "inputDataPath", dbPath, "dbPath", dbPath)
 	//POD_DATA_PATH = "/db/${DB_NAME}"
-
 	oldNew := []string{"${NONCE}", now.Format(time.RFC822Z), "${DOCKERHUB_USER}", dockerHubUser, "${INPUT_DATA_PATH}", inputDataPath, "${MEMORY}", memory, "${POD_NAME}", podName, "${NO_AUTO_LAUNCH}", "false", "${POD_DATA_PATH}", dbPath}
 	replacer := strings.NewReplacer(oldNew...)
 	return replacer.Replace(replayerPodTemplate), nil
+}
+
+func GetSRReplayerPodYaml(inputDataPath, dockerHubUser string, now time.Time) (string, error) {
+	replayerPodTemplate, err := specs.GetReplayerPodYamlTemplate()
+	if err != nil {
+		return "", err
+	}
+	// live_mlfprod_prod-us_copy.db
+	var memory, podName, revisedDataPath string
+	memory = "14Gi"
+	if !strings.HasSuffix(inputDataPath, ".json") {
+		return "", fmt.Errorf("invalid inputDataPath: %q", inputDataPath)
+	}
+	podName = GetSRPodName(inputDataPath)
+	revisedDataPath = "/reports/" + path.Base(inputDataPath)
+	slog.Info("GetReplayerPodYaml obtained podName for inputDataPath", "podName", podName, "inputDataPath", revisedDataPath, "revisedDataPath", revisedDataPath)
+	//POD_DATA_PATH = "/db/${DB_NAME}"
+	oldNew := []string{"${NONCE}", now.Format(time.RFC822Z), "${DOCKERHUB_USER}", dockerHubUser, "${INPUT_DATA_PATH}", inputDataPath, "${MEMORY}", memory, "${POD_NAME}", podName, "${NO_AUTO_LAUNCH}", "false", "${POD_DATA_PATH}", revisedDataPath}
+	replacer := strings.NewReplacer(oldNew...)
+	return replacer.Replace(replayerPodTemplate), nil
+}
+func clusterNameForPodFromDBPath(dbPath string) string {
+	clusterName := apputil.FilenameWithoutExtension(dbPath)
+	return strings.ReplaceAll(clusterName, "_", "-")
+}
+
+func clusterNameForPodFromCAReportPath(caReportPath string) string {
+	// live_abap_prod-us30-1_ca-replay-4.json
+	reportName := apputil.FilenameWithoutExtension(caReportPath)
+	clusterName := reportName[:strings.LastIndex(reportName, "_")]
+	return strings.ReplaceAll(clusterName, "_", "-")
+}
+
+func GetCAPodName(dbPath string) string {
+	clusterName := clusterNameForPodFromDBPath(dbPath)
+	return "scaling-history-replayer-ca-" + clusterName
+}
+
+func GetSRPodName(dbPath string) string {
+	clusterName := clusterNameForPodFromCAReportPath(dbPath)
+	return "scaling-history-replayer-sr-" + clusterName
 }
 
 func ListAllDBPaths(dir string) (dbPaths []string, err error) {
@@ -271,6 +407,20 @@ func ListAllDBPaths(dir string) (dbPaths []string, err error) {
 	for _, f := range files {
 		if strings.HasSuffix(f.Name(), ".db") {
 			dbPaths = append(dbPaths, filepath.Join(dir, f.Name()))
+		}
+	}
+	return
+}
+
+// ListAllCAReportPaths lists reports like live_cds-prod_bs-g-peu_ca-replay-1.json in the given dir.
+func ListAllCAReportPaths(dir string) (caReportPaths []string, err error) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, f := range files {
+		if strings.Contains(f.Name(), "ca-replay") {
+			caReportPaths = append(caReportPaths, f.Name())
 		}
 	}
 	return
@@ -304,6 +454,7 @@ func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {
 		reportSize := uint64(statInfo.Size())
 		reportInfos = append(reportInfos, gsh.FileInfo{
 			Name:         name,
+			LastModified: statInfo.ModTime(),
 			Size:         reportSize,
 			ReadableSize: humanize.Bytes(reportSize),
 		})
@@ -452,6 +603,7 @@ func (a *DefaultApp) ListDatabases(w http.ResponseWriter, r *http.Request) {
 		dbSize := uint64(statInfo.Size())
 		dbInfos = append(dbInfos, gsh.FileInfo{
 			Name:         name,
+			LastModified: statInfo.ModTime(),
 			Size:         dbSize,
 			ReadableSize: humanize.Bytes(dbSize),
 		})
@@ -507,6 +659,7 @@ func (a *DefaultApp) UploadLogs(w http.ResponseWriter, r *http.Request) {
 		logFileSz := uint64(filePart.Size)
 		logFileInfos = append(logFileInfos, gsh.FileInfo{
 			Name:         logFilePath,
+			LastModified: time.Now(),
 			Size:         logFileSz,
 			ReadableSize: humanize.Bytes(logFileSz),
 		})
@@ -599,6 +752,7 @@ func (a *DefaultApp) ListLogFiles(w http.ResponseWriter, r *http.Request) {
 		logFileSize := uint64(statInfo.Size())
 		logFileInfos = append(logFileInfos, gsh.FileInfo{
 			Name:         logFileName,
+			LastModified: statInfo.ModTime(),
 			Size:         logFileSize,
 			ReadableSize: humanize.Bytes(logFileSize),
 		})
