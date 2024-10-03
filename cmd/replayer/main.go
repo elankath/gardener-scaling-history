@@ -135,6 +135,7 @@ func main() {
 		DeployParallel:               deployParallel,
 		ReplayInterval:               replayInterval,
 		AutoLaunchDependencies:       autoLaunchDeps,
+		Mode:                         gsh.ExecutionMode(mode),
 		//RecurConfigUpdate:            recurConfigUpdate,
 	}
 

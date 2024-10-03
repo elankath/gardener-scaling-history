@@ -70,7 +70,17 @@ spec:
     - key: dedicated
       value: scaling-history
       effect: NoSchedule
+  restartPolicy: Always
   affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - "scaling-history-recorder"
+          topologyKey: "kubernetes.io/hostname"
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
         nodeSelectorTerms:

@@ -34,6 +34,7 @@ spec:
   terminationGracePeriodSeconds: 30
   #serviceAccountName: "robot"
   serviceAccountName: "default"
+  restartPolicy: Always
   tolerations:
     - key: dedicated
       value: scaling-history

@@ -39,6 +39,7 @@ type RecorderParams struct {
 }
 
 type ReplayerParams struct {
+	Mode                         ExecutionMode
 	InputDataPath                string
 	ReportDir                    string
 	VirtualAutoScalerConfigPath  string
@@ -97,6 +98,7 @@ type FileInfos struct {
 
 type FileInfo struct {
 	Name         string
+	LastModified time.Time
 	Size         uint64
 	ReadableSize string
 }
