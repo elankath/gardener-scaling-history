@@ -12,5 +12,6 @@ live,cds-prod,bs-g-peu
 live,abap,prod-us30-1
 live,abap,abapcp-prod-us30
 live,hc-can-gc,sacdrgcp-dmi
+live,hc-canary,prod-hna0
 #dev,i034796,g2
 #dev,i544000,tsc
