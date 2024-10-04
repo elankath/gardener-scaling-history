@@ -1521,6 +1521,10 @@ func adjustPodInfo(old gsc.PodInfo) (new gsc.PodInfo) {
 	new.Spec.PriorityClassName = ""
 	new.Spec.PreemptionPolicy = nil
 	new.Spec.Priority = nil
+
+	if new.Spec.RuntimeClassName != nil {
+		new.Spec.RuntimeClassName = nil
+	}
 	//new.NodeName = ""
 	//new.Spec.NodeName = ""
 	return
