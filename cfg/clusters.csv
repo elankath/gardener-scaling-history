@@ -2,7 +2,7 @@
 live,hc-canary,prod-bds
 canary,hc-dev,demo-hc-3-haas
 live,hc-eu10,prod-haas
-live,mlfprod,prod-eu-1
+live,mlfprod,prod-eu
 live,di-eu10,dis-2lyom
 live,mlfprod,prod-us
 live,mlfprod,prod-jp
