@@ -141,8 +141,10 @@ func main() {
 
 	exitCode := launch(replayParams)
 	if exitCode == 0 {
+		slog.Info("Exiting with OK exitCode", "exitCode", exitCode)
 		return
 	} else {
+		slog.Warn("Exiting with BAD exitCode", "exitCode", exitCode)
 		os.Exit(exitCode)
 	}
 

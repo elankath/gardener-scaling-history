@@ -108,7 +108,8 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc) int {
 			if errors.Is(err, context.Canceled) {
 				slog.Info("scaling-history-app was cancelled", "error", err)
 			} else {
-				slog.Warn("scaling-history-app ran into error", "error", err)
+				slog.Error("scaling-history-app ran into error", "error", err)
+				os.Exit(1)
 			}
 		}
 	}()

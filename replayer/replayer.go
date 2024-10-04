@@ -740,37 +740,41 @@ func (r *defaultReplayer) Start() error {
 }
 
 func (r *defaultReplayer) doClose() error {
-	//err := r.dataAccess.Close()
-	//if err != nil {
-	//	return err
-	//}
-	//r.informerFactory.Shutdown()
-	//r.controlInformerFactory.Shutdown()
-	//return nil
-
+	var err error
 	if r.kvclCmd != nil && r.kvclCmd.Process != nil {
-		slog.Info("Killing kvcl...")
+		slog.Info("doClose is Killing kvcl...")
 		//r.kvclCancelFn()
-		err := r.kvclCmd.Process.Kill()
+		err = r.kvclCmd.Process.Kill()
 		if err != nil {
-			slog.Error("cannot kill kvcl", "error", err)
-			return err
+			slog.Warn("doClose cannot kill kvcl", "error", err)
 		}
 	}
 	if r.scalerCmd != nil && r.scalerCmd.Process != nil {
-		slog.Info("Killing scaler proces...")
+		slog.Info("doClose is Killing scaler process...")
 		//r.scalerCancelFn()
-		err := r.scalerCmd.Process.Kill()
+		err = r.scalerCmd.Process.Kill()
 		if err != nil {
-			slog.Error("cannot kill scaler", "error", err)
-			return err
+			slog.Warn("doClose cannot kill scaler", "error", err)
 		}
 	}
 	if r.dataAccess != nil {
-		slog.Info("Closing data access...")
-		return r.dataAccess.Close()
+		slog.Info("doClose is Closing data access...")
+		err = r.dataAccess.Close()
+		if err != nil {
+			slog.Warn("doClose cannot close dataAccess. ", "error", err)
+		}
 	}
-	return nil
+	if r.params.Mode == gsh.InUtilityClusterRecorderMode {
+		cleanupProcs := []string{"etcd", "kube-apiserver"}
+		slog.Info("doClose is killing cleanupProcs since in mode.", "mode", r.params.Mode, "cleanupProces", cleanupProcs)
+		for _, processName := range cleanupProcs {
+			err = killProcessByName(processName)
+			if err != nil {
+				slog.Warn("doClose cannot kill proc.", "processName", processName, "error", err)
+			}
+		}
+	}
+	return err
 }
 
 func launchKvcl(ctx context.Context) (*exec.Cmd, error) {
@@ -791,7 +795,6 @@ func launchKvcl(ctx context.Context) (*exec.Cmd, error) {
 		err := cmd.Run()
 		if err != nil {
 			slog.Error("Failed to launch kvcl.", "error", err, "cmd", cmd)
-			//os.Exit(9)
 		}
 	}()
 	waitSecs := 7
@@ -817,8 +820,14 @@ func launchScalingRecommender(ctx context.Context, kubeconfigPath string, inputD
 	go func() {
 		err := cmd.Run()
 		if err != nil {
-			slog.Error("Failed to launch scaling-recommender.", "error", err, "cmd", cmd)
-			os.Exit(9)
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
+					slog.Warn("bin/scaling-autoscaler was killed by SIGKILL (signal: killed)")
+				} else {
+					slog.Error("bin/scaling-autoscaler ran into error", "error", err)
+				}
+			}
 		}
 	}()
 	waitSecs := 6
@@ -829,7 +838,7 @@ func launchScalingRecommender(ctx context.Context, kubeconfigPath string, inputD
 
 func killProcessByName(name string) error {
 	listStaleProcCmd := exec.Command("pgrep", "-f", name)
-	slog.Info("Listing stale processes using command.", "listStaleProcCmd", listStaleProcCmd)
+	slog.Info("killProcessByName listing stale processes using command.", "listStaleProcCmd", listStaleProcCmd)
 	var stdout, stderr bytes.Buffer
 	listStaleProcCmd.Stdout = &stdout
 	listStaleProcCmd.Stderr = &stderr
@@ -842,27 +851,27 @@ func killProcessByName(name string) error {
 	}
 	procListStr := strings.TrimSpace(stdout.String())
 	if procListStr == "" {
-		slog.Info("No processes found with name.", "name", name)
+		slog.Info("killProcessByName found no processes found with name.", "name", name)
 		return nil
 	}
 	pidStrings := strings.Fields(procListStr)
 	if len(pidStrings) == 0 {
-		slog.Info("No processes found with name.", "name", name)
+		slog.Info("killProcessByName found no processes found with name.", "name", name)
 	}
 	for _, pStr := range pidStrings {
 		pid, err := strconv.Atoi(pStr)
 		if err != nil {
-			return fmt.Errorf("launchKvcl cannot kill process with bad pid %s: %w", pStr, err)
+			return fmt.Errorf("killProcessByName cannot kill process with bad pid %s: %w", pStr, err)
 		}
 		process, err := os.FindProcess(pid)
 		if err != nil {
-			return fmt.Errorf("launchKvcl cannot find  process with pid %d: %w", pid, err)
+			return fmt.Errorf("killProcessByName cannot find  process with pid %d: %w", pid, err)
 		}
 		err = process.Signal(syscall.SIGKILL)
 		if err != nil {
-			return fmt.Errorf("launchKvcl unable to signal SIGKILL to proces %d: %w", pid, err)
+			return fmt.Errorf("killProcessByName unable to signal SIGKILL to proces %d: %w", pid, err)
 		}
-		slog.Info("Sent SIGKILL to process with pid.", "pid", pid)
+		slog.Info("killProcessByName sent SIGKILL to process with pid.", "pid", pid)
 	}
 	return nil
 }
@@ -936,8 +945,14 @@ func launchCA(ctx context.Context, clientSet *kubernetes.Clientset, kubeconfigPa
 	go func() {
 		err := caCmd.Run()
 		if err != nil {
-			slog.Error("bin/cluster-autoscaler ran into error", "error", err)
-			os.Exit(9)
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
+					slog.Info("bin/cluster-autoscaler was killed by SIGKILL (signal: killed)")
+				} else {
+					slog.Error("bin/cluster-autoscaler ran into error", "error", err)
+				}
+			}
 		}
 	}()
 	waitSecs := 8

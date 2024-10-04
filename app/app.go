@@ -172,6 +172,7 @@ func (a *DefaultApp) RunSRReplays() error {
 	if err != nil {
 		return err
 	}
+	lo.Shuffle(caReportPaths)
 	slog.Info("RunSRReplays commencing.", "caReportPaths", caReportPaths)
 	begin := time.Now()
 	for _, caReportPath := range caReportPaths {
@@ -405,6 +406,9 @@ func ListAllDBPaths(dir string) (dbPaths []string, err error) {
 		return
 	}
 	for _, f := range files {
+		if strings.HasSuffix(f.Name(), "_copy.db") {
+			continue
+		}
 		if strings.HasSuffix(f.Name(), ".db") {
 			dbPaths = append(dbPaths, filepath.Join(dir, f.Name()))
 		}

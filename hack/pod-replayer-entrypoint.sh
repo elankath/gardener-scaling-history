@@ -79,3 +79,4 @@ fi
 if [[ -f /tmp/replayer.log ]]; then
   curl -v -X POST -F logs=@/tmp/replayer.log "http://10.47.254.238/api/logs/${clusterName}"
 fi
+exit 0
