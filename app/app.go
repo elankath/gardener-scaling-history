@@ -92,6 +92,7 @@ func (a *DefaultApp) Start() error {
 	})
 	a.StartCAReplayLoop()
 	a.StartSRReplayLoop()
+	//a.StartGenCompareReportsLoop()
 	defer a.httpServer.Shutdown(a.ctx)
 	if err := a.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -139,6 +140,46 @@ func (a *DefaultApp) StartCAReplayLoop() {
 			}
 		}
 	}()
+}
+
+func (a *DefaultApp) StartGenCompareReportsLoop() {
+	const genReportInterval = time.Minute * 30
+	go func() {
+		err := a.GenerateCompareReports()
+		if err != nil {
+			slog.Error("Error in GenerateCompareReports", "error", err)
+		}
+		for {
+			select {
+			case <-time.After(genReportInterval):
+				err := a.GenerateCompareReports()
+				if err != nil {
+					slog.Error("Error in GenerateCompareReports", "error", err)
+				}
+			case <-a.ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+func (a *DefaultApp) GenerateCompareReports() error {
+	replayReportPairs, err := ListAllReplayReportPairs(a.params.ReportsDir)
+	if err != nil {
+		return fmt.Errorf("error in ListAllReplayReportPairs: %w", err)
+	}
+	slog.Info("Generating compare reports...", "replayReportPairs", replayReportPairs)
+	for _, replayPair := range replayReportPairs {
+		err = a.GenerateCompareReport(replayPair[0], replayPair[1])
+		if err != nil {
+			return fmt.Errorf("error running GenerateCompareReports: %w", err)
+		}
+	}
+	return nil
+}
+
+func (a *DefaultApp) GenerateCompareReport(caReportPath, srReportPath string) error {
+	return nil
 }
 
 func (a *DefaultApp) RunCAReplays() error {
@@ -385,9 +426,14 @@ func clusterNameForPodFromDBPath(dbPath string) string {
 
 func clusterNameForPodFromCAReportPath(caReportPath string) string {
 	// live_abap_prod-us30-1_ca-replay-4.json
+	clusterName := GetClusterNameFromCAReportPath(caReportPath)
+	return strings.ReplaceAll(clusterName, "_", "-")
+}
+
+func GetClusterNameFromCAReportPath(caReportPath string) string {
 	reportName := apputil.FilenameWithoutExtension(caReportPath)
 	clusterName := reportName[:strings.LastIndex(reportName, "_")]
-	return strings.ReplaceAll(clusterName, "_", "-")
+	return clusterName
 }
 
 func GetCAPodName(dbPath string) string {
@@ -428,6 +474,46 @@ func ListAllCAReportPaths(dir string) (caReportPaths []string, err error) {
 		}
 	}
 	return
+}
+
+// ListAllReplayReportPairs lists all sr and ca reports
+func ListAllReplayReportPairs(dir string) (reportPathPairs map[string][]string, err error) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	var statInfo os.FileInfo
+	reportPathPairs = make(map[string][]string)
+	for _, f := range files {
+		if strings.Contains(f.Name(), "ca-replay") {
+			//saReportPath = os.Join(dir, strings.Replace(f.Name(), "ca-replay", "sr-replay"))
+			srReportPath := GetSRReportPath(dir, f.Name())
+			statInfo, err = os.Stat(srReportPath)
+			if err != nil {
+				slog.Info("Cannot get info for srReportPath", "srReportPath", srReportPath, "error", err)
+				continue
+			}
+			srLastMod := statInfo.ModTime()
+			caReportPath := path.Join(dir, f.Name())
+			statInfo, err = os.Stat(caReportPath)
+			if err != nil {
+				slog.Info("Cannot get info for caReportPath", "caReportPath", caReportPath, "error", err)
+				continue
+			}
+			caLastMod := statInfo.ModTime()
+
+			clusterName := GetClusterNameFromCAReportPath(caReportPath)
+
+			if srLastMod.After(caLastMod) {
+				reportPathPairs[clusterName] = []string{caReportPath, srReportPath}
+			}
+		}
+	}
+	return
+}
+
+func GetSRReportPath(dir, caReportFileName string) string {
+	return path.Join(dir, strings.ReplaceAll(caReportFileName, "ca-replay", "sr-replay"))
 }
 
 func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {

@@ -531,3 +531,18 @@ func UploadReport(ctx context.Context, reportPath string) error {
 
 	return nil
 }
+
+func GuessProvider(s gsh.Scenario) (string, error) {
+	for _, nt := range s.ClusterSnapshot.AutoscalerConfig.NodeTemplates {
+		for k, _ := range nt.Labels {
+			if k == "topology.ebs.csi.aws.com/zone" {
+				return "aws", nil
+			}
+			if k == "topology.gke.io/zone" {
+				return "gcp", nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("could not guess provider for cluster")
+}
