@@ -7,6 +7,7 @@ import (
 	"github.com/dustin/go-humanize"
 	gsh "github.com/elankath/gardener-scaling-history"
 	"github.com/elankath/gardener-scaling-history/apputil"
+	"github.com/elankath/gardener-scaling-history/comparer"
 	"github.com/elankath/gardener-scaling-history/specs"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/samber/lo"
@@ -93,7 +94,7 @@ func (a *DefaultApp) Start() error {
 	})
 	a.StartCAReplayLoop()
 	a.StartSRReplayLoop()
-	//a.StartGenCompareReportsLoop()
+	a.StartGenCompareReportsLoop()
 	defer a.httpServer.Shutdown(a.ctx)
 	if err := a.httpServer.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
@@ -180,6 +181,16 @@ func (a *DefaultApp) GenerateCompareReports() error {
 }
 
 func (a *DefaultApp) GenerateCompareReport(caReportPath, srReportPath string) error {
+	config := comparer.Config{
+		CAReportPath: caReportPath,
+		SRReportPath: srReportPath,
+		ReportOutDir: a.params.ReportsDir,
+	}
+	result, err := comparer.GenerateReportFromConfig(config)
+	if err != nil {
+		return err
+	}
+	slog.Info("GenerateCompareReport successful", "MDReportPath", result.MDReportPath, "HTMLReportPath", result.HTMLReportPath)
 	return nil
 }
 
