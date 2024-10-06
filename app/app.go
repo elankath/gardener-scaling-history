@@ -82,6 +82,7 @@ func New(parentCtx context.Context, params Params) (*DefaultApp, error) {
 	app.mux.HandleFunc("POST /api/logs/{clusterName}", app.UploadLogs)
 	app.mux.HandleFunc("GET /api/logs/{clusterName}/{fileName}", app.GetLogFile)
 	app.mux.HandleFunc("GET /api/logs/{clusterName}", app.ListLogFiles)
+	app.mux.HandleFunc("GET /api/logs", app.ListAllLogFiles)
 	//app.mux.HandleFunc("GET /api/reports", app.ListReports)
 	return app, nil
 }
@@ -690,9 +691,16 @@ func (a *DefaultApp) ListDatabases(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("ListDatabases could not stat db file %q in dbDir %q", dbPath, a.params.DBDir), 500)
 			return
 		}
+		// path will be /data/db/<dbFileName>
+		// Need to convert to /api/db/<dbFileName>
+		// just replace /data with /api
+		urlPath := strings.Replace(dbPath, "/data", "/api", 1)
+		resourceURL := fmt.Sprintf("http://%s%s", r.Host, urlPath)
+		slog.Info("ListDatabases computed resourceURL", "resourceURL", resourceURL)
 		dbSize := uint64(statInfo.Size())
 		dbInfos = append(dbInfos, gsh.FileInfo{
 			Name:         name,
+			URL:          resourceURL,
 			LastModified: statInfo.ModTime(),
 			Size:         dbSize,
 			ReadableSize: humanize.Bytes(dbSize),
@@ -839,9 +847,16 @@ func (a *DefaultApp) ListLogFiles(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("ListLogFiles could not stat log file %q in clusterLogsDir %q", logFilePath, clusterLogsDir), 500)
 			return
 		}
+		// path will be /data/logs/<clusterName>/<logFileName>
+		// Need to convert to /api/logs/<clusterName>/<logFileName>
+		// just replace /data with /api
+		urlPath := strings.Replace(logFilePath, "/data", "/api", 1)
+		resourceURL := fmt.Sprintf("http://%s%s", r.Host, urlPath)
+		slog.Info("ListLogFiles computed resourceURL", "resourceURL", resourceURL)
 		logFileSize := uint64(statInfo.Size())
 		logFileInfos = append(logFileInfos, gsh.FileInfo{
 			Name:         logFileName,
+			URL:          resourceURL,
 			LastModified: statInfo.ModTime(),
 			Size:         logFileSize,
 			ReadableSize: humanize.Bytes(logFileSize),
@@ -854,6 +869,59 @@ func (a *DefaultApp) ListLogFiles(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("ListLogFiles could not serialize items.", "error", err, "logFileInfos", logFileInfos)
 		http.Error(w, fmt.Sprintf("ListLogFiles could not serialize response due to: %s", err), 500)
+		return
+	}
+	return
+}
+
+func (a *DefaultApp) ListAllLogFiles(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	logsDir := "/data/logs/"
+	logFileInfos := []gsh.FileInfo{}
+	err := filepath.WalkDir(logsDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err // Handle error if unable to access a file/directory
+		}
+		if d.IsDir() {
+			return nil
+		}
+		logFileName := d.Name()
+		if !strings.HasSuffix(logFileName, ".log") {
+			return nil
+		}
+		statInfo, err := os.Stat(path)
+		if err != nil {
+			return fmt.Errorf("ListAllLogFiles could not stat log file %q: %w", path, err)
+		}
+		logFileSize := uint64(statInfo.Size())
+
+		// path will be /data/logs/<clusterName>/<logFileName>
+		// Need to convert to /api/logs/<clusterName>/<logFileName>
+		// just replace /data with /api
+		urlPath := strings.Replace(path, "/data", "/api", 1)
+		resourceURL := fmt.Sprintf("http://%s%s", r.Host, urlPath)
+		slog.Info("ListAllLogFiles computed resourceURL", "resourceURL", resourceURL)
+		logFileInfos = append(logFileInfos, gsh.FileInfo{
+			Name:         logFileName,
+			URL:          resourceURL,
+			LastModified: statInfo.ModTime(),
+			Size:         logFileSize,
+			ReadableSize: humanize.Bytes(logFileSize),
+		})
+		return nil
+	})
+	if err != nil {
+		slog.Error("ListAllLogFiles could not walk logsDir.", "error", err, "logsDir", logsDir)
+		http.Error(w, fmt.Sprintf("ListLogFiles could not walk logsDir due to: %s", err), 500)
+		return
+	}
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", " ")
+	err = encoder.Encode(gsh.FileInfos{logFileInfos})
+	//err = json.NewEncoder(w).Encode(gsh.FileInfos{logFileInfos})
+	if err != nil {
+		slog.Error("ListAllLogFiles could not serialize items.", "error", err, "logFileInfos", logFileInfos)
+		http.Error(w, fmt.Sprintf("ListAllLogFiles could not serialize response due to: %s", err), 500)
 		return
 	}
 	return

@@ -98,6 +98,7 @@ type FileInfos struct {
 
 type FileInfo struct {
 	Name         string
+	URL          string
 	LastModified time.Time
 	Size         uint64
 	ReadableSize string

@@ -132,4 +132,11 @@ In either case it generates another scenario report.
    1. You can get a listing of reports by executing `curl http://10.47.254.238/api/reports`
    1. You can download a specific report into your current directory by using: `curl -LO <reportUrl>`
         1. Ex: `curl -LO http://10.47.254.238/api/reports/live_hc-canary_prod-hna1_ca-replay-1.json`
- 
+
+## Download Logs
+
+#### Download Logs API
+
+1. You can get a listing of all logs files by executing ``curl http://10.47.254.238/api/logs`
+1. You can get a listing of logs files for a cluster by executing `curl http://10.47.254.238/api/logs/<clusterName>`
+

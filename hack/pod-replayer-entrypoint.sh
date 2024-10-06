@@ -67,8 +67,14 @@ if [[ "$replaySR" == "true" ]] && [[ "${NO_AUTO_LAUNCH}" == "true" ]]; then
   fi
 fi
 
+declare replayerLogFileName
+if [[ "$replaySR" == "true" ]] ; then
+  replayerLogFileName="replayer-sr.log"
+else
+  replayerLogFileName="replayer-ca.log"
+fi
 echo "Launching replayer..."
-/bin/replayer 2>&1 | tee /tmp/replayer.log
+/bin/replayer 2>&1 | tee "/tmp/${replayerLogFileName}.log"
 
 if [[ -f /tmp/kvcl.log ]]; then
   curl -v -X POST -F logs=@/tmp/kvcl.log "http://10.47.254.238/api/logs/${clusterName}"
@@ -76,7 +82,10 @@ fi
 if [[ -f /tmp/sr.log ]]; then
   curl -v -X POST -F logs=@/tmp/sr.log "http://10.47.254.238/api/logs/${clusterName}"
 fi
-if [[ -f /tmp/replayer.log ]]; then
-  curl -v -X POST -F logs=@/tmp/replayer.log "http://10.47.254.238/api/logs/${clusterName}"
+if [[ -f "/tmp/$replayerLogFileName" ]]; then
+  curl -v -X POST -F logs=@/tmp/${replayerLogFileName} "http://10.47.254.238/api/logs/${clusterName}"
+fi
+if [[ -f "/tmp/scores.log" ]]; then
+  curl -v -X POST -F logs=@/tmp/scores.log "http://10.47.254.238/api/logs/${clusterName}"
 fi
 exit 0
