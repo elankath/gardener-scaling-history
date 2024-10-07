@@ -60,9 +60,20 @@ func (rp RecorderParams) String() string {
 	return fmt.Sprintf("(Landscape:%s,ShootNamespace:%s,DBDir:%s)", rp.Landscape, rp.ShootNameSpace, rp.DBDir)
 }
 
-func (sr ScalingResult) GetResourceStat() (stats ResourceStats, err error) {
-	for _, node := range sr.ScaledUpNodes {
-		rl, ok := sr.NodesUtilization[node.Name]
+func (report Scenario) GetResourceStat() (stats ResourceStats, err error) {
+	for _, node := range report.ScalingResult.ScaledUpNodes {
+		rl, ok := report.ScalingResult.NodesUtilization[node.Name]
+		if !ok {
+			//err = fmt.Errorf("cannot find utilization for node %s", node.Name)
+			continue
+		}
+		stats.TotalUtilMem.Add(*rl.Memory())
+		stats.TotalUtilCPU.Add(*rl.Cpu())
+		stats.AvailAllocMem.Add(*node.Allocatable.Memory())
+		stats.AvailAllocCPU.Add(*node.Allocatable.Cpu())
+	}
+	for _, node := range report.ClusterSnapshot.AutoscalerConfig.ExistingNodes {
+		rl, ok := report.ScalingResult.NodesUtilization[node.Name]
 		if !ok {
 			//err = fmt.Errorf("cannot find utilization for node %s", node.Name)
 			continue

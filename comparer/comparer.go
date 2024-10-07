@@ -202,17 +202,17 @@ func GenerateReport(pa pricing.InstancePricingAccess, c Config, caScenario, srSc
 	if err != nil {
 		return
 	}
-	caResourceStats, err := caScenario.ScalingResult.GetResourceStat()
+	caResourceStats, err := caScenario.GetResourceStat()
 	if err != nil {
 		return
 	}
-	srResourceStats, err := srScenario.ScalingResult.GetResourceStat()
+	srResourceStats, err := srScenario.GetResourceStat()
 	if err != nil {
 		return
 	}
 
 	res.MDReportPath = filepath.Join(c.ReportOutDir, fmt.Sprintf("%s-%s.md", clusterName, getReportIndex(c.CAReportPath)))
-	targetMDFile, err := os.OpenFile(res.MDReportPath, os.O_CREATE|os.O_WRONLY, 0644)
+	targetMDFile, err := os.OpenFile(res.MDReportPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return
 	}
