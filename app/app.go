@@ -171,13 +171,15 @@ func (a *DefaultApp) StartGenCompareReportsLoop() {
 func (a *DefaultApp) GenerateCompareReports() error {
 	replayReportPairs, err := ListAllReplayReportPairs(a.params.ReportsDir)
 	if err != nil {
-		return fmt.Errorf("error in ListAllReplayReportPairs: %w", err)
+		//return fmt.Errorf("error in ListAllReplayReportPairs: %w", err)
+		slog.Error("error in ListAllReplayReportPairs", "error", err)
 	}
 	slog.Info("Generating compare reports...", "replayReportPairs", replayReportPairs)
 	for _, replayPair := range replayReportPairs {
 		err = a.GenerateCompareReport(replayPair[0], replayPair[1])
 		if err != nil {
-			return fmt.Errorf("error running GenerateCompareReports: %w", err)
+			//return fmt.Errorf("error running GenerateCompareReports: %w", err)
+			slog.Error("error running GenerateCompareReports", "error", err)
 		}
 	}
 	return nil
@@ -517,10 +519,11 @@ func ListAllReplayReportPairs(dir string) (reportPathPairs map[string][]string, 
 			}
 			caLastMod := statInfo.ModTime()
 
-			clusterName := GetClusterNameFromCAReportPath(caReportPath)
+			//clusterName := GetClusterNameFromCAReportPath(caReportPath)
 
 			if srLastMod.After(caLastMod) {
-				reportPathPairs[clusterName] = []string{caReportPath, srReportPath}
+				//reportPathPairs[clusterName] = []string{caReportPath, srReportPath}
+				reportPathPairs[f.Name()] = []string{caReportPath, srReportPath}
 			}
 		}
 	}

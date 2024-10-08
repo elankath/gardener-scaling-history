@@ -170,17 +170,17 @@ func GenerateReportFromConfig(c Config) (res Result, err error) {
 		err = fmt.Errorf("error unmarshalling SR report: %w", err)
 		return
 	}
-	priceAccess, err := pricing.NewInstancePricingAccess(c.Provider)
-	if err != nil {
-		err = fmt.Errorf("error creating instance pricing access: %w", err)
-		return
-	}
 	if c.Provider == "" {
 		c.Provider, err = apputil.GuessProvider(caScenario)
 		if err != nil {
 			err = fmt.Errorf("error guessing provider: %w", err)
 			return
 		}
+	}
+	priceAccess, err := pricing.NewInstancePricingAccess(c.Provider)
+	if err != nil {
+		err = fmt.Errorf("error creating instance pricing access for provider %s: %w", c.Provider, err)
+		return
 	}
 
 	res, err = GenerateReport(priceAccess, c, caScenario, srScenario)
