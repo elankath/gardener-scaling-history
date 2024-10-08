@@ -567,6 +567,7 @@ func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {
 			ReadableSize: humanize.Bytes(reportSize),
 		})
 	}
+	apputil.SortFileInfosByLastModifiedDesc(reportInfos)
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", " ")
 	err = encoder.Encode(gsh.FileInfos{reportInfos})
@@ -723,6 +724,7 @@ func (a *DefaultApp) ListDatabases(w http.ResponseWriter, r *http.Request) {
 			ReadableSize: humanize.Bytes(dbSize),
 		})
 	}
+	apputil.SortFileInfosByLastModifiedDesc(dbInfos)
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", " ")
 	//err = json.NewEncoder(w).Encode(gsh.FileInfos{dbInfos})
@@ -879,6 +881,7 @@ func (a *DefaultApp) ListLogFiles(w http.ResponseWriter, r *http.Request) {
 			ReadableSize: humanize.Bytes(logFileSize),
 		})
 	}
+	apputil.SortFileInfosByLastModifiedDesc(logFileInfos)
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", " ")
 	err = encoder.Encode(gsh.FileInfos{logFileInfos})
@@ -932,6 +935,7 @@ func (a *DefaultApp) ListAllLogFiles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("ListLogFiles could not walk logsDir due to: %s", err), 500)
 		return
 	}
+	apputil.SortFileInfosByLastModifiedDesc(logFileInfos)
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", " ")
 	err = encoder.Encode(gsh.FileInfos{logFileInfos})

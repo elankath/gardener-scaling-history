@@ -546,3 +546,9 @@ func GuessProvider(s gsh.Scenario) (string, error) {
 
 	return "", fmt.Errorf("could not guess provider for cluster")
 }
+
+func SortFileInfosByLastModifiedDesc(fileInfos []gsh.FileInfo) {
+	slices.SortFunc(fileInfos, func(a, b gsh.FileInfo) int {
+		return cmp.Compare(b.LastModified.UnixMilli(), a.LastModified.UnixMilli())
+	})
+}
