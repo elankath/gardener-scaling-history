@@ -15,6 +15,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/json"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes"
@@ -48,6 +49,8 @@ type Params struct {
 	DockerHubUser string
 	Mode          gsh.ExecutionMode
 }
+
+var ReportFileExts = sets.New(".html", ".js", ".json", ".css", ".pdf", ".md")
 
 func New(parentCtx context.Context, params Params) (*DefaultApp, error) {
 	appCtx, appCancelCauseFunc := context.WithCancelCause(parentCtx)
@@ -103,7 +106,7 @@ func (a *DefaultApp) Start() error {
 }
 
 func (a *DefaultApp) StartSRReplayLoop() {
-	const srReplayInterval = time.Minute * 30
+	const srReplayInterval = time.Minute * 15
 	go func() {
 		err := a.RunSRReplays()
 		if err != nil {
@@ -538,13 +541,12 @@ func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {
 	}
 	reportInfos := []gsh.FileInfo{}
 	for _, e := range entries {
-		dbName := e.Name()
-		if !strings.HasSuffix(dbName, ".json") {
+		fileName := e.Name()
+		ext := path.Ext(fileName)
+		if !ReportFileExts.Has(ext) {
+			slog.Warn("ListReports is ignoring fileName since its extension is not contained in ReportFileExts.", "ext", ext, "fileName", fileName)
 			continue
 		}
-		//if strings.HasSuffix(dbName, "_copy.db") {
-		//	continue
-		//}
 		name := e.Name()
 		reportPath := filepath.Join(a.params.ReportsDir, name)
 		statInfo, err := os.Stat(reportPath)
@@ -553,9 +555,13 @@ func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("ListReports could not stat report file %q in reportDir %q", reportPath, a.params.ReportsDir), 500)
 			return
 		}
+		urlPath := strings.Replace(reportPath, "/data", "/api", 1)
+		resourceURL := fmt.Sprintf("http://%s%s", r.Host, urlPath)
+		slog.Info("ListResources computed resourceURL", "resourceURL", resourceURL)
 		reportSize := uint64(statInfo.Size())
 		reportInfos = append(reportInfos, gsh.FileInfo{
 			Name:         name,
+			URL:          resourceURL,
 			LastModified: statInfo.ModTime(),
 			Size:         reportSize,
 			ReadableSize: humanize.Bytes(reportSize),
