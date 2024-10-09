@@ -169,10 +169,9 @@ func (a *DefaultApp) StartGenCompareReportsLoop() {
 }
 
 func (a *DefaultApp) GenerateCompareReports() error {
-	replayReportPairs, err := ListAllReplayReportPairs(a.params.ReportsDir)
+	replayReportPairs, err := apputil.ListAllReplayReportPairs(a.params.ReportsDir)
 	if err != nil {
-		//return fmt.Errorf("error in ListAllReplayReportPairs: %w", err)
-		slog.Error("error in ListAllReplayReportPairs", "error", err)
+		return err
 	}
 	slog.Info("Generating compare reports...", "replayReportPairs", replayReportPairs)
 	for _, replayPair := range replayReportPairs {
@@ -432,7 +431,7 @@ func GetSRReplayerPodYaml(inputDataPath, dockerHubUser string, now time.Time) (s
 	revisedDataPath = "/reports/" + path.Base(inputDataPath)
 	slog.Info("GetReplayerPodYaml obtained podName for inputDataPath", "podName", podName, "inputDataPath", revisedDataPath, "revisedDataPath", revisedDataPath)
 	//POD_DATA_PATH = "/db/${DB_NAME}"
-	oldNew := []string{"${NONCE}", now.Format(time.RFC822Z), "${DOCKERHUB_USER}", dockerHubUser, "${INPUT_DATA_PATH}", inputDataPath, "${MEMORY}", memory, "${POD_NAME}", podName, "${NO_AUTO_LAUNCH}", "false", "${POD_DATA_PATH}", revisedDataPath}
+	oldNew := []string{"${NONCE}", now.Format(time.RFC822Z), "${DOCKERHUB_USER}", dockerHubUser, "${INPUT_DATA_PATH}", inputDataPath, "${MEMORY}", memory, "${POD_NAME}", podName, "${NO_AUTO_LAUNCH}", "true", "${POD_DATA_PATH}", revisedDataPath}
 	replacer := strings.NewReplacer(oldNew...)
 	return replacer.Replace(replayerPodTemplate), nil
 }
@@ -443,14 +442,8 @@ func clusterNameForPodFromDBPath(dbPath string) string {
 
 func clusterNameForPodFromCAReportPath(caReportPath string) string {
 	// live_abap_prod-us30-1_ca-replay-4.json
-	clusterName := GetClusterNameFromCAReportPath(caReportPath)
+	clusterName := apputil.GetClusterNameFromCAReportPath(caReportPath)
 	return strings.ReplaceAll(clusterName, "_", "-")
-}
-
-func GetClusterNameFromCAReportPath(caReportPath string) string {
-	reportName := apputil.FilenameWithoutExtension(caReportPath)
-	clusterName := reportName[:strings.LastIndex(reportName, "_")]
-	return clusterName
 }
 
 func GetCAPodName(dbPath string) string {
@@ -491,47 +484,6 @@ func ListAllCAReportPaths(dir string) (caReportPaths []string, err error) {
 		}
 	}
 	return
-}
-
-// ListAllReplayReportPairs lists all sr and ca reports
-func ListAllReplayReportPairs(dir string) (reportPathPairs map[string][]string, err error) {
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	var statInfo os.FileInfo
-	reportPathPairs = make(map[string][]string)
-	for _, f := range files {
-		if strings.Contains(f.Name(), "ca-replay") {
-			//saReportPath = os.Join(dir, strings.Replace(f.Name(), "ca-replay", "sr-replay"))
-			srReportPath := GetSRReportPath(dir, f.Name())
-			statInfo, err = os.Stat(srReportPath)
-			if err != nil {
-				slog.Info("Cannot get info for srReportPath", "srReportPath", srReportPath, "error", err)
-				continue
-			}
-			srLastMod := statInfo.ModTime()
-			caReportPath := path.Join(dir, f.Name())
-			statInfo, err = os.Stat(caReportPath)
-			if err != nil {
-				slog.Info("Cannot get info for caReportPath", "caReportPath", caReportPath, "error", err)
-				continue
-			}
-			caLastMod := statInfo.ModTime()
-
-			//clusterName := GetClusterNameFromCAReportPath(caReportPath)
-
-			if srLastMod.After(caLastMod) {
-				//reportPathPairs[clusterName] = []string{caReportPath, srReportPath}
-				reportPathPairs[f.Name()] = []string{caReportPath, srReportPath}
-			}
-		}
-	}
-	return
-}
-
-func GetSRReportPath(dir, caReportFileName string) string {
-	return path.Join(dir, strings.ReplaceAll(caReportFileName, "ca-replay", "sr-replay"))
 }
 
 func (a *DefaultApp) ListReports(w http.ResponseWriter, r *http.Request) {

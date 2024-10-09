@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, maximum-scale=1.0, minimum-scale=1.0">
+  <title>{{ .Title }} </title>
+  <link href="https://unpkg.com/fundamental-styles@latest/dist/fundamental-styles.css" rel="stylesheet">
+  <link href="https://unpkg.com/@sap-theming/theming-base-content/content/Base/baseLib/sap_horizon/css_variables.css"
+        rel="stylesheet">
+  <link href="https://unpkg.com/fundamental-styles@latest/dist/theming/sap_horizon.css" rel="stylesheet">
+  <style>
+    @font-face {
+      font-family: "72";
+      src: url("https://unpkg.com/@sap-theming/theming-base-content/content/Base/baseLib/baseTheme/fonts/72-Regular-full.woff") format("woff");
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    @font-face {
+      font-family: "72";
+      src: url("https://unpkg.com/@sap-theming/theming-base-content/content/Base/baseLib/baseTheme/fonts/72-Bold-full.woff") format("woff");
+      font-weight: 700;
+      font-style: normal;
+    }
+
+    @font-face {
+      font-family: "72";
+      src: url("https://unpkg.com/@sap-theming/theming-base-content/content/Base/baseLib/baseTheme/fonts/72-Light-full.woff") format("woff");
+      font-weight: 300;
+      font-style: normal;
+    }
+
+    @font-face {
+      font-family: "SAP-icons";
+      src: url("https://unpkg.com/@sap-theming/theming-base-content/content/Base/baseLib/baseTheme/fonts/SAP-icons.woff") format("woff");
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    @font-face {
+      font-family: 'BusinessSuiteInAppSymbols';
+      src: url("https://unpkg.com/@sap-theming/theming-base-content/content/Base/baseLib/sap_horizon/fonts/BusinessSuiteInAppSymbols.woff") format("woff");
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    @font-face {
+      font-family: 'SAP-icons-TNT';
+      src: url("https://unpkg.com/@sap-theming/theming-base-content/content/Base/baseLib/sap_horizon/fonts/SAP-icons-TNT.woff") format("woff");
+      font-weight: normal;
+      font-style: normal;
+    }
+
+    html {
+      font-size: 16px;
+    }
+  </style>
+  <script>
+    document.addEventListener("DOMContentLoaded", (event) => {
+      console.log("DOM fully loaded and parsed");
+
+      const tabPanelElems = document.querySelectorAll(".fd-icon-tab-bar__panel");
+      console.log("tabPanelElems", tabPanelElems);
+      let tabElems = document.querySelectorAll(".fd-icon-tab-bar__tab");
+      console.log("tabElems", tabElems);
+      const href2TabElems = new Map();
+      tabElems.forEach(function (elem) {
+        const targetHref = elem.getAttribute('href');
+        const targetElemId = targetHref.substring(1);
+        const targetElem = document.getElementById(targetElemId);
+        console.log("targetElemId", targetElemId, "targetElem", targetElem);
+        console.log("populating in href2TabElems", targetHref, elem);
+        href2TabElems.set(targetHref, elem);
+        elem.addEventListener('click', function () {
+          elem.setAttribute('aria-selected', 'true');
+          tabElems.forEach(function (el) {
+            if (el !== elem) {
+              el.setAttribute('aria-selected', 'false');
+            }
+          });
+          targetElem.removeAttribute('hidden');
+          tabPanelElems.forEach((tpElem) => {
+            if (tpElem.id === targetElemId) {
+              return;
+            }
+            tpElem.setAttribute('hidden', true);
+          })
+        });
+
+      });
+      console.log("href2TabElems", href2TabElems);
+      const selectedSectionHref = window.location.hash;
+      if (selectedSectionHref) {
+        console.log("selectedSectionHref", selectedSectionHref);
+        const selectedTabElem = href2TabElems.get(selectedSectionHref);
+        console.log("selectedTabElem", selectedTabElem);
+        if (selectedTabElem) {
+          selectedTabElem.click();
+        }
+      }
+
+    });
+  </script>
+</head>
+<body>
+
+  <div class="is-cozy">
+
+    <div dir="ltr">
+      <main class="fd-page">
+        <header>
+          <div class="fd-bar fd-bar--page fd-bar--header">
+            <div class="fd-bar__left">
+              <div class="fd-bar__element">
+                {{ .Title }}
+              </div>
+            </div>
+            <div class="fd-bar__right">
+              <div class="fd-bar__element">
+                <button class="fd-button fd-button--transparent" aria-label="See more">
+                  <i class="sap-icon--grid"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </header>
+        <div class="fd-page__content" role="region">
+
+          <div class="fd-icon-tab-bar fd-icon-tab-bar--icon-only">
+            <ul role="tablist" class="fd-icon-tab-bar__header">
+              <li role="presentation" class="fd-icon-tab-bar__item">
+                <a role="tab" class="fd-icon-tab-bar__tab" href="#section1" id="tab1" aria-selected="true">
+                  <div class="fd-icon-tab-bar__container">
+                    <span class="fd-icon-tab-bar__icon">
+<!--                        <i class="sap-icon&#45;&#45;account" role="presentation"></i>-->
+                        <i class="sap-icon--notes" role="presentation"></i>
+                    </span>
+                    <span class="fd-icon-tab-bar__counter">{{ len .NodeGroups }} NG</span>
+                    <div class="fd-icon-tab-bar__details">
+                      <span class="fd-icon-tab-bar__label">Cluster Information</span>
+                    </div>
+                  </div>
+                </a>
+              </li>
+              <li role="presentation" class="fd-icon-tab-bar__item">
+                <a role="tab" class="fd-icon-tab-bar__tab" href="#section2" id="tab2">
+                  <div class="fd-icon-tab-bar__container">
+                    <span class="fd-icon-tab-bar__icon">
+                        <i class="sap-icon--compare" role="presentation"></i>
+                    </span>
+                    <div class="fd-icon-tab-bar__details">
+                      <span class="fd-icon-tab-bar__label">CA vs SR</span>
+                    </div>
+                  </div>
+                </a>
+              </li>
+            </ul>
+            <section role="tabpanel" class="fd-icon-tab-bar__panel" id="section1" aria-labelledby="tab1">
+              <section class="fd-section">
+                <div class="fd-section__header">
+                  <h3 class="fd-section__title">Cluster Overview</h3>
+                </div>
+                <div class="fd-layout-panel">
+                  <div class="fd-layout-panel__body">
+                    <div class="fd-card fd-card--object" role="region" aria-label="Cluster Overview">
+                      <div class="fd-card__header" role="group" aria-roledescription="Card Header"
+                           aria-labelledby="object-card-title-1">
+                        <div class="fd-card__header-main">
+                          <div class="fd-card__header-main-container">
+                            <div class="fd-card__header-text">
+                              <div class="fd-card__title-area">
+                                <div class="fd-card__title" id="object-card-title-1" role="heading" aria-level="3">
+                                  {{ .ClusterName }}
+                                </div>
+                              </div>
+                              <div class="fd-card__subtitle-area">
+                                <div class="fd-card__subtitle">{{ .Provider }}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div class="fd-card__content" role="group" aria-roledescription="Card Content">
+                        <div class="fd-card__content-container">
+                          <div class="fd-card__content-section">
+                            <div class="fd-card__content-title-container">Cluster Information</div>
+                            <div class="fd-card__content-group">
+                              <div class="fd-card__content-group-text">
+                                <span>Number of NodeGroups</span>
+                                <span>{{ len .NodeGroups }}</span>
+                              </div>
+                            </div>
+                            <div class="fd-card__content-group">
+                              <div class="fd-card__content-group-text">
+                                <span>Number of Worker Pools</span>
+                                <span>TODO</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="fd-section">
+                <div class="fd-section__header">
+                  <h3 class="fd-section__title">Cluster NodeGroups</h3>
+                </div>
+                <div class="fd-layout-panel">
+                  <div class="fd-layout-panel__body">
+                    <table class="fd-table" role="grid">
+                      <thead class="fd-table__header">
+                        <tr class="fd-table__row fd-table__row--focusable" tabindex="-1">
+                          <th class="fd-table__cell" scope="col">Name</th>
+                          <th class="fd-table__cell" scope="col">Pool Name</th>
+                          <th class="fd-table__cell" scope="col">Zone</th>
+                          <th class="fd-table__cell" scope="col">Min Size</th>
+                          <th class="fd-table__cell" scope="col">Max Size</th>
+                        </tr>
+                      </thead>
+                      <tbody class="fd-table__body">
+                        {{ range .NodeGroups }}
+                        <tr class="fd-table__row fd-table__row--focusable" tabindex="1">
+                          <td class="fd-table__cell" role="gridcell">{{ .Name }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .PoolName }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .Zone }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .MinSize }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .MaxSize }}</td>
+                        </tr>
+                        {{ end }}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+              <section class="fd-section">
+                <div class="fd-section__header">
+                  <h3 class="fd-section__title">Cluster Autoscaler Config</h3>
+                </div>
+                <div class="fd-layout-panel">
+                  <div class="fd-layout-panel__body">
+                    <ul class="fd-list fd-list--byline" role="list">
+                      <li role="listitem" tabindex="0" class="fd-list__item">
+                        <div class="fd-list__content">
+                          <div class="fd-list__title">Expander</div>
+                          <div class="fd-list__byline">{{ .CASettings.Expander }}</div>
+                        </div>
+                      </li>
+                      <li role="listitem" tabindex="0" class="fd-list__item">
+                        <div class="fd-list__content">
+                          <div class="fd-list__title">MaxNodeProvisionTime</div>
+                          <div class="fd-list__byline">{{ .CASettings.MaxNodeProvisionTime }}</div>
+                        </div>
+                      </li>
+                    </ul>
+                    {{ if .CASettings.Priorities }}
+                    <h3 class="fd-title fd-title--h4">Priorities</h3>
+                    <pre><code class="fd-code">{{ .CASettings.Priorities }}</code></pre>
+                    {{ end }}
+                  </div>
+                </div>
+              </section>
+            </section>
+            <section role="tabpanel" class="fd-icon-tab-bar__panel" id="section2" aria-labelledby="tab2" hidden>
+              <ul class="fd-list fd-list--byline" role="list">
+                <li role="listitem" tabindex="0" class="fd-list__item">
+                  <div class="fd-list__content">
+                    <div class="fd-list__title">Unscheduled Pod Count</div>
+                    <div class="fd-list__byline">{{ .UnscheduledPodCount }}</div>
+                  </div>
+                </li>
+              </ul>
+
+              <section class="fd-section">
+                <div class="fd-section__header">
+                  <h3 class="fd-section__title">Scaled-Up NodeGroups</h3>
+                </div>
+                <div class="fd-layout-panel">
+                  <div class="fd-layout-panel__body">
+                    <h4 class="fd-title fd-title--h4" style="margin-bottom: 10px">Virtual CA</h4>
+                    <table class="fd-table" role="grid">
+                      <thead class="fd-table__header">
+                        <tr class="fd-table__row fd-table__row--focusable" tabindex="-1">
+                          <th class="fd-table__cell" scope="col">Name</th>
+                          <th class="fd-table__cell" scope="col">Instance Type</th>
+                          <th class="fd-table__cell" scope="col">Count</th>
+                          <th class="fd-table__cell" scope="col">Cost</th>
+                          <th class="fd-table__cell" scope="col">CPU</th>
+                          <th class="fd-table__cell" scope="col">Memory</th>
+                        </tr>
+                      </thead>
+                      <tbody class="fd-table__body">
+                        {{ range .CAScaleUpRows }}
+                        <tr class="fd-table__row fd-table__row--focusable" tabindex="1">
+                          <td class="fd-table__cell" role="gridcell">{{ .Name }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .InstanceType }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .Count }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .Cost }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .CPU }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .Memory }}</td>
+                        </tr>
+                        {{ end }}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+
+                <div class="fd-layout-panel">
+                  <div class="fd-layout-panel__body">
+                    <h4 class="fd-title fd-title--h4" style="margin-bottom: 10px">Scaling Recommender</h4>
+                    <table class="fd-table" role="grid">
+                      <thead class="fd-table__header">
+                        <tr class="fd-table__row fd-table__row--focusable" tabindex="-1">
+                          <th class="fd-table__cell" scope="col">Name</th>
+                          <th class="fd-table__cell" scope="col">Instance Type</th>
+                          <th class="fd-table__cell" scope="col">Count</th>
+                          <th class="fd-table__cell" scope="col">Cost</th>
+                          <th class="fd-table__cell" scope="col">CPU</th>
+                          <th class="fd-table__cell" scope="col">Memory</th>
+                        </tr>
+                      </thead>
+                      <tbody class="fd-table__body">
+                        {{ range .SRScaleUpRows }}
+                        <tr class="fd-table__row fd-table__row--focusable" tabindex="1">
+                          <td class="fd-table__cell" role="gridcell">{{ .Name }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .InstanceType }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .Count }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .Cost }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .CPU }}</td>
+                          <td class="fd-table__cell" role="gridcell">{{ .Memory }}</td>
+                        </tr>
+                        {{ end }}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+              </section>
+
+
+              <section class="fd-section">
+                <div class="fd-section__header">
+                  <h3 class="fd-section__title">Total Cost of Scaled-Up Nodes</h3>
+                </div>
+                <div class="fd-layout-panel">
+                  <div class="fd-layout-panel__body">
+                    <table class="fd-table" role="grid">
+                      <thead class="fd-table__header">
+                        <tr class="fd-table__row fd-table__row--focusable" tabindex="-1">
+                          <th class="fd-table__cell" scope="col">VirtualCA</th>
+                          <th class="fd-table__cell" scope="col">ScalingRecommender</th>
+                          <th class="fd-table__cell" scope="col">Savings</th>
+                        </tr>
+                      </thead>
+                      <tbody class="fd-table__body">
+                        <td class="fd-table__cell" role="gridcell">{{ .TotalCosts.VirtualCA }}</td>
+                        <td class="fd-table__cell" role="gridcell">{{ .TotalCosts.ScalingRecommender }}</td>
+                        <td class="fd-table__cell" role="gridcell">{{ .TotalCosts.Savings }}</td>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
+
+            </section>
+            <section role="tabpanel" class="fd-icon-tab-bar__panel" id="section3" aria-labelledby="tab3" hidden>
+              Section 3
+            </section>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

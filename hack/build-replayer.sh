@@ -85,25 +85,25 @@ fi
 
 echo "Building kvcl..."
 pushd "$KVCL_DIR" > /dev/null
-GOOS=$goos GOARCH=$goarch go build -o "$binDir/kvcl" cmd/main.go
+GOOS=$goos GOARCH=$goarch go build  -buildvcs=true  -o "$binDir/kvcl" cmd/main.go
 chmod +x "$binDir/kvcl"
 
 popd > /dev/null
 echo "Building virtual cluster autoscaler..."
 pushd "$VCA_DIR/cluster-autoscaler" > /dev/null
-GOOS=$goos GOARCH=$goarch go build -o "$binDir/cluster-autoscaler" main.go
+GOOS=$goos GOARCH=$goarch go build -buildvcs=true -o "$binDir/cluster-autoscaler" main.go
 chmod +x "$binDir/cluster-autoscaler"
 
 popd > /dev/null
 echo "Building scaling recommender..."
 pushd "$SR_DIR" > /dev/null
-GOOS=$goos GOARCH=$goarch go build -o "$binDir/scaling-recommender" main.go
+GOOS=$goos GOARCH=$goarch go build -ldflags="-X main.GitCommitID=$(git rev-parse HEAD)" -buildvcs=true -o "$binDir/scaling-recommender" main.go
 chmod +x "$binDir/scaling-recommender"
 popd
 
 echo "Building replayer..."
 
-GOOS=$goos GOARCH=$goarch go build -v -o "$binDir/replayer" cmd/replayer/main.go
+GOOS=$goos GOARCH=$goarch go build -buildvcs=true -v -o "$binDir/replayer" cmd/replayer/main.go
 echo "Build done. Please check binaries in $binDir"
 
 if [[ "$mode" == "local" ]]; then

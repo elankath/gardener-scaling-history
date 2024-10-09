@@ -552,3 +552,50 @@ func SortFileInfosByLastModifiedDesc(fileInfos []gsh.FileInfo) {
 		return cmp.Compare(b.LastModified.UnixMilli(), a.LastModified.UnixMilli())
 	})
 }
+
+func GetSRReportPath(dir, caReportFileName string) string {
+	return path.Join(dir, strings.ReplaceAll(caReportFileName, "ca-replay", "sr-replay"))
+}
+
+// ListAllReplayReportPairs lists all sr and ca reports
+func ListAllReplayReportPairs(dir string) (reportPathPairs map[string][]string, err error) {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	var statInfo os.FileInfo
+	reportPathPairs = make(map[string][]string)
+	for _, f := range files {
+		if strings.Contains(f.Name(), "ca-replay") {
+			//saReportPath = os.Join(dir, strings.Replace(f.Name(), "ca-replay", "sr-replay"))
+			srReportPath := GetSRReportPath(dir, f.Name())
+			statInfo, err = os.Stat(srReportPath)
+			if err != nil {
+				slog.Info("Cannot get stat for srReportPath", "srReportPath", srReportPath, "error", err)
+				continue
+			}
+			srLastMod := statInfo.ModTime()
+			caReportPath := path.Join(dir, f.Name())
+			statInfo, err = os.Stat(caReportPath)
+			if err != nil {
+				slog.Info("Cannot get stat for caReportPath", "caReportPath", caReportPath, "error", err)
+				continue
+			}
+			caLastMod := statInfo.ModTime()
+
+			//clusterName := GetClusterNameFromCAReportPath(caReportPath)
+
+			if srLastMod.After(caLastMod) {
+				//reportPathPairs[clusterName] = []string{caReportPath, srReportPath}
+				reportPathPairs[f.Name()] = []string{caReportPath, srReportPath}
+			}
+		}
+	}
+	return
+}
+
+func GetClusterNameFromCAReportPath(caReportPath string) string {
+	reportName := FilenameWithoutExtension(caReportPath)
+	clusterName := reportName[:strings.LastIndex(reportName, "_")]
+	return clusterName
+}

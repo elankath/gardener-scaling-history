@@ -2,6 +2,8 @@ package comparer
 
 import (
 	"bytes"
+	"cmp"
+	"embed"
 	"encoding/json"
 	"fmt"
 	gsc "github.com/elankath/gardener-scaling-common"
@@ -14,14 +16,30 @@ import (
 	md "github.com/nao1215/markdown"
 	"github.com/samber/lo"
 	"github.com/yuin/goldmark"
+	"golang.org/x/exp/maps"
+	"html/template"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"log/slog"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
 )
+
+//go:embed page.html
+var embedContent embed.FS
+var pageTemplatePath = "page.html"
+var pageTemplate *template.Template
+
+func init() {
+	var err error
+	pageTemplate, err = template.ParseFS(embedContent, pageTemplatePath)
+	if err != nil {
+		panic(fmt.Errorf("cannot parse template %q: %w", pageTemplatePath, err))
+	}
+}
 
 type Config struct {
 	CAReportPath string
@@ -37,7 +55,7 @@ type Result struct {
 
 func DieOnError(err error, msg string) {
 	if err != nil {
-		slog.Error(msg, err)
+		slog.Error(msg, "error", err)
 		os.Exit(1)
 	}
 }
@@ -63,6 +81,19 @@ func mapToRows(pa pricing.InstancePricingAccess, s gsh.Scenario) [][]string {
 			rows = append(rows, []string{ng, fmt.Sprint(count), "", "", "", ""})
 		}
 		rows = append(rows, []string{ng, fmt.Sprint(count), instanceType, fmt.Sprintf("$%.2f", cost), cpu.String(), fmt.Sprintf("%.2f GiB", float64(memory.Value())/1024/1024/1024)})
+	}
+	return rows
+}
+
+func mapToScalingRows(pa pricing.InstancePricingAccess, s gsh.Scenario) []ScalingRow {
+	nodeGroups := s.ScalingResult.ScaledUpNodeGroups
+	rows := make([]ScalingRow, 0, len(nodeGroups))
+	for ng, count := range nodeGroups {
+		instanceType, cpu, memory, cost := getInstanceDetailsForNodeGroup(pa, s.ClusterSnapshot.AutoscalerConfig.NodeTemplates, ng)
+		if instanceType == "" {
+			continue
+		}
+		rows = append(rows, ScalingRow{Name: ng, Count: count, InstanceType: instanceType, Cost: fmt.Sprintf("$%.2f", cost), CPU: cpu.String(), Memory: fmt.Sprintf("%.2f GiB", float64(memory.Value())/1024/1024/1024)})
 	}
 	return rows
 }
@@ -102,6 +133,34 @@ func getUnscheduledPodCount(s gsh.Scenario) (count int) {
 type poolKey struct {
 	poolName string
 	zone     string
+}
+
+// rows = append(rows, []string{ng, fmt.Sprint(count), instanceType, fmt.Sprintf("$%.2f", cost), cpu.String(), fmt.Sprintf("%.2f GiB", float64(memory.Value())/1024/1024/1024)})
+type ScalingRow struct {
+	Name         string
+	Count        int
+	InstanceType string
+	Cost         string
+	CPU          string
+	Memory       string
+}
+
+type TotalCosts struct {
+	VirtualCA          float64
+	ScalingRecommender float64
+	Savings            float64
+}
+
+type HTMLPageData struct {
+	Title               string
+	ClusterName         string
+	Provider            string
+	CASettings          gsc.CASettingsInfo
+	UnscheduledPodCount int
+	NodeGroups          []gsc.NodeGroupInfo
+	CAScaleUpRows       []ScalingRow
+	SRScaleUpRows       []ScalingRow
+	TotalCosts          TotalCosts
 }
 
 func adjustScenario(s *gsh.Scenario) {
@@ -182,14 +241,18 @@ func GenerateReportFromConfig(c Config) (res Result, err error) {
 		err = fmt.Errorf("error creating instance pricing access for provider %s: %w", c.Provider, err)
 		return
 	}
-
-	res, err = GenerateReport(priceAccess, c, caScenario, srScenario)
+	clusterName, err := apputil.GetClusterName(c.CAReportPath)
+	if err != nil {
+		err = fmt.Errorf("error getting cluster name from ca report path %q: %w", c.CAReportPath, err)
+		return
+	}
+	reportSuffix := getReportIndex(c.CAReportPath)
+	res, err = GenerateReport(priceAccess, c.Provider, clusterName, reportSuffix, c.ReportOutDir, caScenario, srScenario)
 	return
 }
 
-func GenerateReport(pa pricing.InstancePricingAccess, c Config, caScenario, srScenario gsh.Scenario) (res Result, err error) {
-	clusterName, err := apputil.GetClusterName(c.CAReportPath)
-	DieOnError(err, "error getting cluster name from ca report path")
+func GenerateReport(pa pricing.InstancePricingAccess, provider, clusterName, reportSuffix string, reportOutDir string,
+	caScenario, srScenario gsh.Scenario) (res Result, err error) {
 
 	adjustScenario(&caScenario)
 	adjustScenario(&srScenario)
@@ -211,18 +274,16 @@ func GenerateReport(pa pricing.InstancePricingAccess, c Config, caScenario, srSc
 		return
 	}
 
-	res.MDReportPath = filepath.Join(c.ReportOutDir, fmt.Sprintf("%s-%s.md", clusterName, getReportIndex(c.CAReportPath)))
+	res.MDReportPath = filepath.Join(reportOutDir, fmt.Sprintf("%s-%s.md", clusterName, reportSuffix))
 	targetMDFile, err := os.OpenFile(res.MDReportPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return
 	}
 
-	res.HTMLReportPath = filepath.Join(c.ReportOutDir, fmt.Sprintf("%s-%s.html", clusterName, getReportIndex(c.CAReportPath)))
-
 	mkBuilder := md.NewMarkdown(targetMDFile).
 		H1("Virtual CA vs Scaling Recommender Comparison Report").LF().
 		PlainTextf("Cluster: %s", clusterName).
-		PlainTextf("\nProvider: %s", c.Provider).
+		PlainTextf("\nProvider: %s", provider).
 		PlainTextf("\nUnscheduled Pod Count: %v", getUnscheduledPodCount(caScenario)). //TODO: Placeholder only, needs to be changed to counts after stabilization interval
 		H2("Scaled-Up NodeGroups").LF().
 		PlainText("This section compares the node groups that are scaled by Virtual CA and Scaling Recommender").
@@ -301,7 +362,37 @@ func GenerateReport(pa pricing.InstancePricingAccess, c Config, caScenario, srSc
 		return
 	}
 
-	err = mdToHTML(res.MDReportPath, res.HTMLReportPath)
+	var buf bytes.Buffer
+	res.HTMLReportPath = GetHTMLReportPath(reportOutDir, clusterName, reportSuffix)
+	nodeGroups := maps.Values(caScenario.ClusterSnapshot.AutoscalerConfig.NodeGroups)
+	slices.SortFunc(nodeGroups, func(a, b gsc.NodeGroupInfo) int {
+		return cmp.Compare(a.Name, b.Name)
+	})
+
+	caScalingRows := mapToScalingRows(pa, caScenario)
+	srScalingRows := mapToScalingRows(pa, srScenario)
+	pageData := HTMLPageData{
+		Title:               "Replay: " + clusterName + ":" + reportSuffix,
+		ClusterName:         clusterName,
+		Provider:            provider,
+		CASettings:          caScenario.ClusterSnapshot.AutoscalerConfig.CASettings,
+		UnscheduledPodCount: getUnscheduledPodCount(caScenario),
+		NodeGroups:          nodeGroups,
+		CAScaleUpRows:       caScalingRows,
+		SRScaleUpRows:       srScalingRows,
+		TotalCosts: TotalCosts{
+			VirtualCA:          math.Round(vcaTotalScaleupCost),
+			ScalingRecommender: math.Round(srTotalScaleupCost),
+		},
+	}
+	pageData.TotalCosts.Savings = pageData.TotalCosts.VirtualCA - pageData.TotalCosts.ScalingRecommender
+	// Tabs: Overview, CA vs SR Comparison, [CA Report JSON, SR Report JSON: option]
+	err = pageTemplate.Execute(&buf, pageData)
+	if err != nil {
+		return
+	}
+	err = os.WriteFile(res.HTMLReportPath, buf.Bytes(), 0644)
+	//err = mdToHTML(res.MDReportPath, res.HTMLReportPath)
 	return
 }
 
@@ -347,4 +438,8 @@ func mdToHTML2(mdPath, htmlPath string) error {
 	}
 
 	return nil
+}
+
+func GetHTMLReportPath(outDir, clusterName string, reportSuffix string) string {
+	return filepath.Join(outDir, fmt.Sprintf("%s-%s.html", clusterName, reportSuffix))
 }

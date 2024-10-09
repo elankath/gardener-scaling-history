@@ -126,6 +126,9 @@ func main() {
 	if os.Getenv("NO_AUTO_LAUNCH") == "" || os.Getenv("NO_AUTO_LAUNCH") == "false" {
 		autoLaunchDeps = true
 	}
+	if !autoLaunchDeps {
+		slog.Warn("NO_AUTO_LAUNCH has been set - kvcl & scaling-recommender WONT be auto-launched.")
+	}
 
 	replayParams := gsh.ReplayerParams{
 		InputDataPath:                inputDataPath,

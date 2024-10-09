@@ -6,15 +6,11 @@ echoErr() { echo "$@" 1>&2; }
 # Function to clean up background process
 cleanup() {
     echo "Cleaning up..."
-    if [[ -n "$kvclpid" ]]; then
-        kill "$kvclpid" 2>/dev/null
-        wait "$kvclpid" 2>/dev/null
-        echo "Background process with PID $kvclpid terminated."
+    if [[ -n "$pidKVCL" ]]; then
+        kill "$pidKVCL" 2>/dev/null
     fi
-    if [[ -n "$srpid" ]]; then
-        kill "$srpid" 2>/dev/null
-        wait "$srpid" 2>/dev/null
-        echo "Background process with PID $srpid terminated."
+    if [[ -n "$pidSR" ]]; then
+        kill "$pidSR" 2>/dev/null
     fi
 }
 
@@ -42,26 +38,26 @@ else
   provider="aws"
 fi
 
-waitkvcl=8
-waitsr=5
+waitKvcl=8
+waitSR=8
 if [[ "$replaySR" == "true" ]] && [[ "${NO_AUTO_LAUNCH}" == "true" ]]; then
   export BINARY_ASSETS_DIR="/bin"
-  echo "Launching kvcl..."
+  echo "NO_AUTO_LAUNCH set: Launching kvcl..."
   /bin/kvcl 2>&1 | tee /tmp/kvcl.log &
-  kvclpid=$!
-  echo "Launched kvcl with pid: ${kvclpid}"
-  echo "waiting ${waitkvcl}s for kvcl to start..."
-  sleep ${waitkvcl}
-  echo "Launching scaling-recommender with provider: ${provider} for INPUT_DATA_PATH: ${INPUT_DATA_PATH}..."
+  pidKVCL=$!
+  echo "Launched kvcl with pid: ${pidKVCL}"
+  echo "waiting ${waitKvcl}s for kvcl to start..."
+  sleep ${waitKvcl}
+  echo "NO_AUTO_LAUNCH set: Launching scaling-recommender with provider: ${provider} for INPUT_DATA_PATH: ${INPUT_DATA_PATH}..."
   /bin/scaling-recommender --provider="${provider}" --target-kvcl-kubeconfig="/tmp/kvcl.yaml" 2>&1 | tee /tmp/sr.log &
-  srpid=$!
-  echo "Launched sr with pid: ${srpid}"
-  echo "waiting ${waitsr}s for sr to start..."
-  sleep ${waitsr}
-  if ps -p $srpid > /dev/null; then
-      echo "Scaling recommender process with PID $pid is running."
+  pidSR=$!
+  echo "Launched scaling-recommender with pid: ${pidSR}"
+  echo "waiting ${waitSR}s for sr to start..."
+  sleep ${waitSR}
+  if ps -p $pidSR > /dev/null; then
+      echo "Scaling recommender process with PID $pidSR is running."
   else
-      echoErr "ERROR: scaling recommender process with PID $pid is not running."
+      echoErr "ERROR: scaling recommender process with PID $pidSR is not running."
       cat /tmp/sr.log >&2
       exit 1
   fi
@@ -74,7 +70,7 @@ else
   replayerLogFileName="replayer-ca.log"
 fi
 echo "Launching replayer..."
-/bin/replayer 2>&1 | tee "/tmp/${replayerLogFileName}.log"
+/bin/replayer 2>&1 | tee "/tmp/${replayerLogFileName}"
 
 if [[ -f /tmp/kvcl.log ]]; then
   curl -v -X POST -F logs=@/tmp/kvcl.log "http://10.47.254.238/api/logs/${clusterName}"
