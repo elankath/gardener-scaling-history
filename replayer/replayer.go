@@ -764,7 +764,7 @@ func (r *defaultReplayer) doClose() error {
 			slog.Warn("doClose cannot close dataAccess. ", "error", err)
 		}
 	}
-	if r.params.Mode == gsh.InUtilityClusterRecorderMode {
+	if r.params.Mode == gsh.InUtilityClusterMode {
 		cleanupProcs := []string{"etcd", "kube-apiserver"}
 		slog.Info("doClose is killing cleanupProcs since in mode.", "mode", r.params.Mode, "cleanupProces", cleanupProcs)
 		for _, processName := range cleanupProcs {
@@ -1700,7 +1700,7 @@ func (r *defaultReplayer) writeScenario(scenario gsh.Scenario, clusterSnapshot g
 	}
 	slog.Info("Wrote scenario report.", "reportPath", reportPath, "snapshotTime", clusterSnapshot.SnapshotTime,
 		"scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
-	if r.params.Mode == gsh.InUtilityClusterRecorderMode {
+	if r.params.Mode != gsh.LocalMode {
 		err = apputil.UploadReport(r.ctx, reportPath)
 		if err != nil {
 			slog.Error("error uploading report", "reportPath", reportPath, "error", err)

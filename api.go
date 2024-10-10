@@ -11,8 +11,8 @@ import (
 type ExecutionMode string
 
 var (
-	InUtilityClusterRecorderMode ExecutionMode = "in-utility-cluster"
-	LocalRecorderMode            ExecutionMode = "local"
+	InUtilityClusterMode ExecutionMode = "in-utility-cluster"
+	LocalMode            ExecutionMode = "local"
 )
 
 // Recorder monitors the cluster denoted by given kubeconfig and records events and cluster data into cluster database

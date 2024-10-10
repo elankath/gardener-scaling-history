@@ -15,7 +15,7 @@ import (
 func main() {
 	mode := os.Getenv("MODE")
 	var exitCode int
-	//if mode == string(gsh.InUtilityClusterRecorderMode) {
+	//if mode == string(gsh.InUtilityClusterMode) {
 	//	exitCode = launchInUtilityClusterMode()
 	//} else {
 	//	exitCode = launchInLocalMode()
@@ -47,9 +47,9 @@ func main() {
 func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.ExecutionMode) int {
 	configDir := os.Getenv("CONFIG_DIR")
 	if len(configDir) == 0 {
-		if mode == gsh.InUtilityClusterRecorderMode {
+		if mode == gsh.InUtilityClusterMode {
 			configDir = "/cfg"
-		} else if mode == gsh.LocalRecorderMode {
+		} else if mode == gsh.LocalMode {
 			configDir = "cfg"
 		} else {
 			slog.Error("CONFIG_DIR env must be set. This is the dir holding the 'clusters.csv' file")
@@ -59,7 +59,7 @@ func launch(ctx context.Context, cancelFunc context.CancelFunc, mode gsh.Executi
 	}
 	dbDir := os.Getenv("DB_DIR")
 	if len(dbDir) == 0 {
-		if mode == gsh.LocalRecorderMode {
+		if mode == gsh.LocalMode {
 			dbDir = "gen"
 		} else {
 			slog.Error("DB_DIR env must be set for non-local mode")
