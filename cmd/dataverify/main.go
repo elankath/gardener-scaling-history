@@ -1,6 +1,8 @@
 package main
 
 import (
+	"cmp"
+	"fmt"
 	gsc "github.com/elankath/gardener-scaling-common"
 	"github.com/elankath/gardener-scaling-common/clientutil"
 	"github.com/elankath/gardener-scaling-history/apputil"
@@ -10,18 +12,23 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"log/slog"
 	"os"
+	"slices"
 	"strconv"
+	"time"
 )
 
-const podLimitOnNode = 25
+const podLimitOnNode = 70
 
 func main() {
 	var err error
 	var replayEvent gsc.EventInfo
-	var eventIndex int
+	var eventIndex, snapshotNumber int
 	var nodeInfos []gsc.NodeInfo
-	var podInfos []gsc.PodInfo
+	//var podInfos []gsc.PodInfo
 	var loadedNodeInfos []gsc.NodeInfo
+	var runMarkTime, runPrevMarkTime time.Time
+	var snapshotID string
+	var clusterSnapshot gsc.ClusterSnapshot
 
 	dbPath := os.Getenv("DB_PATH")
 	if len(dbPath) == 0 {
@@ -44,35 +51,40 @@ func main() {
 	for i, e := range scalingEvents {
 		slog.Info("ScalingEvent", "eventIndex", strconv.Itoa(i), "eventTimeUnixMicros", e.EventTime.UTC().UnixMicro(), "reason", e.Reason, "msg", e.Message)
 	}
+	fmt.Println()
+	fmt.Println()
 	for {
 		eventIndex, replayEvent = replayer.GetNextReplayEvent(scalingEvents, eventIndex)
 		if eventIndex == -1 {
 			slog.Info("No more scaling events")
 			break
 		}
-		replayMarkTime := replayEvent.EventTime.UTC()
-		replayMarkTimeMicros := replayMarkTime.UnixMicro()
-		slog.Info("ReplayScalingEvent", "eventIndex", eventIndex, "eventTime", replayMarkTime, "eventTimeUnixMicros", replayMarkTimeMicros, "reason", replayEvent.Reason, "msg", replayEvent.Message)
+		runMarkTime = replayEvent.EventTime.UTC()
+		runMarkTimeMicros := runMarkTime.UnixMicro()
+		slog.Info("ReplayScalingEvent", "eventIndex", eventIndex, "eventTime", runMarkTime, "eventTimeUnixMicros", runMarkTimeMicros, "reason", replayEvent.Reason, "msg", replayEvent.Message)
 		nodeInfos, err = dataAccess.LoadNodeInfosBefore(replayEvent.EventTime.UTC())
 		if err != nil {
 			slog.Error("cant load nodeInfos.", "error", err)
 			return
 		}
 		//nodeInfosByName = lo.G(nodeInfos, apputil.GetNodeName)
-		podInfos, err = dataAccess.GetLatestPodInfosBeforeSnapshotTimestamp(replayMarkTime)
-		podInfos = lo.Filter(podInfos, func(item gsc.PodInfo, index int) bool {
-			return item.Namespace != "kube-system"
-		})
-		podsByNodeName := lo.GroupBy(podInfos, func(p gsc.PodInfo) string {
+		snapshotNumber++
+		snapshotID = fmt.Sprintf("cs-%d", snapshotNumber)
+		clusterSnapshot, err = replayer.GetRecordedClusterSnapshot(dataAccess, snapshotNumber, snapshotID, runPrevMarkTime, runMarkTime)
+		if err != nil {
+			slog.Error("failed to GetRecordedClusterSnapshot", "error", err, "runPrevMarkTime", runPrevMarkTime, "runMarkTime", runMarkTime)
+			return
+		}
+		podsByNodeName := lo.GroupBy(clusterSnapshot.Pods, func(p gsc.PodInfo) string {
 			return p.Spec.NodeName
 		})
 
 		for nodeName, podsOnNode := range podsByNodeName {
 			numPodsOnNode := len(podsOnNode)
-			if numPodsOnNode < podLimitOnNode {
+			if numPodsOnNode <= podLimitOnNode {
 				continue
 			}
-			slog.Info("Node has more than pod limit.", "nodeName", nodeName, "numPodsOnNode", numPodsOnNode, "podLimitOnNode", podLimitOnNode, "eventIndex", eventIndex, "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros)
+			//			slog.Info("Node has more than pod limit.", "nodeName", nodeName, "numPodsOnNode", numPodsOnNode, "podLimitOnNode", podLimitOnNode, "eventIndex", eventIndex, "runMarkTime", runMarkTime, "runMarkTimeMicros", runMarkTimeMicros)
 			loadedNode, ok := lo.Find(nodeInfos, apputil.NodeHasMatchingName(nodeName))
 			if ok {
 				loadedNodeInfos = append(loadedNodeInfos, loadedNode)
@@ -86,18 +98,29 @@ func main() {
 			slog.Info("Loaded nodeInfos", "numLoadedNodeInfos", len(loadedNodeInfos))
 		}
 
+		slices.SortFunc(loadedNodeInfos, func(a, b gsc.NodeInfo) int {
+			aNumPods := len(podsByNodeName[a.Name])
+			bNumPods := len(podsByNodeName[a.Name])
+			return cmp.Compare(bNumPods, aNumPods)
+		})
+
 		for _, loadedNodeInfo := range loadedNodeInfos {
-			if loadedNodeInfo.Name == "ip-10-250-0-172.eu-central-1.compute.internal" {
-				podInfosOnNode := podsByNodeName[loadedNodeInfo.Name]
-				var podSpecsOnNode []corev1.PodSpec
-				for _, podInfo := range podInfosOnNode {
-					podSpecsOnNode = append(podSpecsOnNode, podInfo.Spec)
-				}
-				totalPodRequestsOnNode := clientutil.SumResourceRequest(podSpecsOnNode)
-				slog.Info("Node totalPodRequestsOnNode  ", "nodeName", loadedNodeInfo.Name, "totalPodRequestsOnNode", gsc.ResourcesAsString(totalPodRequestsOnNode))
-				slog.Info("Node Capacity And Allocatable", "nodeName", loadedNodeInfo.Name, "nodeCapacity", gsc.ResourcesAsString(loadedNodeInfo.Capacity), "nodeAllocatable", gsc.ResourcesAsString(loadedNodeInfo.Allocatable))
-				return
+			podInfosOnNode := podsByNodeName[loadedNodeInfo.Name]
+			var podSpecsOnNode []corev1.PodSpec
+			for _, podInfo := range podInfosOnNode {
+				podSpecsOnNode = append(podSpecsOnNode, podInfo.Spec)
 			}
+			totalPodRequestsOnNode := clientutil.SumResourceRequest(podSpecsOnNode)
+			slog.Info("Loaded Node Details.",
+				"snapshotNumber", snapshotNumber,
+				"runMarkTime", runMarkTime,
+				"runPrevMarkTime", runPrevMarkTime,
+				"numPods", len(podInfosOnNode),
+				"nodeName", loadedNodeInfo.Name,
+				"totalPodRequestsOnNode", gsc.ResourcesAsString(totalPodRequestsOnNode),
+				"nodeCapacity", gsc.ResourcesAsString(loadedNodeInfo.Capacity),
+				"nodeAllocatable", gsc.ResourcesAsString(loadedNodeInfo.Allocatable))
 		}
+		runPrevMarkTime = runMarkTime
 	}
 }

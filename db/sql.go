@@ -210,8 +210,17 @@ const SelectUnscheduledPodsBeforeSnapshotTimestamp = `SELECT * FROM (SELECT * fr
 const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT * FROM pod_info WHERE (ScheduleStatus = 1)  
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
                 GROUP BY Name;`
-const SelectLatestPodsBeforeSnapshotTimestamp = `SELECT * FROM pod_info WHERE
-                SnapshotTimestamp <= ? AND Phase = 'Running' AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  GROUP BY pod_info.UID HAVING max(RowID) ORDER BY RowID ASC;`
+const SelectLatestPodsBetweenSnapshotTimestamps = `SELECT * FROM pod_info 
+	WHERE SnapshotTimestamp > ? 
+	AND SnapshotTimestamp  <= ?
+	AND (Phase = 'Running' OR Phase = 'Pending') 
+	AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  
+	GROUP BY pod_info.UID HAVING max(RowID) ORDER BY RowID ASC;`
+
+/*
+At time <=X1, get all the pod infos who
+between time >x1 and time <=X2, get all the pod infos who are in Pending Running Phase.
+*/
 
 const CreatePriorityClassInfoTable = `CREATE TABLE IF NOT EXISTS pc_info (
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -107,8 +107,7 @@ type FileInfo struct {
 type Replayer interface {
 	io.Closer
 	Start() error
-	//GetRecordedClusterSnapshot(time.Time) (gsc.ClusterSnapshot, error)
-	GetRecordedClusterSnapshot(runMarkTime time.Time) (gsc.ClusterSnapshot, error)
+	GetRecordedClusterSnapshot(runPrevMarkTime, runMarkTime time.Time) (gsc.ClusterSnapshot, error)
 	GetParams() ReplayerParams
 	//input report - scenario report, output report-
 	// mode1 of replayer is produce scneanrio reports off the recorded data - there is a /tmp/replayer-report.json

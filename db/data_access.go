@@ -53,7 +53,7 @@ type DataAccess struct {
 	selectUnscheduledPodsBeforeSnapshotTimestamp         *sql.Stmt
 	selectScheduledPodsBeforeSnapshotTimestamp           *sql.Stmt
 	selectPriorityClassInfoWithUIDAndHash                *sql.Stmt
-	selectLatestPodInfosBeforeSnapshotTimestamp          *sql.Stmt
+	selectLatestPodInfosBetweenSnapshotTimestamps        *sql.Stmt
 	selectLatestPriorityClassInfoBeforeSnapshotTimestamp *sql.Stmt
 	selectNodeInfosBefore                                *sql.Stmt
 	selectCSINodeInfosBefore                             *sql.Stmt
@@ -287,9 +287,9 @@ func (d *DataAccess) prepareStatements() (err error) {
 		return fmt.Errorf("cannot prepare selectScheduledPodsBeforeSnapshotTimestamp statement: %w", err)
 	}
 
-	d.selectLatestPodInfosBeforeSnapshotTimestamp, err = db.Prepare(SelectLatestPodsBeforeSnapshotTimestamp)
+	d.selectLatestPodInfosBetweenSnapshotTimestamps, err = db.Prepare(SelectLatestPodsBetweenSnapshotTimestamps)
 	if err != nil {
-		return fmt.Errorf("cannot prepare selectLatestPodInfosBeforeSnapshotTimestamp statement: %w", err)
+		return fmt.Errorf("cannot prepare selectLatestPodInfosBetweenSnapshotTimestamps statement: %w", err)
 	}
 
 	d.selectLatestPriorityClassInfoBeforeSnapshotTimestamp, err = db.Prepare(SelectLatestPriorityClassInfoBeforeSnapshotTimestamp)
@@ -384,7 +384,7 @@ func (d *DataAccess) createSchema() error {
 
 	slog.Info("successfully created event_info table", "result", result)
 
-	//result, err = db.Exec(CreateNodeGroupInfoTable)SelectLatestPodsBeforeSnapshotTimestamp
+	//result, err = db.Exec(CreateNodeGroupInfoTable)SelectLatestPodsBetweenSnapshotTimestamps
 	//if err != nil {
 	//	return fmt.Errorf("cannot create nodegroup_info table: %w", err)
 	//}
@@ -745,8 +745,8 @@ func (d *DataAccess) GetLatestUnscheduledPodsBeforeTimestamp(timeStamp time.Time
 	return queryAndMapToInfos[gsc.PodInfo, podRow](d.selectUnscheduledPodsBeforeSnapshotTimestamp, timeStamp, timeStamp)
 }
 
-func (d *DataAccess) GetLatestPodInfosBeforeSnapshotTimestamp(snapshotTime time.Time) (pods []gsc.PodInfo, err error) {
-	return queryAndMapToInfos[gsc.PodInfo, podRow](d.selectLatestPodInfosBeforeSnapshotTimestamp, snapshotTime, snapshotTime)
+func (d *DataAccess) GetLatestPodInfosBetweenSnapshotTimestamp(t1, t2 time.Time) (pods []gsc.PodInfo, err error) {
+	return queryAndMapToInfos[gsc.PodInfo, podRow](d.selectLatestPodInfosBetweenSnapshotTimestamps, t1, t2, t2)
 }
 
 func (d *DataAccess) GetLatestScheduledPodsBeforeTimestamp(timestamp time.Time) (pods []gsc.PodInfo, err error) {

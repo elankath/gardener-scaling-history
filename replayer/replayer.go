@@ -411,7 +411,7 @@ func (r *defaultReplayer) ReplayCA() error {
 			return r.ctx.Err()
 		default:
 			loopNum++
-			replayEvent := r.getNextReplayEvent()
+			replayEvent, prevRunMarkTime := r.getNextReplayEvent()
 			replayMarkTime := replayEvent.EventTime.UTC()
 			replayMarkTimeMicros := replayMarkTime.UnixMicro()
 			slog.Info("ReplayCA is considering replayEvent.", "replayEvent", replayEvent, "replayEventIndex", r.currentEventIndex, "replayMarkTimeMicros", replayMarkTimeMicros)
@@ -426,7 +426,7 @@ func (r *defaultReplayer) ReplayCA() error {
 			}
 			r.replayCount++
 			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros, "loopNum", loopNum, "replayCount", r.replayCount)
-			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime)
+			clusterSnapshot, err := r.GetRecordedClusterSnapshot(prevRunMarkTime, replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros, "loopNum", loopNum, "replayCount", r.replayCount)
@@ -1333,30 +1333,12 @@ func GetNextReplayEvent(events []gsc.EventInfo, currEventIndex int) (nextEventIn
 	return
 }
 
-func (r *defaultReplayer) getNextReplayEvent() (nextEvent gsc.EventInfo) {
+func (r *defaultReplayer) getNextReplayEvent() (nextEvent gsc.EventInfo, prevRunMarkTime time.Time) {
+	if r.currentEventIndex > 0 {
+		prevRunMarkTime = r.scaleUpEvents[r.currentEventIndex].EventTime.UTC()
+	}
 	r.currentEventIndex, nextEvent = GetNextReplayEvent(r.scaleUpEvents, r.currentEventIndex)
 	return
-	//numEvents := len(r.scaleUpEvents)
-	//if r.currentEventIndex >= numEvents {
-	//	slog.Info("getNextReplayEvent could find no more scale-up events")
-	//	return
-	//}
-	//span := 12 * time.Second
-	//currEvent = r.scaleUpEvents[r.currentEventIndex]
-	//
-	//// e0, e1, e2
-	//for i := r.currentEventIndex + 1; i < numEvents; i++ {
-	//	se := r.scaleUpEvents[i]
-	//	if eventTimeDiffGreaterThan(currEvent, se, span) {
-	//		r.currentEventIndex = i
-	//		currEvent = r.scaleUpEvents[r.currentEventIndex]
-	//		return
-	//	}
-	//}
-	//r.currentEventIndex = numEvents - 1 // last event if there is a contiguous sequence of events within span till the end.
-	//currEvent = r.scaleUpEvents[r.currentEventIndex]
-	//r.currentEventIndex++
-	//return
 }
 
 func (r *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot, pendingPods []corev1.Pod) (workDone bool, err error) {
@@ -1573,9 +1555,9 @@ func (r *defaultReplayer) Close() error {
 	return r.doClose()
 }
 
-func (r *defaultReplayer) GetRecordedClusterSnapshot(runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+func (r *defaultReplayer) GetRecordedClusterSnapshot(runPrevMarkTime, runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
 	snapshotID := fmt.Sprintf("%s-%d", apputil.FilenameWithoutExtension(r.params.InputDataPath), cs.Number)
-	cs, err = GetRecordedClusterSnapshot(r.dataAccess, r.replayCount, snapshotID, runMarkTime)
+	cs, err = GetRecordedClusterSnapshot(r.dataAccess, r.replayCount, snapshotID, runPrevMarkTime, runMarkTime)
 	return
 }
 
@@ -1597,10 +1579,7 @@ func modifyNodeAllocatable(nodeTemplates map[string]gsc.NodeTemplate, nodes []gs
 }
 
 func findNodeTemplate(nodeTemplates map[string]gsc.NodeTemplate, poolName, zone string) *gsc.NodeTemplate {
-	// shoot--hc-eu30--prod-gc-orc-default-z1-5b99b-cv8ls
-	slog.Info("Parameters passed", "poolName", poolName, "zone", zone)
 	for _, nt := range nodeTemplates {
-		//slog.Info("Node Template zone and labels", "name", nt.Name, "zone", nt.Zone, "labels", nt.Labels)
 		slog.Debug("Node capacity", "name", nt.Name, "zone", nt.Zone, "allocatable", nt.Allocatable)
 		if nt.Zone == zone && nt.Labels["worker.gardener.cloud/pool"] == poolName {
 			return &nt
@@ -2078,7 +2057,12 @@ func GetReplayScalingRecommenderReportFormat(replayCAReportPath string) (reportF
 	return
 }
 
-func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, snapshotID string, runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, snapshotID string, runPrevMarkTime, runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+	slog.Info("GetRecordedClusterSnapshot INVOKED.",
+		"snapshotNumber", snapshotNumber,
+		"snapshotID", snapshotID,
+		"runPrevMarkTime", runPrevMarkTime,
+		"runMarkTime", runMarkTime)
 	cs.Number = snapshotNumber
 	cs.ID = snapshotID
 	cs.SnapshotTime = runMarkTime
@@ -2108,7 +2092,7 @@ func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, s
 		return
 	}
 
-	allPods, err := dataAccess.GetLatestPodInfosBeforeSnapshotTimestamp(runMarkTime)
+	allPods, err := dataAccess.GetLatestPodInfosBetweenSnapshotTimestamp(runPrevMarkTime, runMarkTime)
 
 	slices.SortFunc(allPods, func(a, b gsc.PodInfo) int {
 		return b.SnapshotTimestamp.Compare(a.SnapshotTimestamp) // most recent first

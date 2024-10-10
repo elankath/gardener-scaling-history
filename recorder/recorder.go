@@ -612,10 +612,10 @@ func (r *defaultRecorder) processPod(podOld, podNew *corev1.Pod) error {
 		// ignore deletes and pod with no node
 		return nil
 	}
-	if podNew.Status.Phase != corev1.PodRunning {
-		slog.Debug("pod is not in Running phase, skipping persisting it", "pod.UID", podNew.UID, "pod.Name", podNew.Name, "pod.Phase", podNew.Status.Phase)
-		return nil
-	}
+	//if podNew.Status.Phase != corev1.PodRunning {
+	//	slog.Debug("pod is not in Running phase, skipping persisting it", "pod.UID", podNew.UID, "pod.Name", podNew.Name, "pod.Phase", podNew.Status.Phase)
+	//	return nil
+	//}
 	podInfo := PodInfoFromPod(podNew)
 	if podInfo.PodScheduleStatus == gsc.PodSchedulePending {
 		slog.Debug("pod is in PodSchedulePending state, skipping persisting it", "pod.UID", podInfo.UID, "pod.Name", podInfo.Name)
