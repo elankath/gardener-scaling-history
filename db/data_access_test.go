@@ -49,6 +49,7 @@ func TestStoreLoadPodInfo(t *testing.T) {
 		},
 		UID:      "1234",
 		NodeName: "GreatHost",
+		PodPhase: corev1.PodRunning,
 		Labels:   map[string]string{"weapon": "light-saber"},
 		Requests: map[corev1.ResourceName]resource.Quantity{
 			corev1.ResourceCPU:     resource.MustParse("3.2"),
@@ -76,6 +77,7 @@ func TestStoreLoadPodInfo(t *testing.T) {
 	//assert.Equal(t, savePodInfo, loadPodInfo, "savePodInfo must be equal to loadPodInfo")
 	assert.Equal(t, loadPodInfo.Hash, loadPodInfo.GetHash(), "loadPodInfo.Hash() must equal  loadedPodInfo.GetHash()")
 	assert.Equal(t, savePodInfo.Hash, loadPodInfo.GetHash(), "savedPodInfo.Hash() must be equal to loadedPodInfo.GetHash()")
+	assert.Equal(t, savePodInfo.PodPhase, loadPodInfo.PodPhase, "savedPodInfo.PodPhase must be equal to loadedPodInfo.PodPhase")
 
 	count, err := dataAccess.CountPodInfoWithSpecHash(loadPodInfo.UID, savePodInfo.Hash)
 	assert.Nil(t, err)

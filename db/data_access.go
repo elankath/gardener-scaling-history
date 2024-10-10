@@ -128,7 +128,7 @@ func (d *DataAccess) Close() error {
 }
 
 func (d *DataAccess) InsertRecorderStartTime(startTime time.Time) error {
-	_, err := d.dataDB.Exec(InsertRecorderStateInfo, startTime.UTC().UnixNano())
+	_, err := d.dataDB.Exec(InsertRecorderStateInfo, startTime.UTC().UnixMicro())
 	if err != nil {
 		return fmt.Errorf("cannot execute the InsertRecorderStateInfo statement: %w", err)
 	}
@@ -481,7 +481,7 @@ func (d *DataAccess) CountNodeInfoWithHash(name, hash string) (int, error) {
 }
 
 func updateDeletionTimestamp(stmt *sql.Stmt, name string, deletionTimestamp time.Time) (updated int64, err error) {
-	result, err := stmt.Exec(deletionTimestamp.UTC().UnixNano(), name)
+	result, err := stmt.Exec(deletionTimestamp.UTC().UnixMicro(), name)
 	if err != nil {
 		return -1, err
 	}
@@ -548,8 +548,8 @@ func (d *DataAccess) StoreMachineDeploymentInfo(m gsc.MachineDeploymentInfo) (ro
 		return -1, err
 	}
 	result, err := d.insertMCDInfo.Exec(
-		m.CreationTimestamp.UTC().UnixNano(),
-		m.SnapshotTimestamp.UTC().UnixNano(),
+		m.CreationTimestamp.UTC().UnixMicro(),
+		m.SnapshotTimestamp.UTC().UnixMicro(),
 		m.Name,
 		m.Namespace,
 		m.Replicas,
@@ -591,8 +591,8 @@ func (d *DataAccess) StoreMachineClassInfo(m gsh.MachineClassInfo) (rowID int64,
 		return -1, err
 	}
 	result, err := d.insertMCCInfo.Exec(
-		m.CreationTimestamp.UTC().UnixNano(),
-		m.SnapshotTimestamp.UTC().UnixNano(),
+		m.CreationTimestamp.UTC().UnixMicro(),
+		m.SnapshotTimestamp.UTC().UnixMicro(),
 		m.Name,
 		m.Namespace,
 		m.InstanceType,
@@ -626,8 +626,8 @@ func (d *DataAccess) StoreWorkerPoolInfo(w gsc.WorkerPoolInfo) (rowID int64, err
 		w.Hash = w.GetHash()
 	}
 	result, err := d.insertWorkerPoolInfo.Exec(
-		w.CreationTimestamp.UTC().UnixNano(),
-		w.SnapshotTimestamp.UTC().UnixNano(),
+		w.CreationTimestamp.UTC().UnixMicro(),
+		w.SnapshotTimestamp.UTC().UnixMicro(),
 		w.Name,
 		w.Namespace,
 		w.MachineType,
@@ -750,7 +750,7 @@ func (d *DataAccess) GetLatestPodInfosBeforeSnapshotTimestamp(snapshotTime time.
 }
 
 func (d *DataAccess) GetLatestScheduledPodsBeforeTimestamp(timestamp time.Time) (pods []gsc.PodInfo, err error) {
-	slog.Info("GetLatestScheduledPodsBeforeTimestamp: selectScheduledPodsBeforeSnapshotTimestamp", "timestamp", timestamp.UTC().UnixMilli())
+	slog.Info("GetLatestScheduledPodsBeforeTimestamp: selectScheduledPodsBeforeSnapshotTimestamp", "timestamp", timestamp.UTC().UnixMicro())
 	return queryAndMapToInfos[gsc.PodInfo, podRow](d.selectScheduledPodsBeforeSnapshotTimestamp, timestamp, timestamp)
 }
 
@@ -801,13 +801,14 @@ func (d *DataAccess) StorePodInfo(podInfo gsc.PodInfo) (int64, error) {
 		return -1, err
 	}
 	result, err := d.insertPodInfo.Exec(
-		podInfo.CreationTimestamp.UTC().UnixNano(),
-		podInfo.SnapshotTimestamp.UTC().UnixNano(),
+		podInfo.CreationTimestamp.UTC().UnixMicro(),
+		podInfo.SnapshotTimestamp.UTC().UnixMicro(),
 		podInfo.Name,
 		podInfo.Namespace,
 		podInfo.UID,
 		podInfo.NodeName,
 		podInfo.NominatedNodeName,
+		podInfo.PodPhase,
 		labels,
 		requests,
 		podSpec,
@@ -827,8 +828,8 @@ func (d *DataAccess) StorePriorityClassInfo(pcInfo gsc.PriorityClassInfo) (int64
 	}
 	labels, err := labelsToText(pcInfo.Labels)
 	result, err := d.insertPriorityClassInfo.Exec(
-		pcInfo.CreationTimestamp.UTC().UnixNano(),
-		pcInfo.SnapshotTimestamp.UTC().UnixNano(),
+		pcInfo.CreationTimestamp.UTC().UnixMicro(),
+		pcInfo.SnapshotTimestamp.UTC().UnixMicro(),
 		pcInfo.Name,
 		pcInfo.UID,
 		pcInfo.Value,
@@ -871,8 +872,8 @@ func (d *DataAccess) StoreNodeInfo(n gsc.NodeInfo) (rowID int64, err error) {
 		return
 	}
 	result, err := d.insertNodeInfo.Exec(
-		n.CreationTimestamp.UTC().UnixNano(),
-		n.SnapshotTimestamp.UTC().UnixNano(),
+		n.CreationTimestamp.UTC().UnixMicro(),
+		n.SnapshotTimestamp.UTC().UnixMicro(),
 		n.Name,
 		n.Namespace,
 		n.ProviderID,
@@ -906,7 +907,7 @@ func (d *DataAccess) StoreCSINodeRow(cn CSINodeRow) (rowID int64, err error) {
 }
 
 func (d *DataAccess) LoadCSINodeRowsBefore(snapshotTimestamp time.Time) ([]CSINodeRow, error) {
-	//nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp.UTC().UnixNano(), snapshotTimestamp.UTC().UnixNano())
+	//nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp.UTC().UnixMicro(), snapshotTimestamp.UTC().UnixMicro())
 	adjustedTimeParam := adjustParam(snapshotTimestamp)
 	rowObjs, err := queryRows[CSINodeRow](d.selectCSINodeInfosBefore, adjustedTimeParam, adjustedTimeParam)
 	if err != nil {
@@ -919,7 +920,7 @@ func (d *DataAccess) LoadCSINodeRowsBefore(snapshotTimestamp time.Time) ([]CSINo
 }
 
 func (d *DataAccess) LoadNodeInfosBefore(snapshotTimestamp time.Time) ([]gsc.NodeInfo, error) {
-	nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp.UTC().UnixNano(), snapshotTimestamp.UTC().UnixNano())
+	nodeInfos, err := queryAndMapToInfos[gsc.NodeInfo, nodeRow](d.selectNodeInfosBefore, snapshotTimestamp.UTC().UnixMicro(), snapshotTimestamp.UTC().UnixMicro())
 	if err != nil {
 		return nil, fmt.Errorf("LoadNodeInfosBefore could not scan rows: %w", err)
 	}
@@ -932,7 +933,7 @@ func (d *DataAccess) StoreCASettingsInfo(caSettings gsc.CASettingsInfo) (int64, 
 		return -1, fmt.Errorf("cannot create row for CASettings: %w", err)
 	}
 	result, err := d.insertCASettingsInfo.Exec(
-		caSettings.SnapshotTimestamp.UTC().UnixNano(),
+		caSettings.SnapshotTimestamp.UTC().UnixMicro(),
 		caSettings.Expander,
 		caSettings.ScanInterval.Milliseconds(),
 		caSettings.MaxNodeProvisionTime.Milliseconds(),
@@ -963,7 +964,7 @@ func (d *DataAccess) GetInitialRecorderStartTime() (startTime time.Time, err err
 	if err != nil {
 		return
 	}
-	return timeFromNano(rows[0].BeginTimestamp), nil
+	return timeFromMicro(rows[0].BeginTimestamp), nil
 }
 
 func labelsToText(valMap map[string]string) (textVal string, err error) {
@@ -1206,7 +1207,7 @@ func queryAndMapToInfos[I any, T row[I]](stmt *sql.Stmt, params ...any) (infoObj
 
 func adjustParam(p any) any {
 	if t, ok := p.(time.Time); ok {
-		return t.UTC().UnixNano()
+		return t.UTC().UnixMicro()
 	}
 	return p
 }

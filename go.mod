@@ -5,7 +5,7 @@ go 1.23.1
 require (
 	github.com/blockloop/scan/v2 v2.5.0
 	github.com/dustin/go-humanize v1.0.1
-	github.com/elankath/gardener-scaling-common v0.0.0-20240925070418-811cdb22c336
+	github.com/elankath/gardener-scaling-common v0.0.0-20241010154245-9a9819937ffa
 	github.com/glebarez/go-sqlite v1.22.0
 	github.com/mattn/go-sqlite3 v1.14.23
 	github.com/nao1215/markdown v0.6.0

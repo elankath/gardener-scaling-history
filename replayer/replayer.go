@@ -60,7 +60,6 @@ type defaultReplayer struct {
 	dataAccess               *db.DataAccess
 	clientSet                *kubernetes.Clientset
 	params                   gsh.ReplayerParams
-	snapshotCount            int
 	replayCount              int
 	lastClusterSnapshot      gsc.ClusterSnapshot
 	reportPathFormat         string
@@ -414,34 +413,33 @@ func (r *defaultReplayer) ReplayCA() error {
 			loopNum++
 			replayEvent := r.getNextReplayEvent()
 			replayMarkTime := replayEvent.EventTime.UTC()
-			replayMarkTimeNanos := replayMarkTime.UnixNano()
-			slog.Info("ReplayCA is considering replayEvent.", "replayEvent", replayEvent, "replayEventIndex", r.currentEventIndex, "replayMarkTimeNanos", replayMarkTimeNanos)
+			replayMarkTimeMicros := replayMarkTime.UnixMicro()
+			slog.Info("ReplayCA is considering replayEvent.", "replayEvent", replayEvent, "replayEventIndex", r.currentEventIndex, "replayMarkTimeMicros", replayMarkTimeMicros)
 			if replayMarkTime.IsZero() {
 				slog.Info("no more scale ups to be replayed. Exiting", "loopNum", loopNum)
 				return nil
 			}
 			if replayMarkTime.After(time.Now()) {
 				//slog.Warn("replayMarkTime now exceeds current time. Exiting", "BeginTime", replayRun.BeginIndex, "EndTime", replayRun.EndTime, "loopNum", loopNum, "replayCount", r.replayCount)
-				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "loopNum", loopNum, "replayCount", r.replayCount)
+				slog.Warn("replayMarkTime now exceeds current time. Exiting", "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros, "loopNum", loopNum, "replayCount", r.replayCount)
 				return nil
 			}
-			//slog.Info("Invoking GetRecordedClusterSnapshot with BeginTime->EndTime.", "BeginTime", replayRun.BeginTime, "EndTime", replayRun.EndTime, "loopNum", loopNum, "replayCount", r.replayCount)
-			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "loopNum", loopNum, "replayCount", r.replayCount)
+			r.replayCount++
+			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros, "loopNum", loopNum, "replayCount", r.replayCount)
 			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "loopNum", loopNum, "replayCount", r.replayCount)
+					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros, "loopNum", loopNum, "replayCount", r.replayCount)
 					return nil
 				}
 				return err
 			}
-			//r.lastScalingRun = replayRun
 
 			// UNCOMMENT ME FOR DIAGNOSIS ONLY
 			//writeClusterSnapshot(clusterSnapshot)
 
 			if clusterSnapshot.Hash == r.lastClusterSnapshot.Hash {
-				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash, "loopNum", loopNum, "replayMarkTime", replayMarkTime, "replayMarkTimeNanos", replayMarkTimeNanos, "replayCount", r.replayCount)
+				slog.Info("skipping replay since clusterSnapshot.Hash unchanged from", "Hash", clusterSnapshot.Hash, "loopNum", loopNum, "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros, "replayCount", r.replayCount)
 				r.lastClusterSnapshot = clusterSnapshot
 				continue
 			}
@@ -500,7 +498,6 @@ func (r *defaultReplayer) ReplayCA() error {
 			if err != nil {
 				return err
 			}
-			r.replayCount++
 			r.lastClusterSnapshot = clusterSnapshot
 			scalingOccurred, err := waitAndCheckVirtualScaling(r.ctx, r.clientSet, r.replayCount)
 			if !scalingOccurred {
@@ -1362,25 +1359,6 @@ func (r *defaultReplayer) getNextReplayEvent() (nextEvent gsc.EventInfo) {
 	//return
 }
 
-func (r *defaultReplayer) getReplayRun() (run ScalingRun) {
-	run = GetNextScalingRun(r.scaleUpEvents, r.lastScalingRun, r.params.ReplayInterval)
-	if run.IsZero() {
-		return
-	}
-	runBeginTime := run.BeginTime
-	runEndTime := run.EndTime
-	runBeginTimeUnixNanos := runBeginTime.UnixNano()
-	runEndTimeUnixNanos := runEndTime.UnixNano()
-	slog.Info("getReplayRun got BeginTime, EndTime for a scaling-run.",
-		"run.BeginTime", runBeginTime,
-		"run.BeginTimeUnixNanos",
-		runBeginTimeUnixNanos,
-		"run.EndTime", runEndTime,
-		"run.EndTimeUnixNanos",
-		runEndTimeUnixNanos)
-	return
-}
-
 func (r *defaultReplayer) computeAndApplyDeltaWork(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot, pendingPods []corev1.Pod) (workDone bool, err error) {
 	deltaWork, err := computeDeltaWork(ctx, r.clientSet, clusterSnapshot, pendingPods)
 	if err != nil {
@@ -1419,7 +1397,7 @@ func computeDeltaWork(ctx context.Context, clientSet *kubernetes.Clientset, clus
 	deltaWork.PodWork = podWork
 	deltaWork.PriorityClassWork = pcWork
 	deltaWork.NamespaceWork = nsWork
-	slog.Info("computeDeltaWork for clusterSnapshot.", "clusterSnapshot.Number", clusterSnapshot.Number, "clusterSnapshot.SnapshotTime.UnixNano", clusterSnapshot.SnapshotTime.UnixNano(), "deltaWork", deltaWork)
+	slog.Info("computeDeltaWork for clusterSnapshot.", "clusterSnapshot.Number", clusterSnapshot.Number, "clusterSnapshot.SnapshotTime.UnixMicro", clusterSnapshot.SnapshotTime.UnixMicro(), "deltaWork", deltaWork)
 
 	return
 }
@@ -1596,9 +1574,8 @@ func (r *defaultReplayer) Close() error {
 }
 
 func (r *defaultReplayer) GetRecordedClusterSnapshot(runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
-	r.snapshotCount++
 	snapshotID := fmt.Sprintf("%s-%d", apputil.FilenameWithoutExtension(r.params.InputDataPath), cs.Number)
-	cs, err = GetRecordedClusterSnapshot(r.dataAccess, r.snapshotCount, snapshotID, runMarkTime)
+	cs, err = GetRecordedClusterSnapshot(r.dataAccess, r.replayCount, snapshotID, runMarkTime)
 	return
 }
 

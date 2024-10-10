@@ -180,6 +180,7 @@ const CreatePodInfoTable = `CREATE TABLE IF NOT EXISTS pod_info (
 	UID TEXT NOT NULL,
 	NodeName TEXT,
 	NominatedNodeName TEXT,
+	Phase TEXT,
 	Labels TEXT,
 	Requests TEXT,
 	Spec TEXT,
@@ -194,11 +195,12 @@ const InsertPodInfo = `INSERT INTO pod_info(
 	UID, 
 	NodeName,
     NominatedNodeName,
+    Phase,
 	Labels,
 	Requests,
     Spec,
     ScheduleStatus,
-	Hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	Hash) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 const UpdatePodDeletionTimestamp = "UPDATE pod_info SET DeletionTimestamp=? WHERE UID=?"
 const SelectPodCountWithUIDAndHash = "SELECT COUNT(*) from pod_info where UID=? and Hash=?"
 const SelectUnscheduledPodsBeforeSnapshotTimestamp = `SELECT * FROM (SELECT * from pod_info
@@ -209,7 +211,7 @@ const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT 
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
                 GROUP BY Name;`
 const SelectLatestPodsBeforeSnapshotTimestamp = `SELECT * FROM pod_info WHERE
-                SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  GROUP BY pod_info.UID HAVING max(RowID) ORDER BY RowID ASC;`
+                SnapshotTimestamp <= ? AND Phase = 'Running' AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  GROUP BY pod_info.UID HAVING max(RowID) ORDER BY RowID ASC;`
 
 const CreatePriorityClassInfoTable = `CREATE TABLE IF NOT EXISTS pc_info (
 	RowID INTEGER PRIMARY KEY AUTOINCREMENT,

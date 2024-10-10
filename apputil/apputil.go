@@ -464,6 +464,16 @@ func DownloadDBFromApp(dbPath string) error {
 	return nil
 }
 
+// IsNodeReady to check if a node is Ready (Running)
+func IsNodeReady(node *corev1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
 func DownloadReportFromApp(reportPath string) error {
 	if !strings.HasSuffix(reportPath, ".json") {
 		return fmt.Errorf("reportPath does not end with .json: %s", reportPath)
@@ -598,4 +608,18 @@ func GetClusterNameFromCAReportPath(caReportPath string) string {
 	reportName := FilenameWithoutExtension(caReportPath)
 	clusterName := reportName[:strings.LastIndex(reportName, "_")]
 	return clusterName
+}
+
+func GetNodeName(n gsc.NodeInfo, _ int) string {
+	return n.Name
+}
+
+func NodeHasMatchingName(name string) func(n gsc.NodeInfo) bool {
+	return func(n gsc.NodeInfo) bool {
+		if n.Name == name {
+			return true
+		} else {
+			return false
+		}
+	}
 }

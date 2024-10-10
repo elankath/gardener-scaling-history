@@ -429,6 +429,10 @@ func (r *defaultRecorder) processNode(old any, new any) {
 	if nodeOld != nil {
 		nodeOld = old.(*corev1.Node)
 	}
+	if !apputil.IsNodeReady(nodeNew) {
+		slog.Debug("processNode is skipping node since node not Ready.", "nodeName", nodeNew.Name, "shootLabel", r.params.ShootLabel())
+		return
+	}
 	//	allocatableVolumes := r.getAllocatableVolumes(nodeNew.Name)
 	nodeNewInfo := gsh.NodeInfoFromNode(nodeNew, 0)
 	//if allocatableVolumes == 0 {
@@ -436,7 +440,7 @@ func (r *defaultRecorder) processNode(old any, new any) {
 	//}
 	countWithSameHash, err := r.dataAccess.CountNodeInfoWithHash(nodeNew.Name, nodeNewInfo.Hash)
 	if err != nil {
-		slog.Error("cannot CountPodInfoWithSpecHash", "node.Name", nodeNew.Name, "node.Hash", nodeNewInfo.Hash, "error", err)
+		slog.Error("cannot CountPodInfoWithSpecHash", "node.Name", nodeNew.Name, "node.Hash", nodeNewInfo.Hash, "error", err, "shootLabel", r.params.ShootLabel())
 		return
 	}
 	if countWithSameHash > 0 {
@@ -445,7 +449,8 @@ func (r *defaultRecorder) processNode(old any, new any) {
 	}
 	_, err = r.dataAccess.StoreNodeInfo(nodeNewInfo)
 	if err != nil {
-		slog.Error("could not store node info.", "node.Name", nodeNew.Name, "error", err, "recorderParams", r.params)
+		slog.Error("could not store node info.", "node.Name", nodeNew.Name, "error", err, "shootLabel", r.params.ShootLabel())
+		return
 	}
 	slog.Info("processNode stored node", "node.Name", nodeNewInfo.Name, "node.Hash", nodeNewInfo.Hash, "shootLabel", r.params.ShootLabel())
 }
@@ -605,6 +610,10 @@ func (r *defaultRecorder) processWorker(workerOld, workerNew *unstructured.Unstr
 func (r *defaultRecorder) processPod(podOld, podNew *corev1.Pod) error {
 	if podNew.DeletionTimestamp != nil {
 		// ignore deletes and pod with no node
+		return nil
+	}
+	if podNew.Status.Phase != corev1.PodRunning {
+		slog.Debug("pod is not in Running phase, skipping persisting it", "pod.UID", podNew.UID, "pod.Name", podNew.Name, "pod.Phase", podNew.Status.Phase)
 		return nil
 	}
 	podInfo := PodInfoFromPod(podNew)
@@ -1232,8 +1241,8 @@ func (r *defaultRecorder) onAddCSINode(obj interface{}) {
 	_, err := r.dataAccess.StoreCSINodeRow(db.CSINodeRow{
 		Name:               csiNode.Name,
 		Namespace:          csiNode.Namespace,
-		CreationTimestamp:  csiNode.CreationTimestamp.UTC().UnixNano(),
-		SnapshotTimestamp:  time.Now().UTC().UnixNano(),
+		CreationTimestamp:  csiNode.CreationTimestamp.UTC().UnixMicro(),
+		SnapshotTimestamp:  time.Now().UTC().UnixMicro(),
 		AllocatableVolumes: allocatableCount,
 	})
 	if err != nil {
@@ -1368,6 +1377,7 @@ func PodInfoFromPod(p *corev1.Pod) gsc.PodInfo {
 	pi.Labels = p.Labels
 	pi.Requests = gsc.CumulatePodRequests(p)
 	pi.Spec = p.Spec
+	pi.PodPhase = p.Status.Phase
 	pi.PodScheduleStatus = ComputePodScheduleStatus(p)
 	pi.Hash = pi.GetHash()
 	return pi
