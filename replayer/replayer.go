@@ -1700,11 +1700,11 @@ func (r *defaultReplayer) writeScenario(scenario gsh.Scenario, clusterSnapshot g
 	}
 	slog.Info("Wrote scenario report.", "reportPath", reportPath, "snapshotTime", clusterSnapshot.SnapshotTime,
 		"scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
-	err = apputil.UploadReport(r.ctx, reportPath)
-	if err != nil {
-		slog.Error("error uploading report", "reportPath", reportPath, "error", err)
-		return err
-	}
+	//err = apputil.UploadReport(r.ctx, reportPath)
+	//if err != nil {
+	//	slog.Error("error uploading report", "reportPath", reportPath, "error", err)
+	//	return err
+	//}
 	return nil
 }
 
@@ -2034,8 +2034,13 @@ outer:
 	return
 }
 
-func filterAppPods(pods []gsc.PodInfo) []gsc.PodInfo {
+func filterAppPods(pods []gsc.PodInfo, runMarkTime time.Time) []gsc.PodInfo {
 	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
+		delTimestamp := p.DeletionTimestamp
+		if !delTimestamp.IsZero() && delTimestamp.Before(runMarkTime) {
+			slog.Info("filterAppPods is filtering out pods", "podName", p.Name, "podAssignedNode", p.Spec.NodeName, "podDeletionTimeStamp", p.DeletionTimestamp, "runMarkTime", runMarkTime)
+			return false
+		}
 		return p.Namespace != "kube-system"
 	})
 }
@@ -2124,6 +2129,7 @@ func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, s
 	}
 
 	allPods, err := dataAccess.GetLatestPodInfosBeforeSnapshotTimestamp(runMarkTime)
+
 	slices.SortFunc(allPods, func(a, b gsc.PodInfo) int {
 		return b.SnapshotTimestamp.Compare(a.SnapshotTimestamp) // most recent first
 	})
@@ -2160,7 +2166,7 @@ func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, s
 	if err != nil {
 		return
 	}
-	cs.Pods = filterAppPods(allPods)
+	cs.Pods = filterAppPods(allPods, runMarkTime)
 	nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
 		return n.Name
 	})
