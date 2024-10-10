@@ -1700,12 +1700,15 @@ func (r *defaultReplayer) writeScenario(scenario gsh.Scenario, clusterSnapshot g
 	}
 	slog.Info("Wrote scenario report.", "reportPath", reportPath, "snapshotTime", clusterSnapshot.SnapshotTime,
 		"scaledUpNodeGroups", scenario.ScalingResult.ScaledUpNodeGroups)
-	err = apputil.UploadReport(r.ctx, reportPath)
-	if err != nil {
-		slog.Error("error uploading report", "reportPath", reportPath, "error", err)
-		return err
+	if r.params.Mode == gsh.InUtilityClusterRecorderMode {
+		err = apputil.UploadReport(r.ctx, reportPath)
+		if err != nil {
+			slog.Error("error uploading report", "reportPath", reportPath, "error", err)
+			return err
+		}
 	}
 	return nil
+
 }
 
 func (r *defaultReplayer) createScenario(ctx context.Context, clusterSnapshot gsc.ClusterSnapshot) (scenario gsh.Scenario, err error) {
