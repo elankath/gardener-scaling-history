@@ -151,10 +151,10 @@ Please ensure you are at the base dir of the [gardener-scaling-history](https://
 
 The analyzer pod will periodically create two new pods
 1. A replay pod with the naming convention `scaling-history-replayer-ca-<landscape>-<cluster>`
-   1. This pod contains kube api-server, etcd, kube-scheduler, and a virtual autoscaler. Events from the DB are applied to the apiserver within the pod and node scaleups done by the virtual autoscaler are written to a report called a `ca-replay` report
+   1. This pod contains kube api-server, etcd, kube-scheduler, and a virtual autoscaler. Scenarios are created out of the recorded data, and are applied to a virtual control plane containing a virtual CA. Node scaleups done by the virtual autoscaler are recorder and written to a report called a `ca-replay` report
    2. These `ca-replay` reports have the naming convention `<landscape>_<cluster>_ca-replay-<interval-num>.json`
 2. A replay pod with the naming convention `scaling-history-replayer-sr-<landscape>-<cluster>`
-   1. This pod contains a kube api-server, etcd, kube-scheduler, and a recommender. Events from the `ca-replay` report are applied to the apiserver within the pod and node scaleups recommended by the recommender and recorded and written to a report called `sr-replay` report
+   1. This pod contains a kube api-server, etcd, kube-scheduler, and a recommender. Events from the `ca-replay` report are applied to the virtual control plane containing the recommender. Node scaleups recommended by the recommender and recorded and written to a report called `sr-replay` report
    2. These `sr-replay` reports have the naming convention: `<landscape>_<cluster>_sr-replay-<interval-num>.json`
 
 The analyzer app also compares `ca-replay` reports with their corresponding `sr-replay` reports and generates a comparison report
