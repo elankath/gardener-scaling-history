@@ -26,14 +26,14 @@ Clone the following github repositories:
     dev,i034796,g2
     ```
    - This file can be found in `cfg/clusters.csv` within the `gardener-scaling-history` repo
-   - Kindly update this file with records for each cluster that you wish to record data.
-2. Kindly set the following environment variables 
+   - Update this file with records for each cluster that you wish to record data.
+2. Set the following environment variables 
    1. `export MODE=local` 
    2. (Optional) `export CONFIG_DIR=<configDir>` # Dir of clusters.csv 
       - Defaults to `cfg/`. Set this only if clusters.csv is moved to a different dir 
    3. (Optional) `export DB_DIR=/tmp` # Directory where recorder stores SQLite <clusterName>.db files
       - Defaults to `gen/`. Set this only if you want DBs to be stored in a different dir
-3. Kindly execute: `go run cmd/recorder/main.go`
+3. Execute: `go run cmd/recorder/main.go`
 
 ### Run replayer
 
@@ -43,13 +43,13 @@ Clone the following github repositories:
 2. (Optional) `export REPORT_DIR=<reportDir>` # Dir where you would like the replayer to store produced reports 
    1. Defaults to `/tmp`
 3. Ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
-4. Kindly run `./hack/build-replayer.sh local`
+4. Run `./hack/build-replayer.sh local`
    1. This builds binaries of all dependencies needed by the replayer such as kube-apiserver, etcd, kube-scheduler, virtual-cluster-autoscaler
    2. Binaries are stored in `bin/`
 
 #### Run
 1. Ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
-2. Kindly run `go run cmd/replayer/main.go`
+2. Run `go run cmd/replayer/main.go`
    1. Reports generated are stored in `REPORT_DIR` and have the naming convention `<landscape>_<cluster>_ca-replay-<interval-num>.json`
 3. (Optional) In case you wish to target the kubernetes cluster and see for yourself what is going on
    1. `export KUBECONFIG=/tmp/kvcl.yaml`
@@ -68,7 +68,7 @@ Clone the following github repositories:
 
 #### Run
 1. Ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
-2. Kindly run `go run cmd/replayer/main.go`
+2. Run `go run cmd/replayer/main.go`
    1. 1. Reports generated are stored in `REPORT_DIR` and have the naming convention `<landscape>_<cluster>_sr-replay-<interval-num>.json`
 
 ### Run Comparator
@@ -77,7 +77,7 @@ The report produced is in the form of a markdown file with the naming convention
 
 #### Run
 1. Ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
-2. Kindly run `go run cmd/comparer/main.go --provider=<aws|gcp> --ca-report-path=<path to ca-replay report> --sr-report-path=<path to sr-replay report> --report-out-dir=<reportDir>`
+2. Run `go run cmd/comparer/main.go --provider=<aws|gcp> --ca-report-path=<path to ca-replay report> --sr-report-path=<path to sr-replay report> --report-out-dir=<reportDir>`
    1. eg: `go run cmd/comparer/main.go --provider=aws --ca-report-path=live_hct-us10_prod-hdl_ca-replay-10.json --sr-report-path=live_hct-us10_prod-hdl_sr-replay-10.json`
    2. `--report-out-dir` is an optional parameter. Defaults to `/tmp`
    3. `--provider` is an optional parameter. Defaults to `aws`
@@ -110,8 +110,8 @@ This pod is responsible for recording scaling data for predetermined clusters.
     dev,i034796,g2
     ```
    - This file can be found in `cfg/clusters.csv` within the `gardener-scaling-history` repo
-   - Kindly update this file with records for each cluster that you wish to record data.
-2. Kindly login into `utility-int` cluster `gardenctl target --garden sap-landscape-live --project garden-ops --shoot utility-int`
+   - Update this file with records for each cluster that you wish to record data.
+2. Login into `utility-int` cluster `gardenctl target --garden sap-landscape-live --project garden-ops --shoot utility-int`
    - If you want to use a different cluster to run this setup and already have the required secret deployed there, then please log into that cluster
 3. Export your docker hub username: `export DOCKERHUB_USER=<dockerHubUser>`
    - This dockerhub account is used to push images built by the subsequent steps
@@ -122,7 +122,7 @@ This pod is responsible for recording scaling data for predetermined clusters.
 
 #### Launch
 Please ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
-1. Kindly run `./hack/deploy-recorder.sh`
+1. Run `./hack/deploy-recorder.sh`
    1. In case you are deploying this setup on your own in your own cluster, please go to `hacks/recorder.yaml` and adjust the namespace of the pod accordingly
 
 ### Launch Analyser
@@ -143,7 +143,7 @@ To prepare for the launch of the analyzer app kindly follow these steps
 
 #### Launch
 Please ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
-1. Kindly run `./hack/deploy-app.sh`
+1. Run `./hack/deploy-app.sh`
    1. In case you are deploying this setup on your own in your own cluster, please go to `hacks/recorder.yaml` and adjust the namespace of the pod accordingly
 
 
@@ -166,24 +166,24 @@ The analyzer pod provides a provision to download DBs, reports (which including 
 
 ### Download DB
 #### Download all DBs
-1. Kindly run the script `./hack/download-db.sh`
+1. Run the script `./hack/download-db.sh`
 #### Download a specific DB
 1. Export the name of the DB you want to download `export DOWNLOAD_DB=<DB_name>`
-2. Kindly run the script `./hack/download-db.sh`
+2. Run the script `./hack/download-db.sh`
 
 ### Download scaling reports and comparison reports
 #### Show list of reports available
-1. Kindly run `curl 10.47.254.238/api/reports` to display a list of all reports available
+1. Run `curl 10.47.254.238/api/reports` to display a list of all reports available
 
 #### Download reports
-1. Kindly run the script `./hack/download-reports.sh`
+1. Run the script `./hack/download-reports.sh`
    1. This will display a list of all available reports
    2. Please choose the reports you wish to download. Multiple reports can be closed using the <space_bar> key
    3. This will download replay reports into your local `/tmp` directory.
 
 ### Download logs
 #### Show list of logs available
-1. Kindly run `curl 10.47.254.238/api/logs` to display a list of all reports available
+1. Run `curl 10.47.254.238/api/logs` to display a list of all reports available
 
 #### Download a log file
-1. Kindly run `curl -kLO 10.47.254.238/api/logs/{log_file_name}` to download a log file
+1. Run `curl -kLO 10.47.254.238/api/logs/{log_file_name}` to download a log file
