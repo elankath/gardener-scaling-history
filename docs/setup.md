@@ -225,6 +225,22 @@ The analyzer pod provides a provision to download DBs, reports (which including 
 #### Download a specific DB
 1. Export the name of the DB you want to download `export DOWNLOAD_DB=<DB_name>`
 2. Run the script `./hack/download-db.sh`
+#### Download Manually
+1. Use curl to list recorder SQLite DBs:
+   1. `curl 10.47.254.238/api/db`
+   1. This will list the `.db` files
+   ```
+   live_hc-ap11_prod-haas.db
+   live_hc-ap11_prod-hdl.db
+   live_hc-ap11_prod-orc.db
+   live_hc-canary_prod-haas.db
+   live_hc-canary_prod-hna0.db
+   live_hc-eu20_prod-az-haas.db
+   live_hc-eu20_prod-az-orc.db
+   ```
+1. Use curl to download a specific DB
+   1.  `cd /tmp; curl -kLO 10.47.254.238/api/db/live_hc-ap11_prod-hdl.db`
+1. Use any DB Browser of your choice to open downloaded DB
 
 ### Download scaling reports and comparison reports
 #### Show list of reports available
@@ -241,4 +257,5 @@ The analyzer pod provides a provision to download DBs, reports (which including 
 1. Run `curl 10.47.254.238/api/logs` to display a list of all reports available
 
 #### Download a log file
-1. Run `curl -kLO 10.47.254.238/api/logs/{log_file_name}` to download a log file
+1. Run `curl -kLO 10.47.254.238/api/logs/{cluster_name}/{log_file_name}` to download a log file
+   1. eg `curl -kLO 10.47.254.238/api/logs/live_mlfprod_prod-us/replayer-ca.log`
