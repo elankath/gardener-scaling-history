@@ -1,5 +1,3 @@
-> This document is meant to be a guide on how to start the whole setup this whole POC
-
 # Setup Guide
 
 This document is meant to be a how-to guide on setting up:
