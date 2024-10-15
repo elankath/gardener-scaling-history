@@ -37,7 +37,9 @@ Clone the following github repositories:
 
 ### Run replayer
 
-#### Prepare for run
+#### Run all components together (recommended)
+
+##### Prepare for run
 1. Run `export INPUT_DATA_PATH=<Path to DB file>`. #This is the path to the recorded DB file obtained from the recorder.
    1. Ex: `export INPUT_DATA_PATH=gen/dev_i034796_g2.db`
 2. (Optional) `export REPORT_DIR=<reportDir>` # Dir where you would like the replayer to store produced reports 
@@ -47,16 +49,44 @@ Clone the following github repositories:
    1. This builds binaries of all dependencies needed by the replayer such as kube-apiserver, etcd, kube-scheduler, virtual-cluster-autoscaler
    2. Binaries are stored in `bin/`
 
-#### Run
+##### Run
 1. Ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
 2. Run `go run cmd/replayer/main.go`
    1. Reports generated are stored in `REPORT_DIR` and have the naming convention `<landscape>_<cluster>_ca-replay-<interval-num>.json`
 3. (Optional) In case you wish to target the kubernetes cluster and see for yourself what is going on
    1. `export KUBECONFIG=/tmp/kvcl.yaml`
 
+#### Run individual components separately
+In case you wish to debug the replayer and hence wish to run all components separately please follow these steps
+
+##### Run kvcl
+1. Ensure you are in the base dir of [kvcl](https://github.com/unmarshall/kvcl)
+2. Run `./hack/setup.sh`
+3. Execute `set -o allexport && source launch.env && set +o allexport`
+4. Run `go run cmd/main.go`
+   - This will generate a kubeconfig at `/tmp/kvcl.yaml`
+
+##### Run virtual cluster autoscaler
+1. In a separate terminal ensure you are at the base dir of [virtual CA](https://github.com/elankath/gardener-virtual-autoscaler)
+2. Move into the cluster-autoscaler dir with `cd cluster-autoscaler`
+3. Build the autoscaler using `go build -o ../bin/cluster-autoscaler main.go`
+4. Launch the autoscaler using `../bin/cluster-autoscaler --kubeconfig=/tmp/kvcl.yaml --v=3 | tee /tmp/cas.log`
+
+##### Run replayer
+1. In a separate terminal ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
+2. Run `export INPUT_DATA_PATH=<Path to DB file>`. #This is the path to the recorded DB file obtained from the recorder.
+   1. Ex: `export INPUT_DATA_PATH=gen/dev_i034796_g2.db`
+3. (Optional) `export REPORT_DIR=<reportDir>` # Dir where you would like the replayer to store produced reports
+   1. Defaults to `/tmp`
+4. Run `export NO_AUTO_LAUNCH=true`
+5. Run `go run cmd/replayer/main.go`
+   1. Reports generated are stored in `REPORT_DIR` and have the naming convention `<landscape>_<cluster>_ca-replay-<interval-num>.json`
+
 ### Run recommender
 
-#### Prepare for run
+#### Run all components together (recommended)
+
+##### Prepare for run
 1. Run `export INPUT_DATA_PATH=<path to json report produced by replayer>` #This is the path to the report produced by the replayer
    1. (eg: `export INPUT_DATA_PATH=$GOPATH/src/github.tools.sap/I034796/gardener-scaling-reports/independent-scenarios/live_hc-eu30_prod-gc-dmi_ca-replay-5.json`)
 2. (Optional) `export REPORT_DIR=<reportDir>` # Dir where you would like the replayer to store produced reports
@@ -66,10 +96,35 @@ Clone the following github repositories:
    1. This builds binaries of all dependencies needed by the replayer such as kube-apiserver, etcd, kube-scheduler, virtual-cluster-autoscaler
    2. Binaries are stored in `bin/`
 
-#### Run
+##### Run
 1. Ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
 2. Run `go run cmd/replayer/main.go`
    1. 1. Reports generated are stored in `REPORT_DIR` and have the naming convention `<landscape>_<cluster>_sr-replay-<interval-num>.json`
+
+#### Run individual components separately
+In case you wish to debug the replayer and hence wish to run all components separately please follow these steps
+
+##### Run kvcl
+1. Ensure you are in the base dir of [kvcl](https://github.com/unmarshall/kvcl)
+2. Run `./hack/setup.sh`
+3. Execute `set -o allexport && source launch.env && set +o allexport`
+4. Run `go run cmd/main.go`
+   - This will generate a kubeconfig at `/tmp/kvcl.yaml`
+
+##### Run recommender
+1. In a separate terminal ensure you are at the base dir of [recommender](https://github.com/unmarshall/scaling-recommender)
+2. Run `go run main.go --target-kvcl-kubeconfig <path-to-kubeconfig> --provider <cloud-provider> --binary-assets-path <path-to-binary-assets>`
+   1. To fetch binary asset path, run `setup-envtest --os $(go env GOOS) --arch $(go env GOARCH) use $ENVTEST_K8S_VERSION -p path`
+
+##### Run replayer
+1. In a separate terminal ensure you are at the base dir of the [gardener-scaling-history](https://github.com/elankath/gardener-scaling-history) repo
+2. Run `export INPUT_DATA_PATH=<path to json report produced by replayer>` #This is the path to the report produced by the replayer
+   1. (eg: `export INPUT_DATA_PATH=$GOPATH/src/github.tools.sap/I034796/gardener-scaling-reports/independent-scenarios/live_hc-eu30_prod-gc-dmi_ca-replay-5.json`)
+3. (Optional) `export REPORT_DIR=<reportDir>` # Dir where you would like the replayer to store produced reports
+   1. Defaults to `/tmp`
+4. Run `export NO_AUTO_LAUNCH=true`
+5. Run `go run cmd/replayer/main.go`
+   1. Reports generated are stored in `REPORT_DIR` and have the naming convention `<landscape>_<cluster>_sr-replay-<interval-num>.json`
 
 ### Run Comparator
 The comparator compares a `ca-replay` report with a `sr-report` and lists out the main points of difference between the scale ups chosen. 
