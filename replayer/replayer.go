@@ -411,7 +411,7 @@ func (r *defaultReplayer) ReplayCA() error {
 			return r.ctx.Err()
 		default:
 			loopNum++
-			replayEvent, prevRunMarkTime := r.getNextReplayEvent()
+			replayEvent := r.getNextReplayEvent()
 			replayMarkTime := replayEvent.EventTime.UTC()
 			replayMarkTimeMicros := replayMarkTime.UnixMicro()
 			slog.Info("ReplayCA is considering replayEvent.", "replayEvent", replayEvent, "replayEventIndex", r.currentEventIndex, "replayMarkTimeMicros", replayMarkTimeMicros)
@@ -426,7 +426,7 @@ func (r *defaultReplayer) ReplayCA() error {
 			}
 			r.replayCount++
 			slog.Info("Invoking GetRecordedClusterSnapshot with replayMarkTime.", "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros, "loopNum", loopNum, "replayCount", r.replayCount)
-			clusterSnapshot, err := r.GetRecordedClusterSnapshot(prevRunMarkTime, replayMarkTime)
+			clusterSnapshot, err := r.GetRecordedClusterSnapshot(replayMarkTime)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					slog.Info("No more recorded work after replayMarkTime! Replay done", "replayMarkTime", replayMarkTime, "replayMarkTimeMicros", replayMarkTimeMicros, "loopNum", loopNum, "replayCount", r.replayCount)
@@ -1333,10 +1333,7 @@ func GetNextReplayEvent(events []gsc.EventInfo, currEventIndex int) (nextEventIn
 	return
 }
 
-func (r *defaultReplayer) getNextReplayEvent() (nextEvent gsc.EventInfo, prevRunMarkTime time.Time) {
-	if r.currentEventIndex > 0 {
-		prevRunMarkTime = r.scaleUpEvents[r.currentEventIndex].EventTime.UTC()
-	}
+func (r *defaultReplayer) getNextReplayEvent() (nextEvent gsc.EventInfo) {
 	r.currentEventIndex, nextEvent = GetNextReplayEvent(r.scaleUpEvents, r.currentEventIndex)
 	return
 }
@@ -1555,9 +1552,9 @@ func (r *defaultReplayer) Close() error {
 	return r.doClose()
 }
 
-func (r *defaultReplayer) GetRecordedClusterSnapshot(runPrevMarkTime, runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+func (r *defaultReplayer) GetRecordedClusterSnapshot(runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
 	snapshotID := fmt.Sprintf("%s-%d", apputil.FilenameWithoutExtension(r.params.InputDataPath), cs.Number)
-	cs, err = GetRecordedClusterSnapshot(r.dataAccess, r.replayCount, snapshotID, runPrevMarkTime, runMarkTime)
+	cs, err = GetRecordedClusterSnapshot(r.dataAccess, r.replayCount, snapshotID, runMarkTime)
 	return
 }
 
@@ -1993,15 +1990,28 @@ outer:
 	return
 }
 
-func filterAppPods(pods []gsc.PodInfo, runMarkTime time.Time) []gsc.PodInfo {
-	return lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
-		delTimestamp := p.DeletionTimestamp
-		if !delTimestamp.IsZero() && delTimestamp.Before(runMarkTime) {
-			slog.Info("filterAppPods is filtering out pods", "podName", p.Name, "podAssignedNode", p.Spec.NodeName, "podDeletionTimeStamp", p.DeletionTimestamp, "runMarkTime", runMarkTime)
-			return false
-		}
+func filterAppPods(pods []gsc.PodInfo) (filteredPods []gsc.PodInfo) {
+	// First filter out "kube-system" pods
+	pods = lo.Filter(pods, func(p gsc.PodInfo, _ int) bool {
 		return p.Namespace != "kube-system"
 	})
+	// group PodInfos by UID
+	podInfosByUID := lo.GroupBy(pods, apputil.PodUID)
+	// Now go through each name, []gscPodInfo pair and check if there is a Pod in PodSucceeded or PodFailedPhase.
+	// If so, remove the entry as this indicates that the Pod stopped actively running sometime before runMarkTime.
+	// Deleted Pods are already handled by the sql query.
+	// Ideally one should do the below in SQL using CTE expressions but logic in GO is clearer.
+OUTER:
+	for _, infos := range podInfosByUID {
+		slices.SortFunc(infos, apputil.ComparePodInfoByRowID)
+		for _, pi := range infos {
+			if pi.PodPhase == corev1.PodSucceeded || pi.PodPhase == corev1.PodFailed {
+				continue OUTER
+			}
+		}
+		filteredPods = append(filteredPods, infos[0])
+	}
+	return
 }
 
 func GetNextScalingRun(scaleUpEvents []gsc.EventInfo, lastRun ScalingRun, runInterval time.Duration) (run ScalingRun) {
@@ -2057,11 +2067,10 @@ func GetReplayScalingRecommenderReportFormat(replayCAReportPath string) (reportF
 	return
 }
 
-func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, snapshotID string, runPrevMarkTime, runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
+func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, snapshotID string, runMarkTime time.Time) (cs gsc.ClusterSnapshot, err error) {
 	slog.Info("GetRecordedClusterSnapshot INVOKED.",
 		"snapshotNumber", snapshotNumber,
 		"snapshotID", snapshotID,
-		"runPrevMarkTime", runPrevMarkTime,
 		"runMarkTime", runMarkTime)
 	cs.Number = snapshotNumber
 	cs.ID = snapshotID
@@ -2092,15 +2101,14 @@ func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, s
 		return
 	}
 
-	allPods, err := dataAccess.GetLatestPodInfosBetweenSnapshotTimestamp(runPrevMarkTime, runMarkTime)
+	allPods, err := dataAccess.GetLatestPodInfosBeforeSnapshotTimestamp(runMarkTime)
 
 	slices.SortFunc(allPods, func(a, b gsc.PodInfo) int {
 		return b.SnapshotTimestamp.Compare(a.SnapshotTimestamp) // most recent first
 	})
-	allPods = lo.UniqBy(allPods, func(p gsc.PodInfo) string {
-		return p.Name
-	})
-	apputil.SortPodInfosForReadability(allPods)
+	//allPods = lo.UniqBy(allPods, func(p gsc.PodInfo) string {
+	//	return p.Name
+	//})
 
 	kubeSystemResources := resutil.ComputeKubeSystemResources(allPods)
 	adjustNodeTemplates(cs.AutoscalerConfig.NodeTemplates, kubeSystemResources)
@@ -2130,11 +2138,12 @@ func GetRecordedClusterSnapshot(dataAccess *db.DataAccess, snapshotNumber int, s
 	if err != nil {
 		return
 	}
-	cs.Pods = filterAppPods(allPods, runMarkTime)
+	cs.Pods = filterAppPods(allPods)
 	nodeNames := lo.Map(cs.Nodes, func(n gsc.NodeInfo, _ int) string {
 		return n.Name
 	})
 	clearNodeNamesNotIn(cs.Pods, nodeNames)
+	apputil.SortPodInfosForReadability(cs.Pods)
 	cs.AutoscalerConfig.ExistingNodes = cs.Nodes
 	cs.AutoscalerConfig.NodeGroups, err = deriveNodeGroups(mcds, cs.AutoscalerConfig.CASettings.NodeGroupsMinMax)
 	if err != nil {

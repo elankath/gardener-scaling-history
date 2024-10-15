@@ -1,0 +1,38 @@
+graph TB
+
+subgraph vca["Virtual Cluster Autoscaler"]
+CARunLoop
+-->ScalingOrchestrator
+-->IncreaseNodeGroupSize
+-->ScalingDone
+CloudProviderRefresh
+-->ReadAutoScalerConfig
+-->CreateVirtualNodes
+end
+
+BuildAutoScalerConfig-->ReadAutoScalerConfig
+subgraph ca_replayer["CA Replayer Loop"]
+sqlitedb-->GetScalingEvent
+GetScalingEvent
+-->GetClusterSnapshotAtScalingEventTime
+-->BuildAutoScalerConfig
+CARefreshed
+-->DeployWorkload["<div>Deploy Pods, Namespaces, Priority Classes
+</div>"]
+-->WaitForVirtualScaling
+-->DoneSignalReceived
+-->CreateAndWriteScalingReport
+-->RepeatLoop(((CALoopEnd)))
+end
+
+
+subgraph kvcl["Virtual Cluster"]
+Pods
+Nodes
+end
+
+
+IncreaseNodeGroupSize-->kvcl
+CreateVirtualNodes-->kvcl
+CreateVirtualNodes-->CARefreshed
+ScalingDone-->DoneSignalReceived

@@ -5,7 +5,6 @@ live,hc-eu10,prod-haas
 live,mlfprod,prod-eu
 live,di-eu10,dis-2lyom
 live,mlfprod,prod-us
-live,mlfprod,prod-jp
 live,mlf-euonly,prodeuonly
 live,hct-us10,prod-hdl
 live,cds-stage,bs-b-sus

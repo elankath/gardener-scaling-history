@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const podLimitOnNode = 70
+const podLimitOnNode = 10
 
 func main() {
 	var err error
@@ -25,8 +25,7 @@ func main() {
 	var eventIndex, snapshotNumber int
 	var nodeInfos []gsc.NodeInfo
 	//var podInfos []gsc.PodInfo
-	var loadedNodeInfos []gsc.NodeInfo
-	var runMarkTime, runPrevMarkTime time.Time
+	var runMarkTime time.Time
 	var snapshotID string
 	var clusterSnapshot gsc.ClusterSnapshot
 
@@ -70,15 +69,17 @@ func main() {
 		//nodeInfosByName = lo.G(nodeInfos, apputil.GetNodeName)
 		snapshotNumber++
 		snapshotID = fmt.Sprintf("cs-%d", snapshotNumber)
-		clusterSnapshot, err = replayer.GetRecordedClusterSnapshot(dataAccess, snapshotNumber, snapshotID, runPrevMarkTime, runMarkTime)
+		clusterSnapshot, err = replayer.GetRecordedClusterSnapshot(dataAccess, snapshotNumber, snapshotID, runMarkTime)
 		if err != nil {
-			slog.Error("failed to GetRecordedClusterSnapshot", "error", err, "runPrevMarkTime", runPrevMarkTime, "runMarkTime", runMarkTime)
+			slog.Error("failed to GetRecordedClusterSnapshot", "error", err, "runMarkTime", runMarkTime)
 			return
 		}
+		slog.Info("clusterSnapshot details.", "numNodes", len(clusterSnapshot.Nodes), "numPods", len(clusterSnapshot.Pods))
 		podsByNodeName := lo.GroupBy(clusterSnapshot.Pods, func(p gsc.PodInfo) string {
 			return p.Spec.NodeName
 		})
 
+		var loadedNodeInfos []gsc.NodeInfo
 		for nodeName, podsOnNode := range podsByNodeName {
 			numPodsOnNode := len(podsOnNode)
 			if numPodsOnNode <= podLimitOnNode {
@@ -100,7 +101,7 @@ func main() {
 
 		slices.SortFunc(loadedNodeInfos, func(a, b gsc.NodeInfo) int {
 			aNumPods := len(podsByNodeName[a.Name])
-			bNumPods := len(podsByNodeName[a.Name])
+			bNumPods := len(podsByNodeName[b.Name])
 			return cmp.Compare(bNumPods, aNumPods)
 		})
 
@@ -114,13 +115,14 @@ func main() {
 			slog.Info("Loaded Node Details.",
 				"snapshotNumber", snapshotNumber,
 				"runMarkTime", runMarkTime,
-				"runPrevMarkTime", runPrevMarkTime,
 				"numPods", len(podInfosOnNode),
 				"nodeName", loadedNodeInfo.Name,
 				"totalPodRequestsOnNode", gsc.ResourcesAsString(totalPodRequestsOnNode),
 				"nodeCapacity", gsc.ResourcesAsString(loadedNodeInfo.Capacity),
 				"nodeAllocatable", gsc.ResourcesAsString(loadedNodeInfo.Allocatable))
 		}
-		runPrevMarkTime = runMarkTime
+		if snapshotNumber > 1 {
+			return
+		}
 	}
 }

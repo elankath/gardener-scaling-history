@@ -581,14 +581,14 @@ func ListAllReplayReportPairs(dir string) (reportPathPairs map[string][]string, 
 			srReportPath := GetSRReportPath(dir, f.Name())
 			statInfo, err = os.Stat(srReportPath)
 			if err != nil {
-				slog.Info("Cannot get stat for srReportPath", "srReportPath", srReportPath, "error", err)
+				slog.Info("ListAllReplayReportPairs Cannot get stat for srReportPath", "srReportPath", srReportPath, "error", err)
 				continue
 			}
 			srLastMod := statInfo.ModTime()
 			caReportPath := path.Join(dir, f.Name())
 			statInfo, err = os.Stat(caReportPath)
 			if err != nil {
-				slog.Info("Cannot get stat for caReportPath", "caReportPath", caReportPath, "error", err)
+				slog.Info("ListAllReplayReportPairs Cannot get stat for caReportPath", "caReportPath", caReportPath, "error", err)
 				continue
 			}
 			caLastMod := statInfo.ModTime()
@@ -622,4 +622,16 @@ func NodeHasMatchingName(name string) func(n gsc.NodeInfo) bool {
 			return false
 		}
 	}
+}
+
+func PodName(p gsc.PodInfo) string {
+	return p.Name
+}
+
+func PodUID(p gsc.PodInfo) string {
+	return p.UID
+}
+
+func ComparePodInfoByRowID(a gsc.PodInfo, b gsc.PodInfo) int {
+	return cmp.Compare(b.RowID, a.RowID)
 }

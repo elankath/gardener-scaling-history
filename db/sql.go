@@ -210,10 +210,8 @@ const SelectUnscheduledPodsBeforeSnapshotTimestamp = `SELECT * FROM (SELECT * fr
 const SelectLatestScheduledPodsBeforeSnapshotTimestamp = `SELECT * from (SELECT * FROM pod_info WHERE (ScheduleStatus = 1)  
                 AND SnapshotTimestamp <= ? AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  ORDER BY SnapshotTimestamp DESC) 
                 GROUP BY Name;`
-const SelectLatestPodsBetweenSnapshotTimestamps = `SELECT * FROM pod_info 
-	WHERE SnapshotTimestamp > ? 
-	AND SnapshotTimestamp  <= ?
-	AND (Phase = 'Running' OR Phase = 'Pending') 
+const SelectLatestPodsBeforeSnapshotTimestamp = `SELECT * FROM pod_info 
+	WHERE SnapshotTimestamp  <= ?
 	AND (DeletionTimestamp is null OR DeletionTimestamp >=  ?)  
 	GROUP BY pod_info.UID HAVING max(RowID) ORDER BY RowID ASC;`
 

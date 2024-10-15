@@ -170,7 +170,7 @@ func (a *DefaultApp) StartGenCompareReportsLoop() {
 
 func (a *DefaultApp) GenerateCompareReports() error {
 	replayReportPairs, err := apputil.ListAllReplayReportPairs(a.params.ReportsDir)
-	if err != nil {
+	if len(replayReportPairs) == 0 && err != nil {
 		return err
 	}
 	slog.Info("Generating compare reports...", "replayReportPairs", replayReportPairs)
