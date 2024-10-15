@@ -3,13 +3,6 @@
 > [!NOTE]
 >  This is a prototype for PROOF OF CONCEPT *only*.
 
-Repository providers 2 apps:
-- replayer: The replayer can replay scenarios against either the virtual CA or the scaling recommender
-  - replay-CA: replays the recorded scaling data of a gardener cluster against a virtual k8s cluster.
-       - effectively deploys scheduled and un-scheduled pods in a configurable batch interval and waits till nodes belonging to CA node groups are scaled.
-       - This is primarily meant for simulating autoscaling  and hence ideally should be run against a virtual cluster like one setup by https://github.com/unmarshall/kvcl/
-  - replay-SR: replays the scenario json (produced by replay-CA) against the new scaling-recommender.
-
 ## Setup
 
 Please refer to the [setup guide](docs/setup.md)
@@ -52,7 +45,11 @@ graph TB;
 * This is primarily meant for simulating autoscaling  and hence ideally should be run against a virtual cluster like one setup by https://github.com/unmarshall/kvcl/
 
 
-##### Virtual CLuster Autoscaler Replayer
+##### Virtual Cluster Autoscaler Replayer
+
+* Virtual Cluster Autoscaler is a fork of the k8s `cluster-autoscaler` with a *virtual* provider implementation that scales virtual nodes on the virtual cluster
+  
+High level overview of the replay loop for the virtual CA replay run.
 
 ```mermaid
 graph TB
@@ -74,8 +71,7 @@ GetScalingEvent
 -->GetClusterSnapshotAtScalingEventTime
 -->BuildAutoScalerConfig
 CARefreshed
--->DeployWorkload["<div>Deploy Pods, Namespaces, Priority Classes
-</div>"]
+-->DeployWorkload["<div>Deploy Pods, Namespaces</div>"]
 -->WaitForVirtualScaling
 -->DoneSignalReceived
 -->CreateAndWriteScalingReport
@@ -96,6 +92,49 @@ ScalingDone-->DoneSignalReceived
 ```
 
 ##### Scaling Recommender Replayer
+
+High level overview of the replay loop for the scaling recommender replay run
+
+```mermaid
+graph TB
+
+subgraph vca["Scaling Recommender"]
+ReceiveClusterSnapshot
+-->GenerateScoresForGroupAndZone
+-->FindWinner
+-->GenerateScoresForGroupAndZone
+-->UntilNoUnscheduledPods
+-->ScaleVirtualNodes
+-->SendRecommenderResponse
+
+
+end
+
+subgraph sr_replayer["SR Replayer Loop"]
+ReadCAReport
+-->LoadClusterSnapshotInCAReport
+-->SynchronizeVirtualNodes
+-->DeployWorkload["<div>Deploy Pods, Namespaces</div>"]
+-->WaitForStabilizeInterval
+-->PostClusterSnapshot
+-->ReceiveRecommenderResponse
+-->CreateAndWriteScalingReport
+-->LoopEnd(((ReplayLoopEnd)))
+end
+
+
+subgraph kvcl["Virtual Cluster"]
+Pods
+Nodes
+end
+
+SendRecommenderResponse-->ReceiveRecommenderResponse
+ScaleVirtualNodes-->kvcl
+SynchronizeVirtualNodes-->kvcl
+PostClusterSnapshot-->ReceiveClusterSnapshot
+
+
+```
 
 ### Deployment model
 ![deployment model](web/poc.png)

@@ -1,0 +1,36 @@
+graph TB
+
+subgraph vca["Scaling Recommender"]
+ReceiveClusterSnapshot
+-->GenerateScoresForGroupAndZone
+-->FindWinner
+-->GenerateScoresForGroupAndZone
+-->UntilNoUnscheduledPods
+-->ScaleVirtualNodes
+-->SendRecommenderResponse
+
+
+end
+
+subgraph sr_replayer["SR Replayer Loop"]
+ReadCAReport
+-->LoadClusterSnapshotInCAReport
+-->SynchronizeVirtualNodes
+-->DeployWorkload["<div>Deploy Pods, Namespaces</div>"]
+-->WaitForStabilizeInterval
+-->PostClusterSnapshot
+-->ReceiveRecommenderResponse
+-->CreateAndWriteScalingReport
+-->LoopEnd(((ReplayLoopEnd)))
+end
+
+
+subgraph kvcl["Virtual Cluster"]
+Pods
+Nodes
+end
+
+SendRecommenderResponse-->ReceiveRecommenderResponse
+ScaleVirtualNodes-->kvcl
+SynchronizeVirtualNodes-->kvcl
+PostClusterSnapshot-->ReceiveClusterSnapshot
